@@ -213,3 +213,6 @@ ImageMagick-7.*/utilities/magick
 dump.rdb
 __pycache__/
 *.pyc
+
+# OAuth/superuser secret dumps written by setup scripts
+**/.superuser_*secrets*.json
