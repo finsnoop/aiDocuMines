@@ -22,7 +22,11 @@ ENV/
 .DS_Store
 
 # Local env/secrets
+.env
 .env.*
+*.env
+bk_env
+.old_env
 *.pem
 !oidc-private-key.pem
 *.key

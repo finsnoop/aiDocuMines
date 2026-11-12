@@ -76,10 +76,8 @@ RUN chmod +x /app/wait-for-it.sh
 # Supervisor for file_monitor
 COPY supervisor/supervisord.conf /etc/supervisor/conf.d/supervisord.conf
 
-# Add your .env explicitly to image (important for Azure)
-COPY .env /app/.env
-
-# Copy everything *except* .env
+# Secrets are NOT baked into the image: compose/CapRover inject .env at runtime
+# (env_file). .env is excluded by .dockerignore.
 COPY . /app/
 
 # Ensure logs directory exists

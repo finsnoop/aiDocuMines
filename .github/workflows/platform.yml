@@ -1,0 +1,295 @@
+# One pipeline for the whole aiDocuMines platform:
+#   aiDocuMines (API layer, this repo) + aiDocuMines-Backend (Node) + aiDocuMines-Frontend (Angular)
+#
+# Triggers
+#   - push / PR to this repo
+#   - repository_dispatch "platform-build" sent by the Backend and Frontend repos on push
+#     (see .github/workflows/trigger-platform.yml in those repos)
+#   - manual run (Actions tab) with optional refs and a deploy switch
+#
+# Stages: test (all three, in parallel) -> publish images -> deploy (main only, needs approval)
+#
+# Required repository secrets
+#   PLATFORM_REPOS_TOKEN          read access to the Backend and Frontend repos
+#   CAPROVER_URL                  e.g. https://captain.aidocumines.com
+#   CAPROVER_BACKEND_APP_TOKEN    CapRover app token for the Node backend app
+#   CAPROVER_FRONTEND_APP_TOKEN   CapRover app token for the frontend app
+#   DEPLOY_SSH_HOST / DEPLOY_SSH_USER / DEPLOY_SSH_KEY   server running the API stack
+# Repository variables (Settings > Variables)
+#   CAPROVER_BACKEND_APP (default aidocumines-backend), CAPROVER_FRONTEND_APP (default aidocumines)
+#   PUBLIC_API_URL, PUBLIC_BACKEND_URL, PUBLIC_ONLYOFFICE_URL   baked into the frontend build
+#   DEPLOY_PATH  directory on the server that contains the three repo checkouts
+# Create a GitHub environment named "production" with required reviewers to gate deploys.
+
+name: Platform CI/CD
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  repository_dispatch:
+    types: [platform-build]
+  workflow_dispatch:
+    inputs:
+      backend_ref:
+        description: Backend git ref (branch, tag or sha)
+        default: main
+      frontend_ref:
+        description: Frontend git ref (branch, tag or sha)
+        default: main
+      deploy:
+        description: Deploy after a successful build
+        type: boolean
+        default: false
+
+concurrency:
+  group: platform-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  ORG: finsnoop
+  REGISTRY: ghcr.io
+
+jobs:
+  refs:
+    name: Resolve refs
+    runs-on: ubuntu-latest
+    outputs:
+      api: ${{ steps.r.outputs.api }}
+      backend: ${{ steps.r.outputs.backend }}
+      frontend: ${{ steps.r.outputs.frontend }}
+      deploy: ${{ steps.r.outputs.deploy }}
+    steps:
+      - id: r
+        env:
+          EVENT: ${{ github.event_name }}
+          P_REPO: ${{ github.event.client_payload.repo }}
+          P_SHA: ${{ github.event.client_payload.sha }}
+          IN_BACKEND: ${{ inputs.backend_ref }}
+          IN_FRONTEND: ${{ inputs.frontend_ref }}
+          IN_DEPLOY: ${{ inputs.deploy }}
+          REF: ${{ github.ref }}
+        run: |
+          api="${GITHUB_SHA}"; backend="main"; frontend="main"; deploy="false"
+          case "$EVENT" in
+            workflow_dispatch)
+              backend="${IN_BACKEND:-main}"; frontend="${IN_FRONTEND:-main}"; deploy="${IN_DEPLOY:-false}" ;;
+            repository_dispatch)
+              api="main"
+              [ "$P_REPO" = "aiDocuMines-Backend" ] && backend="$P_SHA"
+              [ "$P_REPO" = "aiDocuMines-Frontend" ] && frontend="$P_SHA"
+              deploy="true" ;;
+            push)
+              [ "$REF" = "refs/heads/main" ] && deploy="true" ;;
+          esac
+          {
+            echo "api=$api"; echo "backend=$backend"; echo "frontend=$frontend"; echo "deploy=$deploy"
+          } >> "$GITHUB_OUTPUT"
+          echo "API=$api BACKEND=$backend FRONTEND=$frontend DEPLOY=$deploy"
+
+  # ─────────────────────────────── TEST ───────────────────────────────
+  test-api:
+    name: API layer
+    needs: refs
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env: { POSTGRES_DB: aidoc, POSTGRES_USER: aidoc, POSTGRES_PASSWORD: aidoc }
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U aidoc" --health-interval 5s --health-timeout 5s --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+        with: { ref: "${{ needs.refs.outputs.api }}" }
+
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+
+      - name: Static gate (no undefined names / syntax errors)
+        run: |
+          pip install --quiet pyflakes==3.2.0
+          files=$(git ls-files '*.py' | grep -vE '\.original/|/migrations/|^awaiting_deployment/|^PDFServices|^helper_scripts/')
+          python -m pyflakes $files | tee pyflakes.txt || true
+          if grep -E "undefined name|invalid syntax|SyntaxError" pyflakes.txt; then
+            echo "::error::Undefined names or syntax errors found"; exit 1
+          fi
+
+      - uses: docker/setup-buildx-action@v3
+      - name: Build API image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          load: true
+          tags: aidocumines-api:ci
+          cache-from: type=gha,scope=api
+          cache-to: type=gha,mode=max,scope=api
+
+      - name: Django system check + migration drift
+        run: |
+          docker run --rm --network host \
+            -e SECRET_KEY=ci-not-secret -e DEBUG=False \
+            -e POSTGRES_HOST=127.0.0.1 -e POSTGRES_PORT=5432 \
+            -e POSTGRES_DB=aidoc -e POSTGRES_USER=aidoc -e POSTGRES_PASSWORD=aidoc \
+            --entrypoint sh aidocumines-api:ci -c \
+            "python manage.py check && python manage.py makemigrations --check --dry-run"
+
+  test-backend:
+    name: Node backend
+    needs: refs
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env: { POSTGRES_DB: aidoc, POSTGRES_USER: aidoc, POSTGRES_PASSWORD: aidoc }
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U aidoc" --health-interval 5s --health-timeout 5s --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: ${{ env.ORG }}/aiDocuMines-Backend
+          ref: ${{ needs.refs.outputs.backend }}
+          token: ${{ secrets.PLATFORM_REPOS_TOKEN }}
+      - uses: actions/setup-node@v4
+        with: { node-version: "20", cache: npm }
+      - run: npm ci --omit=dev --no-audit --no-fund
+      - name: Syntax check
+        run: for f in $(git ls-files 'src/*.js'); do node --check "$f"; done
+      - name: Auth, tenancy and RBAC integration tests
+        env: { DB_HOST: 127.0.0.1, DB_PORT: "5432", DB_NAME: aidoc, DB_USER: aidoc, DB_PASSWORD: aidoc }
+        run: npm run test:integration
+
+  test-frontend:
+    name: Frontend
+    needs: refs
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: ${{ env.ORG }}/aiDocuMines-Frontend
+          ref: ${{ needs.refs.outputs.frontend }}
+          token: ${{ secrets.PLATFORM_REPOS_TOKEN }}
+      - uses: actions/setup-node@v4
+        with: { node-version: "20", cache: npm }
+      - run: npm ci --no-audit --no-fund
+      - name: No secrets in the browser bundle config
+        run: |
+          if grep -nE "sk-(proj|live)-|APP_PASSWORD: '[^']+'" src/environments/*.ts; then
+            echo "::error::Secrets found in src/environments"; exit 1
+          fi
+      - name: Production build
+        run: npx ng build --configuration production
+
+  # ─────────────────────────────── PUBLISH ───────────────────────────────
+  publish:
+    name: Publish images
+    needs: [refs, test-api, test-backend, test-frontend]
+    if: needs.refs.outputs.deploy == 'true'
+    runs-on: ubuntu-latest
+    outputs:
+      backend_image: ${{ steps.tags.outputs.backend }}
+      frontend_image: ${{ steps.tags.outputs.frontend }}
+      api_sha: ${{ steps.tags.outputs.api_sha }}
+    steps:
+      - uses: actions/checkout@v4
+        with: { ref: "${{ needs.refs.outputs.api }}", path: api }
+      - uses: actions/checkout@v4
+        with:
+          repository: ${{ env.ORG }}/aiDocuMines-Backend
+          ref: ${{ needs.refs.outputs.backend }}
+          token: ${{ secrets.PLATFORM_REPOS_TOKEN }}
+          path: backend
+      - uses: actions/checkout@v4
+        with:
+          repository: ${{ env.ORG }}/aiDocuMines-Frontend
+          ref: ${{ needs.refs.outputs.frontend }}
+          token: ${{ secrets.PLATFORM_REPOS_TOKEN }}
+          path: frontend
+
+      - id: tags
+        run: |
+          b=$(git -C backend rev-parse --short=12 HEAD); f=$(git -C frontend rev-parse --short=12 HEAD)
+          echo "backend=${REGISTRY}/${ORG,,}/aidocumines-backend:${b}" >> "$GITHUB_OUTPUT"
+          echo "frontend=${REGISTRY}/${ORG,,}/aidocumines-frontend:${f}" >> "$GITHUB_OUTPUT"
+          echo "api_sha=$(git -C api rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Backend image
+        uses: docker/build-push-action@v6
+        with:
+          context: backend
+          push: true
+          tags: ${{ steps.tags.outputs.backend }}
+          cache-from: type=gha,scope=backend
+          cache-to: type=gha,mode=max,scope=backend
+
+      - name: Frontend image
+        uses: docker/build-push-action@v6
+        with:
+          context: frontend
+          push: true
+          tags: ${{ steps.tags.outputs.frontend }}
+          build-args: |
+            API_URL=${{ vars.PUBLIC_API_URL }}
+            BACKEND_URL=${{ vars.PUBLIC_BACKEND_URL }}
+            ONLYOFFICE_URL=${{ vars.PUBLIC_ONLYOFFICE_URL }}
+          cache-from: type=gha,scope=frontend
+          cache-to: type=gha,mode=max,scope=frontend
+
+  # ─────────────────────────────── DEPLOY ───────────────────────────────
+  deploy:
+    name: Deploy to production
+    needs: [refs, publish]
+    if: needs.refs.outputs.deploy == 'true' && github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - name: API layer (server, exact tested commit)
+        uses: appleboy/ssh-action@v1.2.0
+        env:
+          API_SHA: ${{ needs.publish.outputs.api_sha }}
+          DEPLOY_PATH: ${{ vars.DEPLOY_PATH }}
+        with:
+          host: ${{ secrets.DEPLOY_SSH_HOST }}
+          username: ${{ secrets.DEPLOY_SSH_USER }}
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          envs: API_SHA,DEPLOY_PATH
+          command_timeout: 45m
+          script: |
+            set -e
+            cd "${DEPLOY_PATH:-$HOME/Apps}/aiDocuMines"
+            ./deploy/platform-deploy.sh "$API_SHA"
+
+      - name: Node backend (CapRover)
+        run: |
+          npx --yes caprover@2.3.1 deploy \
+            --caproverUrl "${{ secrets.CAPROVER_URL }}" \
+            --appToken "${{ secrets.CAPROVER_BACKEND_APP_TOKEN }}" \
+            --appName "${{ vars.CAPROVER_BACKEND_APP || 'aidocumines-backend' }}" \
+            --imageName "${{ needs.publish.outputs.backend_image }}"
+
+      - name: Frontend (CapRover)
+        run: |
+          npx --yes caprover@2.3.1 deploy \
+            --caproverUrl "${{ secrets.CAPROVER_URL }}" \
+            --appToken "${{ secrets.CAPROVER_FRONTEND_APP_TOKEN }}" \
+            --appName "${{ vars.CAPROVER_FRONTEND_APP || 'aidocumines' }}" \
+            --imageName "${{ needs.publish.outputs.frontend_image }}"
+
+      - name: Smoke test
+        run: |
+          set -e
+          [ -n "${{ vars.PUBLIC_API_URL }}" ] && curl -fsS --retry 10 --retry-delay 6 "${{ vars.PUBLIC_API_URL }}/api/v1/health/"
+          [ -n "${{ vars.PUBLIC_BACKEND_URL }}" ] && curl -fsS --retry 10 --retry-delay 6 "${{ vars.PUBLIC_BACKEND_URL }}/api/db-health"
+          echo "Deployed: api=${{ needs.publish.outputs.api_sha }} backend=${{ needs.publish.outputs.backend_image }} frontend=${{ needs.publish.outputs.frontend_image }}"

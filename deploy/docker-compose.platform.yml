@@ -1,0 +1,57 @@
+# Whole-platform stack: API layer (Django + workers + data services, from the
+# repo's docker-compose.yml) + Node backend + Angular frontend.
+#
+# Used together with the API layer's compose file:
+#   docker compose -f docker-compose.yml -f deploy/docker-compose.platform.yml up -d --build
+# The deploy/platform-up.(sh|ps1) scripts do this for you.
+#
+# Paths are relative to the API layer repo root (the first compose file).
+# The sibling repos default to ../aiDocuMines-Backend and ../aiDocuMines-Frontend.
+
+services:
+  web:
+    # Expose the API to the browser for local/staging use.
+    ports:
+      - "${API_PORT:-8020}:8020"
+    environment:
+      CORS_EXTRA_ORIGINS: "http://localhost:${FRONTEND_PORT:-4300},http://127.0.0.1:${FRONTEND_PORT:-4300}"
+
+  node_backend:
+    build:
+      context: ${BACKEND_REPO:-../aiDocuMines-Backend}
+      dockerfile: Dockerfile
+    container_name: aidocumines_node_backend
+    restart: unless-stopped
+    env_file:
+      - ${BACKEND_ENV_FILE:-../aiDocuMines-Backend/.env}
+    environment:
+      PORT: "7000"
+      # Verify user tokens against the API layer over the internal network.
+      API_LAYER_URL: "http://web:8020"
+      CORS_ORIGINS: "http://localhost:${FRONTEND_PORT:-4300},http://127.0.0.1:${FRONTEND_PORT:-4300}"
+    ports:
+      - "${BACKEND_PORT:-7000}:7000"
+    depends_on:
+      web: { condition: service_healthy }
+    networks: [captain-overlay-network]
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:7000/api/db-health >/dev/null 2>&1 || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+
+  frontend:
+    build:
+      context: ${FRONTEND_REPO:-../aiDocuMines-Frontend}
+      dockerfile: Dockerfile
+      args:
+        API_URL: "${PUBLIC_API_URL:-http://localhost:8020}"
+        BACKEND_URL: "${PUBLIC_BACKEND_URL:-http://localhost:7000}"
+        ONLYOFFICE_URL: "${PUBLIC_ONLYOFFICE_URL:-}"
+    container_name: aidocumines_frontend
+    restart: unless-stopped
+    ports:
+      - "${FRONTEND_PORT:-4300}:80"
+    depends_on:
+      node_backend: { condition: service_started }
+    networks: [captain-overlay-network]

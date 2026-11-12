@@ -287,6 +287,8 @@ CORS_ALLOWED_ORIGINS = [
     "https://aidocumines-api-layer.apps.datasqan.com",
     "https://aidocumines-backend.apps.datasqan.com",
 ]
+# Per-environment additions, e.g. CORS_EXTRA_ORIGINS="http://localhost:4300,https://staging.example.com"
+CORS_ALLOWED_ORIGINS += [o.strip() for o in os.getenv("CORS_EXTRA_ORIGINS", "").split(",") if o.strip()]
 
 SESSION_COOKIE_SECURE = True  # Optional but recommended
 CSRF_COOKIE_SECURE = True     # Optional but recommended
