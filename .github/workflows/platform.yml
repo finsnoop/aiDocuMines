@@ -144,7 +144,7 @@ jobs:
             --entrypoint sh aidocumines-api:ci -c \
             "[ -f oidc-private-key.pem ] || openssl genrsa -out oidc-private-key.pem 2048 2>/dev/null; mkdir -p logs media && \
              python manage.py check && python manage.py makemigrations --check --dry-run && \
-             python manage.py test core.tests --noinput"
+             python manage.py test core.tests enquiries --noinput"
 
   test-backend:
     name: Node backend

@@ -67,6 +67,7 @@ INSTALLED_APPS = [
     "ip_litigation",
     "regulatory_compliance",
     "service_analytics",
+    "enquiries",
     "document_classification",
 
     # New services - May 2025
