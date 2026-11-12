@@ -25,6 +25,8 @@ from core.models import File
 from grid_documents_interrogation.models import Topic
 from django.shortcuts import get_object_or_404
 from rest_framework import status, permissions
+from rest_framework.permissions import IsAuthenticated
+from custom_authentication.permissions import IsClientOrAdminOrSuperUser
 from document_operations.models import Folder, FileFolderLink
 from django.utils import timezone
 from django.contrib.contenttypes.models import ContentType
@@ -44,6 +46,7 @@ import mimetypes
 
 from document_anonymizer.models import AnonymizationRun
 from document_anonymizer.tasks import anonymize_document_task, compute_risk_score_task
+from core.access import get_file_for_user, get_scoped_or_404, get_run_for_user, scope_by_file, scope_by_owner
 
 
 logger = logging.getLogger(__name__)
@@ -91,7 +94,7 @@ class FileUploadView(APIView):
     """
     parser_classes = [MultiPartParser, FormParser]
     authentication_classes = [OAuth2Authentication]
-    permission_classes = [TokenHasReadWriteScope]
+    permission_classes = [IsAuthenticated, TokenHasReadWriteScope, IsClientOrAdminOrSuperUser]
 
     @swagger_auto_schema(
         operation_description="Upload multiple files securely using OAuth2 authentication. "
@@ -292,6 +295,7 @@ class FileUploadView(APIView):
                     anon_run = AnonymizationRun.objects.create(
                         project_id=project_id,
                         service_id=service_id,
+                        client=getattr(user, 'client', None),
                         client_name=user.username or user.email,
                         status="Processing",
                         anonymization_type="Presidio"  # or "Presidio-Spacy" to match your choice
@@ -320,7 +324,7 @@ class FileUploadView(APIView):
                 logger.info("⏭️   Skipping indexing for unsupported type: %s", fresh.file_type)
             elif not getattr(getattr(user, "settings", None), "auto_index_enabled", True):
                 logger.info("⚙️ Auto-indexing disabled for user %s", user.id)
-            elif File.objects.filter(md5_hash=fresh.md5_hash, vector_chunks__isnull=False).exclude(id=fresh.id).exists():
+            elif File.objects.filter(user=fresh.user, md5_hash=fresh.md5_hash, vector_chunks__isnull=False).exclude(id=fresh.id).exists():
                 logger.info("♻️ Skipping indexing – vector chunks already exist for file with same MD5: %s", fresh.md5_hash)
             else:
                 logger.info("🧠 Queueing indexing to happen after transaction commit")
@@ -384,7 +388,7 @@ class UniversalTaskStatusView(APIView):
     Fetch the latest status for a given run_id from EndpointResponseTable.
     """
     authentication_classes = [OAuth2Authentication]
-    permission_classes = [TokenHasReadWriteScope]
+    permission_classes = [IsAuthenticated, TokenHasReadWriteScope, IsClientOrAdminOrSuperUser]
 
     @swagger_auto_schema(
         operation_description="Retrieve the status of an asynchronous task using run_id.",
@@ -436,7 +440,7 @@ class MetadataView(APIView):
     ✅ Triggers metadata extraction for a given file.
     """
     authentication_classes = [OAuth2Authentication]
-    permission_classes = [TokenHasReadWriteScope]
+    permission_classes = [IsAuthenticated, TokenHasReadWriteScope, IsClientOrAdminOrSuperUser]
 
     @swagger_auto_schema(
         operation_description="Trigger metadata extraction for a specific file.",
@@ -449,7 +453,7 @@ class MetadataView(APIView):
         file_id = request.query_params.get("file_id")
 
         # ✅ Fetch file instance
-        file_instance = get_object_or_404(File, id=file_id)
+        file_instance = get_file_for_user(request.user, file_id)
 
         # ✅ Generate a new run_id for the metadata extraction process
         run_id = str(uuid.uuid4())
@@ -475,7 +479,7 @@ class FileDownloadView(APIView):
     ✅ Download a file using file_id, dynamically supporting all common formats.
     """
     authentication_classes = [OAuth2Authentication]
-    permission_classes = [TokenHasReadWriteScope]
+    permission_classes = [IsAuthenticated, TokenHasReadWriteScope, IsClientOrAdminOrSuperUser]
 
     @swagger_auto_schema(
         operation_description="Download a file using file_id. Supports multiple file types.",
@@ -489,7 +493,7 @@ class FileDownloadView(APIView):
             return Response({"error": "Missing file_id"}, status=400)
 
         try:
-            file_obj = File.objects.get(id=file_id)
+            file_obj = get_file_for_user(request.user, file_id)
         except File.DoesNotExist:
             return Response({"error": "File not found"}, status=404)
 
@@ -566,7 +570,7 @@ class BulkFolderUploadView(APIView):
     """
     parser_classes = [MultiPartParser, FormParser]
     authentication_classes = [OAuth2Authentication]
-    permission_classes = [TokenHasReadWriteScope]
+    permission_classes = [IsAuthenticated, TokenHasReadWriteScope, IsClientOrAdminOrSuperUser]
 
     @swagger_auto_schema(
         operation_description="Upload a folder with multiple documents. Subdirectory structure is preserved.",
@@ -641,15 +645,17 @@ class BulkFolderUploadView(APIView):
 
 
             except IntegrityError as e:
-                if 'core_file_md5_hash_key' in str(e):
-                    existing = File.objects.filter(md5_hash=file_details["md5_hash"]).first()
+                if 'uniq_file_md5_per_user' in str(e) or 'core_file_md5_hash_key' in str(e):
+                    # Only ever reveal the caller's OWN duplicate, never another tenant's file.
+                    existing = File.objects.filter(user=request.user, md5_hash=file_details["md5_hash"]).first()
                     return Response({
                         "error": "Duplicate file detected.",
                         "filename": file_details["filename"],
                         "existing_file_id": existing.id if existing else None,
                     }, status=status.HTTP_400_BAD_REQUEST)
                 else:
-                    return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+                    logger.exception("Folder upload integrity error")
+                    return Response({"error": "Could not save the uploaded file."}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
         return Response({
             "message": "Folder upload successful.",
@@ -660,7 +666,8 @@ class BulkFolderUploadView(APIView):
 
 
 class AssociateTopicToFileView(APIView):
-    permission_classes = [permissions.IsAuthenticated]
+    authentication_classes = [OAuth2Authentication]
+    permission_classes = [IsAuthenticated, IsClientOrAdminOrSuperUser]
 
     def patch(self, request, file_id):
         topic_id = request.data.get("topic_id")
@@ -686,7 +693,7 @@ class FileInsightView(APIView):
     Supports optional report generation via POST.
     """
     authentication_classes = [OAuth2Authentication]
-    permission_classes = [TokenHasReadWriteScope]
+    permission_classes = [IsAuthenticated, TokenHasReadWriteScope, IsClientOrAdminOrSuperUser]
 
     @swagger_auto_schema(
         operation_description="Retrieve insight for a specific file including metadata and associated run.",
@@ -699,7 +706,7 @@ class FileInsightView(APIView):
         if not file_id:
             return Response({"error": "Missing file_id"}, status=400)
 
-        file = get_object_or_404(File, id=file_id)
+        file = get_file_for_user(request.user, file_id)
         metadata = file.metadata.first()
         run = file.run
 
@@ -753,7 +760,7 @@ class FileInsightView(APIView):
         if not project_id or not service_id:
             return Response({"error": "Missing project_id or service_id"}, status=400)
 
-        file = get_object_or_404(File, id=file_id)
+        file = get_file_for_user(request.user, file_id)
         metadata = file.metadata.first()
         run = file.run
 
@@ -819,7 +826,7 @@ class RunSummaryView(APIView):
     Summarize a processing run by run_id.
     """
     authentication_classes = [OAuth2Authentication]
-    permission_classes = [TokenHasReadWriteScope]
+    permission_classes = [IsAuthenticated, TokenHasReadWriteScope, IsClientOrAdminOrSuperUser]
 
     @swagger_auto_schema(
         operation_description="Get a summary of a run including all linked files.",
@@ -835,7 +842,7 @@ class RunSummaryView(APIView):
         if not run_id:
             return Response({"error": "Missing run_id"}, status=400)
 
-        run = get_object_or_404(Run, run_id=run_id)
+        run = get_object_or_404(scope_by_owner(request.user, Run.objects.all()), run_id=run_id)
         files = run.files.all()
 
         return Response({
@@ -865,7 +872,7 @@ class ClientSummaryView(APIView):
     Summarize total activity for the current OAuth2 user.
     """
     authentication_classes = [OAuth2Authentication]
-    permission_classes = [TokenHasReadWriteScope]
+    permission_classes = [IsAuthenticated, TokenHasReadWriteScope, IsClientOrAdminOrSuperUser]
 
     @swagger_auto_schema(
         operation_description="Returns a summary of the current user's files, runs, and storage usage.",
@@ -901,7 +908,7 @@ class StorageLocationsView(APIView):
     Show storage paths for a given file_id (upload and output).
     """
     authentication_classes = [OAuth2Authentication]
-    permission_classes = [TokenHasReadWriteScope]
+    permission_classes = [IsAuthenticated, TokenHasReadWriteScope, IsClientOrAdminOrSuperUser]
 
     @swagger_auto_schema(
         operation_description="Returns upload and output paths for a file.",
@@ -914,7 +921,7 @@ class StorageLocationsView(APIView):
         if not file_id:
             return Response({"error": "Missing file_id"}, status=400)
 
-        file = get_object_or_404(File, id=file_id)
+        file = get_file_for_user(request.user, file_id)
         storage = file.storage
 
         return Response({
@@ -931,7 +938,7 @@ class ProjectSummaryView(APIView):
     Lists all files linked to a project_id for the current user.
     """
     authentication_classes = [OAuth2Authentication]
-    permission_classes = [TokenHasReadWriteScope]
+    permission_classes = [IsAuthenticated, TokenHasReadWriteScope, IsClientOrAdminOrSuperUser]
 
     @swagger_auto_schema(
         operation_description="Returns files belonging to a specific project.",
@@ -968,7 +975,7 @@ class ServiceSummaryView(APIView):
     Lists all files linked to a service_id for the current user.
     """
     authentication_classes = [OAuth2Authentication]
-    permission_classes = [TokenHasReadWriteScope]
+    permission_classes = [IsAuthenticated, TokenHasReadWriteScope, IsClientOrAdminOrSuperUser]
 
     @swagger_auto_schema(
         operation_description="Returns files linked to a specific service.",

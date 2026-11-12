@@ -49,6 +49,7 @@ from core.onlyoffice_utils import (
     parse_ds_response,
     redact_url,
 )
+from core.access import get_file_for_user, get_scoped_or_404, get_run_for_user, scope_by_file, scope_by_owner
 
 logger = logging.getLogger(__name__)
 
@@ -87,7 +88,7 @@ class OnlyOfficeConvertView(APIView):
             if not file_id:
                 return Response({"error": "Missing file_id"}, status=400)
 
-            src = get_object_or_404(File, id=file_id)
+            src = get_file_for_user(request.user, file_id)
 
             # Signed URL for DS to pull from our API (external host)
             source_url = make_signed_download_url(str(src.id), request=request)
@@ -404,7 +405,7 @@ class OnlyOfficeSignedDownloadView(APIView):
         if not verify_signed_download_token(token, str(file_id)):
             return Response({"error": "Invalid or expired token"}, status=403)
 
-        f = get_object_or_404(File, id=file_id)
+        f = get_file_for_user(request.user, file_id)
 
         # Prefer in-container path; fall back to stripped host-like path if needed
         real_path = f.filepath
@@ -425,6 +426,50 @@ class OnlyOfficeSignedDownloadView(APIView):
             filename=os.path.basename(real_path),
             content_type=content_type,
         )
+
+
+def _verified_onlyoffice_payload(request):
+    """
+    Return the callback payload if it is signed by our Document Server, else None.
+    With no JWT secret configured, signing cannot be checked: the body is returned
+    and the URL-host check below remains the only guard (configure the secret!).
+    """
+    secret = settings.ONLYOFFICE.get("JWT_SECRET") or ""
+    body = request.data or {}
+    if not secret:
+        logger.error("ONLYOFFICE_JWT_SECRET is not set; OnlyOffice callbacks are not signature-checked.")
+        return body
+
+    token = body.get("token") if hasattr(body, "get") else None
+    from_header = False
+    if not token:
+        auth = request.META.get("HTTP_AUTHORIZATION", "")
+        if auth.startswith("Bearer "):
+            token, from_header = auth[7:], True
+    if not token:
+        return None
+    try:
+        decoded = jwt.decode(token, secret, algorithms=["HS256"])
+    except jwt.PyJWTError:
+        return None
+    # Header tokens wrap the callback body under "payload".
+    if from_header and isinstance(decoded.get("payload"), dict):
+        return decoded["payload"]
+    return decoded
+
+
+def _is_document_server_url(url: str) -> bool:
+    from urllib.parse import urlparse
+
+    allowed = set()
+    for key in ("DOC_SERVER_URL", "DOC_SERVER_PUBLIC_URL"):
+        host = urlparse(settings.ONLYOFFICE.get(key) or "").hostname
+        if host:
+            allowed.add(host.lower())
+    extra = os.getenv("ONLYOFFICE_CALLBACK_ALLOWED_HOSTS", "")
+    allowed |= {h.strip().lower() for h in extra.split(",") if h.strip()}
+    parsed = urlparse(url)
+    return parsed.scheme in ("http", "https") and (parsed.hostname or "").lower() in allowed
 
 
 @method_decorator(csrf_exempt, name="dispatch")
@@ -449,7 +494,15 @@ class OnlyOfficeCallbackView(APIView):
                 logger.warning("OO callback missing file_id; payload=%s", request.data)
                 return Response({"error": 0}, status=200)
 
-            payload = request.data or {}
+            # SECURITY: this endpoint is public (the Document Server calls it), so
+            # the request must prove it came from OUR Document Server:
+            #   1. JWT signed with the shared secret (body "token" or Authorization header);
+            #      the SIGNED payload is used, never the unsigned body.
+            #   2. The download URL must point at the configured Document Server host.
+            payload = _verified_onlyoffice_payload(request)
+            if payload is None:
+                logger.warning("OO callback rejected: missing/invalid JWT for file_id=%s", file_id)
+                return Response({"error": 1, "message": "invalid token"}, status=403)
             # normalize status
             try:
                 status = int(str(payload.get("status", "0")).strip() or "0")
@@ -458,6 +511,10 @@ class OnlyOfficeCallbackView(APIView):
 
             # OnlyOffice sometimes sends 'changesurl' instead of 'url'
             url = (payload.get("url") or payload.get("changesurl") or "").strip()
+
+            if url and not _is_document_server_url(url):
+                logger.warning("OO callback rejected: url host not the Document Server (file_id=%s)", file_id)
+                return Response({"error": 1, "message": "untrusted url"}, status=403)
 
             # Queue async download if we got a MustSave(2) or ForceSave(6) with a URL
             if status in (2, 6) and url:
@@ -555,7 +612,7 @@ class OnlyOfficeEditorConfigView(APIView):
         if not file_id:
             return Response({"error": "Missing file_id"}, status=400)
 
-        f = get_object_or_404(File, id=file_id)
+        f = get_file_for_user(request.user, file_id)
 
         # File URL OnlyOffice server will fetch (server-to-server)
         download_url = make_signed_download_url(str(f.id), request=request)

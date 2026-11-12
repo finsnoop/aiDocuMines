@@ -13,6 +13,7 @@ from datetime import datetime
 from django.shortcuts import get_object_or_404
 from oauth2_provider.models import Application
 from oauth2_provider.contrib.rest_framework import OAuth2Authentication, TokenHasReadWriteScope
+from custom_authentication.permissions import IsClientOrAdminOrSuperUser
 from django.http import FileResponse
 import logging
 from django.db.utils import IntegrityError
@@ -20,6 +21,7 @@ from django.http import JsonResponse
 from .models import FileEventLog
 from core.models import File
 from core.views import get_user_from_client_id, file_id_param, client_id_param
+from core.access import get_file_for_user, get_scoped_or_404, get_run_for_user, scope_by_file, scope_by_owner
 
 logger = logging.getLogger(__name__)
 
@@ -29,7 +31,7 @@ class FileEventLogView(APIView):
     ✅ Return a list of actions performed on a file (opened, modified, processed).
     """
     authentication_classes = [OAuth2Authentication]
-    permission_classes = [TokenHasReadWriteScope]
+    permission_classes = [TokenHasReadWriteScope, IsClientOrAdminOrSuperUser]
 
     @swagger_auto_schema(
         operation_description="List file events (e.g. opened, modified, processed)",
@@ -49,7 +51,7 @@ class FileEventLogView(APIView):
         if not file_id:
             return Response({"error": "Missing file_id parameter"}, status=status.HTTP_400_BAD_REQUEST)
 
-        file_instance = get_object_or_404(File, id=file_id)
+        file_instance = get_file_for_user(request.user, file_id)
 
         logs = FileEventLog.objects.filter(file=file_instance).order_by("-timestamp")
         data = [{

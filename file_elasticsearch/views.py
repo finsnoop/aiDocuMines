@@ -6,8 +6,10 @@ import logging
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
+from rest_framework.permissions import IsAuthenticated
 from oauth2_provider.contrib.rest_framework import OAuth2Authentication
 from custom_authentication.rbac import HasPermission
+from custom_authentication.permissions import IsClientOrAdminOrSuperUser
 
 from . import utils
 from .serializers import SearchRequestSerializer, AdvancedSearchSerializer
@@ -17,6 +19,7 @@ from document_operations.utils import get_user_accessible_file_ids
 from core.models import File, Run
 from document_operations.models import FileAccessEntry
 from core.utils import generate_and_register_service_report
+from core.access import get_file_for_user, get_scoped_or_404, get_run_for_user, scope_by_file, scope_by_owner
 
 logger = logging.getLogger(__name__)
 
@@ -38,11 +41,11 @@ class ForceReindexView(APIView):
 
 class IndexSingleFileView(APIView):
     authentication_classes = [OAuth2Authentication]
-    permission_classes = [HasPermission('document.upload')]
+    permission_classes = [IsAuthenticated, HasPermission('document.upload')]
 
     def post(self, request, file_id):
         try:
-            file = File.objects.get(id=file_id)
+            file = get_file_for_user(request.user, file_id)
         except File.DoesNotExist:
             return Response({"error": "File not found"}, status=status.HTTP_404_NOT_FOUND)
 
@@ -71,7 +74,7 @@ class SearchView(APIView):
     Results are ranked by relevance (filename matches score highest).
     """
     authentication_classes = [OAuth2Authentication]
-    permission_classes = [HasPermission('search.semantic')]
+    permission_classes = [IsAuthenticated, HasPermission('search.semantic')]
 
     def post(self, request):
         start_time = time.time()
@@ -157,7 +160,7 @@ class AdvancedSearchView(APIView):
     }
     """
     authentication_classes = [OAuth2Authentication]
-    permission_classes = [HasPermission('search.advanced')]
+    permission_classes = [IsAuthenticated, HasPermission('search.advanced')]
 
     def post(self, request):
         start_time = time.time()

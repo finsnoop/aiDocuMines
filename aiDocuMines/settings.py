@@ -87,6 +87,7 @@ MIDDLEWARE = [
     "custom_authentication.middleware.APICallLoggingMiddleware",
     "custom_authentication.middleware.RBACMiddleware",
     "oauth2_provider.middleware.OAuth2TokenMiddleware",
+    "custom_authentication.middleware.ClientIdentityBindingMiddleware",
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
 ]

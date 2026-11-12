@@ -13,6 +13,7 @@ from document_anonymizer.models import AnonymizationRun, Anonymize, DeAnonymize
 import logging
 import os
 import json
+from core.access import get_file_for_user, get_scoped_or_404, get_run_for_user, scope_by_file, scope_by_owner
 
 logger = logging.getLogger(__name__)
 
@@ -80,14 +81,14 @@ class AnonymizationTaskStatusView(APIView):
 
         # Prefer run_id if provided
         if run_id:
-            run_instance = get_object_or_404(AnonymizationRun, id=run_id)
+            run_instance = get_run_for_user(request.user, AnonymizationRun, run_id)
 
         # If no run_id, try to resolve via file_id + file_type
         elif file_id:
             if not file_type:
                 return Response({"error": "file_type must be provided when using file_id"}, status=400)
 
-            file_instance = get_object_or_404(File, id=file_id)
+            file_instance = get_file_for_user(request.user, file_id)
             try:
                 anonymized_file = Anonymize.objects.get(
                     original_file=file_instance, file_type=file_type, is_active=True
@@ -95,7 +96,7 @@ class AnonymizationTaskStatusView(APIView):
             except Anonymize.DoesNotExist:
                 # Could still be processing: try to surface run status if present
                 # (Find the latest run tied to this file via any anonymize entry)
-                possible = Anonymize.objects.filter(original_file=file_instance).order_by("-created_at").first()
+                possible = scope_by_file(request.user, Anonymize.objects.filter(original_file=file_instance), 'original_file').order_by("-created_at").first()
                 if possible and possible.run:
                     run_instance = possible.run
                 else:
@@ -153,7 +154,7 @@ class AnonymizationTaskStatusView(APIView):
             return Response({"error": "Run is Completed but no artifact was found."}, status=500)
 
         # At this point we have an artifact row
-        de_anonymized_file = DeAnonymize.objects.filter(file=anonymized_file.original_file).first()
+        de_anonymized_file = scope_by_file(request.user, DeAnonymize.objects.filter(file=anonymized_file.original_file), 'file').first()
         entity_mapping = anonymized_file.spacy_masking_map or anonymized_file.presidio_masking_map or {}
 
         # Limit registered outputs to anonymized folder only (avoid mixing unrelated run files)

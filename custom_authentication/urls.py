@@ -5,7 +5,9 @@ from .views import (
     DeactivateAccountView, DeleteAccountView, ListUsersView, DisableUserView,
     EnableUserView, ListUserAPIKeysView, RevokeAPIKeyView, AdminResetUserPasswordView,
     PromoteUserToAdminView, DemoteUserFromAdminView, UserActivityLogView, CreateAdminUserView, CreateUserView,
-    WhoAmIView, LogoutAllView, RetrieveUserView, RetrieveClientSecretsView, RetrieveClientView, SupersuperuserResetView, SupersuperuserCleanDatabaseView, TwoFASetupView, TwoFAVerifyView, TwoFADisableView, TwoFAStatusView, TwoFARotateSecretView
+    WhoAmIView, LogoutAllView, RetrieveUserView, RetrieveClientSecretsView, RetrieveClientView, SupersuperuserResetView, SupersuperuserCleanDatabaseView, TwoFASetupView, TwoFAVerifyView, TwoFADisableView, TwoFAStatusView, TwoFARotateSecretView,
+    # Role Management
+    ListRolesView, GetUserRolesView, AssignUserRoleView, RemoveUserRoleView, SetUserRolesView
 )
 
 urlpatterns = [
@@ -44,6 +46,13 @@ urlpatterns = [
     path("admin/users/<int:user_id>/reset-password/", AdminResetUserPasswordView.as_view(), name="admin_users_reset_password"),
     path("admin/users/<int:user_id>/promote/", PromoteUserToAdminView.as_view(), name="admin_users_promote"),
     path("admin/users/<int:user_id>/demote/", DemoteUserFromAdminView.as_view(), name="admin_users_demote"),
+
+    # 🎭 ROLE MANAGEMENT
+    path("admin/roles/", ListRolesView.as_view(), name="admin_roles_list"),
+    path("admin/users/<int:user_id>/roles/", GetUserRolesView.as_view(), name="admin_users_roles"),
+    path("admin/users/<int:user_id>/roles/assign/", AssignUserRoleView.as_view(), name="admin_users_roles_assign"),
+    path("admin/users/<int:user_id>/roles/remove/", RemoveUserRoleView.as_view(), name="admin_users_roles_remove"),
+    path("admin/users/<int:user_id>/roles/set/", SetUserRolesView.as_view(), name="admin_users_roles_set"),
 
     # 🏢 CLIENT (TENANT) MANAGEMENT
     path("admin/clients/<int:client_id>/", RetrieveClientView.as_view(), name="admin_clients_retrieve"),

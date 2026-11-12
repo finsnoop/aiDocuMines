@@ -3,6 +3,7 @@ from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
 from rest_framework.exceptions import PermissionDenied
+from rest_framework.permissions import IsAuthenticated, AllowAny
 from django.shortcuts import get_object_or_404
 from django.contrib.auth import get_user_model
 from oauth2_provider.models import Application
@@ -21,12 +22,13 @@ from drf_yasg.utils import swagger_auto_schema
 from drf_yasg import openapi
 import logging
 import os
-from rest_framework.permissions import AllowAny
 from rest_framework import generics
 from document_translation.serializers import TranslationFileSerializer
+from custom_authentication.permissions import IsClientOrAdminOrSuperUser
 
 from django.http import FileResponse, Http404
 from django.utils.encoding import smart_str
+from core.access import get_file_for_user, get_scoped_or_404, get_run_for_user, scope_by_file, scope_by_owner
 
 
 logger = logging.getLogger(__name__)
@@ -74,7 +76,7 @@ class SubmitTranslationAPIView(ClientScopedViewMixin):
     """
 
     authentication_classes = [OAuth2Authentication]
-    permission_classes = [TokenHasReadWriteScope, IsAdminOrManagerMutation]
+    permission_classes = [IsAuthenticated, TokenHasReadWriteScope, IsClientOrAdminOrSuperUser]
 
     @swagger_auto_schema(
         operation_description="Submit a file for translation.",
@@ -142,7 +144,7 @@ class CheckTranslationStatusAPIView(ClientScopedViewMixin):
     """
 
     authentication_classes = [OAuth2Authentication]
-    permission_classes = [TokenHasReadWriteScope]
+    permission_classes = [IsAuthenticated, TokenHasReadWriteScope, IsClientOrAdminOrSuperUser]
     client_scope_field = "client"
 
     @swagger_auto_schema(
@@ -172,7 +174,7 @@ class DownloadTranslatedFileAPIView(ClientScopedViewMixin):
     """
 
     authentication_classes = [OAuth2Authentication]
-    permission_classes = [TokenHasReadWriteScope]
+    permission_classes = [IsAuthenticated, TokenHasReadWriteScope, IsClientOrAdminOrSuperUser]
 
     @swagger_auto_schema(
         operation_description="Download a translated document by providing the `file_id`.",
@@ -209,7 +211,11 @@ class DownloadTranslatedFileAPIView(ClientScopedViewMixin):
 class TranslationFileDownloadView(generics.RetrieveAPIView):
     queryset = TranslationFile.objects.all()
     serializer_class = TranslationFileSerializer
-    permission_classes = [AllowAny]  # ✅ Ensure API can be accessed
+    authentication_classes = [OAuth2Authentication]
+    permission_classes = [IsAuthenticated]
+
+    def get_queryset(self):
+        return scope_by_file(self.request.user, TranslationFile.objects.all(), "original_file")
 
     @swagger_auto_schema(auto_schema=None)  # ✅ Prevent Swagger from generating schema errors
     def get(self, request, *args, **kwargs):
@@ -226,7 +232,7 @@ class TranslationFileDownloadView(generics.RetrieveAPIView):
 ### 🔹 TranslationRunSummaryView
 class TranslationRunSummaryView(ClientScopedViewMixin):
     authentication_classes = [OAuth2Authentication]
-    permission_classes = [TokenHasReadWriteScope]
+    permission_classes = [IsAuthenticated, TokenHasReadWriteScope, IsClientOrAdminOrSuperUser]
     client_scope_field = "client"
 
     @swagger_auto_schema(
@@ -256,7 +262,7 @@ class TranslationRunSummaryView(ClientScopedViewMixin):
 ### 🔹 TranslatedFilesByRunView
 class TranslatedFilesByRunView(ClientScopedViewMixin):
     authentication_classes = [OAuth2Authentication]
-    permission_classes = [TokenHasReadWriteScope]
+    permission_classes = [IsAuthenticated, TokenHasReadWriteScope, IsClientOrAdminOrSuperUser]
     client_scope_field = "client"
 
     @swagger_auto_schema(
@@ -285,7 +291,7 @@ class TranslatedFilesByRunView(ClientScopedViewMixin):
 ### 🔹 TranslationFileInsightView
 class TranslationFileInsightView(ClientScopedViewMixin):
     authentication_classes = [OAuth2Authentication]
-    permission_classes = [TokenHasReadWriteScope]
+    permission_classes = [IsAuthenticated, TokenHasReadWriteScope, IsClientOrAdminOrSuperUser]
 
     @swagger_auto_schema(
         operation_description="Get insight about a translated file.",
@@ -297,7 +303,7 @@ class TranslationFileInsightView(ClientScopedViewMixin):
         if not file_id:
             return Response({"error": "Missing file_id"}, status=400)
 
-        translation_file = get_object_or_404(TranslationFile, original_file__id=file_id)
+        translation_file = get_scoped_or_404(request.user, TranslationFile, 'original_file', original_file__id=file_id)
         self.get_object_by_client(File.objects.all(), id=translation_file.original_file.id)
         run = translation_file.run
 
@@ -315,7 +321,7 @@ class TranslationFileInsightView(ClientScopedViewMixin):
 ### 🔹 TranslationHistoryView
 class TranslationHistoryView(ClientScopedViewMixin):
     authentication_classes = [OAuth2Authentication]
-    permission_classes = [TokenHasReadWriteScope]
+    permission_classes = [IsAuthenticated, TokenHasReadWriteScope, IsClientOrAdminOrSuperUser]
 
     @swagger_auto_schema(
         operation_description="List all translations performed for a given original file.",
@@ -328,7 +334,7 @@ class TranslationHistoryView(ClientScopedViewMixin):
             return Response({"error": "Missing file_id"}, status=400)
 
         self.get_object_by_client(File.objects.all(), id=file_id)
-        translations = TranslationFile.objects.filter(original_file__id=file_id)
+        translations = scope_by_file(request.user, TranslationFile.objects.filter(original_file__id=file_id), 'original_file')
         return Response([
             {
                 "translated_filepath": t.translated_filepath,
@@ -357,7 +363,7 @@ class SupportedLanguagesView(APIView):
 ### 🔹 TranslationStorageLocationsView
 class TranslationStorageLocationsView(ClientScopedViewMixin):
     authentication_classes = [OAuth2Authentication]
-    permission_classes = [TokenHasReadWriteScope]
+    permission_classes = [IsAuthenticated, TokenHasReadWriteScope, IsClientOrAdminOrSuperUser]
     client_scope_field = "client"
 
     @swagger_auto_schema(
@@ -371,7 +377,7 @@ class TranslationStorageLocationsView(ClientScopedViewMixin):
             return Response({"error": "Missing translation_run_id"}, status=400)
 
         self.get_object_by_client(TranslationRun.objects.all(), id=run_id)
-        storages = TranslationStorage.objects.filter(run__id=run_id)
+        storages = TranslationStorage.objects.filter(run=get_run_for_user(request.user, TranslationRun, run_id))
         return Response([
             {
                 "upload_storage_location": s.upload_storage_location,
@@ -383,7 +389,7 @@ class TranslationStorageLocationsView(ClientScopedViewMixin):
 ### 🔹 TranslationClientSummaryView
 class TranslationClientSummaryView(APIView):
     authentication_classes = [OAuth2Authentication]
-    permission_classes = [TokenHasReadWriteScope]
+    permission_classes = [IsAuthenticated, TokenHasReadWriteScope, IsClientOrAdminOrSuperUser]
 
     @swagger_auto_schema(
         operation_description="Return summary of all translation activity for current user.",
@@ -427,7 +433,7 @@ class TranslationClientSummaryView(APIView):
 ### 🔹 TranslationProjectSummaryView
 class TranslationProjectSummaryView(ClientScopedViewMixin):
     authentication_classes = [OAuth2Authentication]
-    permission_classes = [TokenHasReadWriteScope]
+    permission_classes = [IsAuthenticated, TokenHasReadWriteScope, IsClientOrAdminOrSuperUser]
     client_scope_field = "client"
 
     @swagger_auto_schema(
@@ -452,7 +458,7 @@ class TranslationProjectSummaryView(ClientScopedViewMixin):
 ### 🔹 TranslationLanguageSummaryView
 class TranslationLanguageSummaryView(ClientScopedViewMixin):
     authentication_classes = [OAuth2Authentication]
-    permission_classes = [TokenHasReadWriteScope]
+    permission_classes = [IsAuthenticated, TokenHasReadWriteScope, IsClientOrAdminOrSuperUser]
 
     @swagger_auto_schema(
         operation_description="Return stats for all files translated into a specific language.",

@@ -1,6 +1,7 @@
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
+from rest_framework.permissions import IsAuthenticated
 from django.shortcuts import get_object_or_404
 from django.contrib.auth import get_user_model
 from oauth2_provider.models import Application
@@ -16,6 +17,8 @@ from drf_yasg.utils import swagger_auto_schema
 from drf_yasg import openapi
 import uuid
 from glob import glob
+from custom_authentication.permissions import IsClientOrAdminOrSuperUser
+from core.access import get_file_for_user, get_scoped_or_404, get_run_for_user, scope_by_file, scope_by_owner, accessible_files
 
 logger = logging.getLogger(__name__)
 
@@ -63,7 +66,7 @@ class SubmitOCRAPIView(ClientScopedViewMixin):
     """
 
     authentication_classes = [OAuth2Authentication]
-    permission_classes = [TokenHasReadWriteScope, IsAdminOrManagerMutation]
+    permission_classes = [IsAuthenticated, TokenHasReadWriteScope, IsClientOrAdminOrSuperUser]
 
     @swagger_auto_schema(
         operation_description="Submit a file for OCR processing.",
@@ -172,6 +175,7 @@ class SubmitOCRAPIView(APIView):
         ocr_run = OCRRun.objects.create(
             project_id=file_obj.project_id,
             service_id=file_obj.service_id,
+            client=getattr(file_obj.user, 'client', None),
             client_name=file_obj.user.username if file_obj.user and file_obj.user.username else file_obj.user.email,
             status="Pending",
             ocr_option=ocr_option  # Storing the OCR option
@@ -194,7 +198,7 @@ class CheckOCRStatusAPIView(ClientScopedViewMixin):
     """
 
     authentication_classes = [OAuth2Authentication]
-    permission_classes = [TokenHasReadWriteScope]
+    permission_classes = [IsAuthenticated, TokenHasReadWriteScope, IsClientOrAdminOrSuperUser]
     client_scope_field = "client"
 
     @swagger_auto_schema(
@@ -260,10 +264,10 @@ class CheckOCRResultsView(ClientScopedViewMixin):
 
         results = {}
         for fid in file_ids:
-            file_obj = File.objects.filter(id=fid, user__client=request.user.client).first()
+            file_obj = accessible_files(request.user, "process", File.objects.filter(id=fid)).first()
             if not file_obj:
                 continue
-            ocr_file = OCRFile.objects.filter(original_file=file_obj).order_by("-created_at").first()
+            ocr_file = scope_by_file(request.user, OCRFile.objects.filter(original_file=file_obj), 'original_file').order_by("-created_at").first()
             if ocr_file and ocr_file.status == "Processed" and ocr_file.ocr_filepath:
                 results[fid] = {"status": "Processed", "ocr_run_id": str(ocr_file.run.id) if ocr_file.run else None}
             else:

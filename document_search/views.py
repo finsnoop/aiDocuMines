@@ -3,10 +3,12 @@
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status, generics
+from rest_framework.permissions import IsAuthenticated
 from pymilvus import Collection, connections
 
 from oauth2_provider.contrib.rest_framework import OAuth2Authentication
 from custom_authentication.rbac import HasPermission
+from custom_authentication.permissions import IsClientOrAdminOrSuperUser
 
 from django.core.cache import cache
 from celery.result import AsyncResult
@@ -47,6 +49,7 @@ from document_search.config import (
 
 from document_operations.utils import get_user_accessible_file_ids
 from document_operations.models import FileAccessEntry
+from core.access import get_file_for_user, get_scoped_or_404, get_run_for_user, scope_by_file, scope_by_owner
 
 logger = logging.getLogger(__name__)
 
@@ -94,7 +97,7 @@ class SemanticFileSearchView(APIView):
     }
     """
     authentication_classes = [OAuth2Authentication]
-    permission_classes = [HasPermission('search.semantic')]
+    permission_classes = [IsAuthenticated, HasPermission('search.semantic')]
 
     def post(self, request, *args, **kwargs):
         user = request.user
@@ -140,7 +143,8 @@ class SemanticFileSearchView(APIView):
 # 🔍 Search API (sync)
 # ─────────────────────────────────────────────────────────────
 class ChunkedFileSearchView(APIView):
-    permission_classes = [HasPermission('search.semantic')]
+    authentication_classes = [OAuth2Authentication]
+    permission_classes = [IsAuthenticated, HasPermission('search.semantic')]
 
     def post(self, request):
         serializer = SearchRequestSerializer(data=request.data)
@@ -199,7 +203,7 @@ class ChunkedFileSearchView(APIView):
             if fid not in accessible_file_ids:
                 continue
             try:
-                file_obj = File.objects.get(id=fid)
+                file_obj = get_file_for_user(request.user, fid)
             except File.DoesNotExist:
                 continue
             all_matches.append({
@@ -238,7 +242,8 @@ class TriggerVectorIndexingView(APIView):
     POST  /api/v1/document-search/index/
     body: {"file_ids": [2, 3, 4], "force": false}
     """
-    permission_classes = [HasPermission('document.upload')]
+    authentication_classes = [OAuth2Authentication]
+    permission_classes = [IsAuthenticated, HasPermission('document.upload')]
 
     def post(self, request):
         ser = IndexRequestSerializer(data=request.data)
@@ -377,7 +382,7 @@ class AdvancedDocumentSearchView(APIView):
 
 class SearchResultView(APIView):
     authentication_classes = [OAuth2Authentication]
-    permission_classes = [HasPermission('search.semantic')]
+    permission_classes = [IsAuthenticated, HasPermission('search.semantic')]
 
     def get(self, request, task_id, *args, **kwargs):
         task_id = str(task_id)

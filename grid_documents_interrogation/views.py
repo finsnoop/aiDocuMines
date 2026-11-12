@@ -11,6 +11,7 @@ from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
+from custom_authentication.permissions import IsClientOrAdminOrSuperUser
 
 from .models import Topic, Query, DatabaseConnection
 from .serializers import TopicSerializer, QuerySerializer, DatabaseConnectionSerializer
@@ -20,6 +21,7 @@ from core.utils import generate_and_register_service_report
 from .tasks import process_file_query, process_db_query
 from .db_query_tools import fetch_column_names, generate_sql_query, execute_sql_query, test_connection
 from .file_readers import read_pdf_file
+from core.access import get_file_for_user, get_scoped_or_404, get_run_for_user, scope_by_file, scope_by_owner
 
 logger = logging.getLogger(__name__)
 
@@ -29,7 +31,7 @@ logger = logging.getLogger(__name__)
 # ──────────────────────────────────────────────────────────────────────────────
 class DatabaseConnectionViewSet(viewsets.ModelViewSet):
     serializer_class = DatabaseConnectionSerializer
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, IsClientOrAdminOrSuperUser]
 
     def get_queryset(self):
         return DatabaseConnection.objects.filter(owner=self.request.user)
@@ -58,7 +60,7 @@ class DatabaseConnectionViewSet(viewsets.ModelViewSet):
 # ──────────────────────────────────────────────────────────────────────────────
 class TopicViewSet(viewsets.ModelViewSet):
     serializer_class = TopicSerializer
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, IsClientOrAdminOrSuperUser]
 
     def get_queryset(self):
         return Topic.objects.filter(user=self.request.user)
@@ -102,7 +104,7 @@ class TopicViewSet(viewsets.ModelViewSet):
         file_id = request.data.get("file_id")
         if not file_id:
             return Response({"error": "file_id is required"}, status=400)
-        file_obj = get_object_or_404(File, id=file_id)
+        file_obj = get_file_for_user(request.user, file_id)
         topic.files.add(file_obj)
         return Response({"message": f"File {file_obj.filename} attached to topic {topic.id}."}, status=200)
 
@@ -156,7 +158,7 @@ class TopicViewSet(viewsets.ModelViewSet):
 # ──────────────────────────────────────────────────────────────────────────────
 class QueryViewSet(viewsets.ModelViewSet):
     serializer_class = QuerySerializer
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, IsClientOrAdminOrSuperUser]
 
     def get_queryset(self):
         return Query.objects.filter(user=self.request.user).order_by('-created_at')
@@ -220,7 +222,7 @@ class QueryViewSet(viewsets.ModelViewSet):
             if data_source == "file":
                 if not file_id:
                     return Response({"error": "file_id is required for file-based queries."}, status=400)
-                file = get_object_or_404(File, id=file_id)
+                file = get_file_for_user(request.user, file_id)
 
                 # NEW: fast path (use cached text via file_id)
                 task = process_file_query.delay(
@@ -448,7 +450,7 @@ class QueryViewSet(viewsets.ModelViewSet):
         if not file_id:
             return Response({"error": "file_id is required"}, status=400)
 
-        file = get_object_or_404(File, id=file_id)
+        file = get_file_for_user(request.user, file_id)
         try:
             text = read_pdf_file(file.filepath)
             return Response({"ocr_text": text[:5000]})

@@ -17,6 +17,8 @@ from .serializers import (
 from core.models import File
 from custom_authentication.permissions import IsOwner, HasEffectiveAccess, HasAnyAccess, IsAdminOrSuperUser
 from .models import COLOR_CHOICES
+from custom_authentication.permissions import IsOwner, HasEffectiveAccess, IsClientOrAdminOrSuperUser
+from oauth2_provider.contrib.rest_framework import OAuth2Authentication
 from .tasks import (
     async_bulk_trash_files,
     async_bulk_trash_folders,
@@ -80,7 +82,8 @@ class FolderDetailView(APIView):
     ─────────────────────
     ?include_files=false  → omit the file listings
     """
-    permission_classes = [IsAuthenticated, HasEffectiveAccess]
+    authentication_classes = [OAuth2Authentication]
+    permission_classes = [IsAuthenticated, IsClientOrAdminOrSuperUser, HasEffectiveAccess]
 
     def get(self, request, pk):
         folder = get_object_or_404(Folder, pk=pk)
@@ -96,7 +99,8 @@ class FolderDetailView(APIView):
 
 
 class FileDetailView(APIView):
-    permission_classes = [IsAuthenticated, HasEffectiveAccess]
+    authentication_classes = [OAuth2Authentication]
+    permission_classes = [IsAuthenticated, IsClientOrAdminOrSuperUser, HasEffectiveAccess]
 
     def get(self, request, pk):
         file_link = get_object_or_404(FileFolderLink, pk=pk)
@@ -106,7 +110,8 @@ class FileDetailView(APIView):
 
 
 class RenameFileView(APIView):
-    permission_classes = [IsAuthenticated, IsOwner, HasEffectiveAccess]
+    authentication_classes = [OAuth2Authentication]
+    permission_classes = [IsAuthenticated, IsClientOrAdminOrSuperUser, IsOwner, HasEffectiveAccess]
 
     def patch(self, request, pk):
         new_name = request.data.get("new_name")
@@ -127,7 +132,8 @@ class RenameFileView(APIView):
 
 
 class RenameFolderView(APIView):
-    permission_classes = [IsAuthenticated, IsOwner, HasEffectiveAccess]
+    authentication_classes = [OAuth2Authentication]
+    permission_classes = [IsAuthenticated, IsClientOrAdminOrSuperUser, IsOwner, HasEffectiveAccess]
 
     def patch(self, request, pk):
         new_name = request.data.get("new_name")
@@ -139,7 +145,8 @@ class RenameFolderView(APIView):
 
 
 class TrashFilesView(APIView):
-    permission_classes = [IsAuthenticated]
+    authentication_classes = [OAuth2Authentication]
+    permission_classes = [IsAuthenticated, IsClientOrAdminOrSuperUser]
 
     def post(self, request):
         file_ids = request.data.get("file_ids", [])
@@ -155,7 +162,8 @@ class TrashFilesView(APIView):
 
 
 class MoveFilesView(APIView):
-    permission_classes = [IsAuthenticated]
+    authentication_classes = [OAuth2Authentication]
+    permission_classes = [IsAuthenticated, IsClientOrAdminOrSuperUser]
 
     def post(self, request):
         file_ids = request.data.get("file_ids", [])
@@ -172,7 +180,8 @@ class MoveFilesView(APIView):
 
 
 class DeleteFileView(APIView):
-    permission_classes = [IsAuthenticated, IsOwner, HasEffectiveAccess, IsAdminOrSuperUser]
+    authentication_classes = [OAuth2Authentication]
+    permission_classes = [IsAuthenticated, IsClientOrAdminOrSuperUser, IsOwner, HasEffectiveAccess]
 
     def delete(self, request, pk):
         file_link = get_object_or_404(FileFolderLink, pk=pk)
@@ -188,7 +197,8 @@ class DeleteFileView(APIView):
 
 
 class DeleteFolderView(APIView):
-    permission_classes = [IsAuthenticated, IsOwner, HasEffectiveAccess, IsAdminOrSuperUser]
+    authentication_classes = [OAuth2Authentication]
+    permission_classes = [IsAuthenticated, IsClientOrAdminOrSuperUser, IsOwner, HasEffectiveAccess]
 
     def delete(self, request, pk):
         async_delete_folder.delay(pk)
@@ -196,7 +206,8 @@ class DeleteFolderView(APIView):
 
 
 class DuplicateFileView(APIView):
-    permission_classes = [IsAuthenticated, IsOwner, HasEffectiveAccess]
+    authentication_classes = [OAuth2Authentication]
+    permission_classes = [IsAuthenticated, IsClientOrAdminOrSuperUser, IsOwner, HasEffectiveAccess]
 
     def post(self, request, pk):
         async_duplicate_file.delay(pk)
@@ -204,7 +215,8 @@ class DuplicateFileView(APIView):
 
 
 class CopyFileView(APIView):
-    permission_classes = [IsAuthenticated, IsOwner, HasEffectiveAccess]
+    authentication_classes = [OAuth2Authentication]
+    permission_classes = [IsAuthenticated, IsClientOrAdminOrSuperUser, IsOwner, HasEffectiveAccess]
 
     def post(self, request, pk):
         target_folder = request.data.get("target_folder")
@@ -218,7 +230,8 @@ class CopyFileView(APIView):
 
 
 class ZipFilesView(APIView):
-    permission_classes = [IsAuthenticated]
+    authentication_classes = [OAuth2Authentication]
+    permission_classes = [IsAuthenticated, IsClientOrAdminOrSuperUser]
 
     def post(self, request):
         file_ids = request.data.get("file_ids", [])
@@ -230,7 +243,8 @@ class ZipFilesView(APIView):
 
 
 class ProtectFileView(APIView):
-    permission_classes = [IsAuthenticated, HasEffectiveAccess]
+    authentication_classes = [OAuth2Authentication]
+    permission_classes = [IsAuthenticated, IsClientOrAdminOrSuperUser, HasEffectiveAccess]
 
     def post(self, request, pk):
         password_hint = request.data.get("password_hint")
@@ -251,7 +265,8 @@ class ProtectFileView(APIView):
 
 
 class RestoreFileView(APIView):
-    permission_classes = [IsAuthenticated, HasEffectiveAccess]
+    authentication_classes = [OAuth2Authentication]
+    permission_classes = [IsAuthenticated, IsClientOrAdminOrSuperUser, HasEffectiveAccess]
 
     def post(self, request, pk):
         file_link = get_object_or_404(FileFolderLink, pk=pk)
@@ -267,7 +282,8 @@ class RestoreFileView(APIView):
 
 
 class RestoreFolderView(APIView):
-    permission_classes = [IsAuthenticated, HasEffectiveAccess]
+    authentication_classes = [OAuth2Authentication]
+    permission_classes = [IsAuthenticated, IsClientOrAdminOrSuperUser, HasEffectiveAccess]
 
     def post(self, request, pk):
         async_restore_folder.delay(pk)
@@ -275,7 +291,8 @@ class RestoreFolderView(APIView):
 
 
 class ListFileVersionsView(APIView):
-    permission_classes = [IsAuthenticated, HasEffectiveAccess]
+    authentication_classes = [OAuth2Authentication]
+    permission_classes = [IsAuthenticated, IsClientOrAdminOrSuperUser, HasEffectiveAccess]
 
     def get(self, request, pk):
         file_link = get_object_or_404(FileFolderLink, pk=pk)
@@ -291,7 +308,8 @@ class ListFileVersionsView(APIView):
 
 
 class RestoreFileVersionView(APIView):
-    permission_classes = [IsAuthenticated, HasEffectiveAccess]
+    authentication_classes = [OAuth2Authentication]
+    permission_classes = [IsAuthenticated, IsClientOrAdminOrSuperUser, HasEffectiveAccess]
 
     def post(self, request, pk, version_number):
         file_link = get_object_or_404(FileFolderLink, pk=pk)
@@ -328,7 +346,8 @@ class RestoreFileVersionView(APIView):
 
 
 class SharedFilesView(APIView):
-    permission_classes = [IsAuthenticated]
+    authentication_classes = [OAuth2Authentication]
+    permission_classes = [IsAuthenticated, IsClientOrAdminOrSuperUser]
 
     def get(self, request):
         access_links = FileAccessEntry.objects.filter(user=request.user).select_related("file_link__file")
@@ -361,8 +380,9 @@ class ShareFileView(APIView):
 
 
 class ShareFileView(APIView):
-    permission_classes = [IsAuthenticated, HasEffectiveAccess]
-    parser_classes = [JSONParser] 
+    authentication_classes = [OAuth2Authentication]
+    permission_classes = [IsAuthenticated, IsClientOrAdminOrSuperUser, HasEffectiveAccess]
+    parser_classes = [JSONParser]
 
     @swagger_auto_schema(
         operation_description="Share a file with users by ID or email",
@@ -392,10 +412,22 @@ class ShareFileView(APIView):
         perms = access_map.get(level, {"can_read": True})
 
         # Resolve emails to user IDs
+        # Multi-tenancy: documents can only be shared with users of the same organisation.
+        from core.access import scope_users
+        tenant_users = scope_users(User.objects.all(), request.user)
+        if user_ids:
+            try:
+                requested_ids = {int(u) for u in user_ids}
+            except (TypeError, ValueError):
+                return Response({"error": "Invalid user id."}, status=400)
+            allowed_ids = set(tenant_users.filter(id__in=requested_ids).values_list("id", flat=True))
+            if allowed_ids != requested_ids:
+                return Response({"error": "One or more users were not found in your organisation."}, status=404)
+            user_ids = list(requested_ids)
         if emails:
-            resolved = list(User.objects.filter(email__in=emails).values_list("id", flat=True))
+            resolved = list(tenant_users.filter(email__in=emails).values_list("id", flat=True))
             user_ids = list(set(user_ids + resolved))
-            unresolved = set(emails) - set(User.objects.filter(email__in=emails).values_list("email", flat=True))
+            unresolved = set(emails) - set(tenant_users.filter(email__in=emails).values_list("email", flat=True))
             if unresolved:
                 return Response({"error": f"Users not found: {', '.join(unresolved)}"}, status=404)
 
@@ -435,7 +467,8 @@ class UnshareFileView(APIView):
 
 
 class FilePreviewView(APIView):
-    permission_classes = [IsAuthenticated, HasEffectiveAccess]
+    authentication_classes = [OAuth2Authentication]
+    permission_classes = [IsAuthenticated, IsClientOrAdminOrSuperUser, HasEffectiveAccess]
 
     def get(self, request, pk):
         file_link = get_object_or_404(FileFolderLink, pk=pk)
@@ -451,7 +484,8 @@ class FilePreviewView(APIView):
 
 
 class FileAuditLogView(APIView):
-    permission_classes = [IsAuthenticated, HasEffectiveAccess]
+    authentication_classes = [OAuth2Authentication]
+    permission_classes = [IsAuthenticated, IsClientOrAdminOrSuperUser, HasEffectiveAccess]
 
     def get(self, request, pk):
         file_link = get_object_or_404(FileFolderLink, pk=pk)
@@ -688,7 +722,8 @@ class FolderListView(APIView):
     ?include_trashed=true  → include folders that are in the trash
     ?include_files=false   → omit the file listings inside each folder
     """
-    permission_classes = [IsAuthenticated]
+    authentication_classes = [OAuth2Authentication]
+    permission_classes = [IsAuthenticated, IsClientOrAdminOrSuperUser]
 
     def get(self, request):
         # ── base queryset: current user + root-level folders
@@ -729,7 +764,8 @@ class FolderCreateView(APIView):
       "parent": "<optional_parent_uuid>"
     }
     """
-    permission_classes = [IsAuthenticated]
+    authentication_classes = [OAuth2Authentication]
+    permission_classes = [IsAuthenticated, IsClientOrAdminOrSuperUser]
 
     def post(self, request):
         data = request.data.copy()
@@ -749,7 +785,8 @@ class TrashSingleFileView(APIView):
 
     Moves a single file to trash.
     """
-    permission_classes = [IsAuthenticated, HasEffectiveAccess]
+    authentication_classes = [OAuth2Authentication]
+    permission_classes = [IsAuthenticated, IsClientOrAdminOrSuperUser, HasEffectiveAccess]
 
     def patch(self, request, pk):
         file_link = get_object_or_404(FileFolderLink, pk=pk)
@@ -776,7 +813,8 @@ class TrashFolderView(APIView):
 
 
 class FolderListCreateView(APIView):
-    permission_classes = [IsAuthenticated]
+    authentication_classes = [OAuth2Authentication]
+    permission_classes = [IsAuthenticated, IsClientOrAdminOrSuperUser]
 
     def get(self, request):
         qs = Folder.objects.filter(user=request.user, parent__isnull=True)
@@ -1047,7 +1085,8 @@ class UploadFileToFolderView(APIView):
 
 
 class ShareWithGroupView(APIView):
-    permission_classes = [IsAuthenticated, HasEffectiveAccess]
+    authentication_classes = [OAuth2Authentication]
+    permission_classes = [IsAuthenticated, IsClientOrAdminOrSuperUser, HasEffectiveAccess]
 
     @swagger_auto_schema(
         operation_description="Share file with a group",
@@ -1088,7 +1127,8 @@ class ShareWithGroupView(APIView):
 
 
 class SetAccessLevelView(APIView):
-    permission_classes = [IsAuthenticated, HasEffectiveAccess]
+    authentication_classes = [OAuth2Authentication]
+    permission_classes = [IsAuthenticated, IsClientOrAdminOrSuperUser, HasEffectiveAccess]
 
     @swagger_auto_schema(
         operation_description="Update a user's access level for a file",
@@ -1113,7 +1153,8 @@ class SetAccessLevelView(APIView):
 
 
 class GrantPublicLinkView(APIView):
-    permission_classes = [IsAuthenticated, HasEffectiveAccess]
+    authentication_classes = [OAuth2Authentication]
+    permission_classes = [IsAuthenticated, IsClientOrAdminOrSuperUser, HasEffectiveAccess]
 
     def post(self, request, pk):
         file_link = get_object_or_404(FileFolderLink, pk=pk)

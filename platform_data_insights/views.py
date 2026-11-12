@@ -4,6 +4,7 @@ from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
 from oauth2_provider.contrib.rest_framework import OAuth2Authentication, TokenHasReadWriteScope
+from custom_authentication.permissions import IsClientOrAdminOrSuperUser
 
 from drf_yasg.utils import swagger_auto_schema
 from drf_yasg import openapi
@@ -21,7 +22,7 @@ client_id_param = openapi.Parameter(
 
 class PlatformInsightsView(APIView):
     authentication_classes = [OAuth2Authentication]
-    permission_classes = [TokenHasReadWriteScope]
+    permission_classes = [TokenHasReadWriteScope, IsClientOrAdminOrSuperUser]
 
     @swagger_auto_schema(
         operation_description="Fetch or compute platform insights for the current user.",

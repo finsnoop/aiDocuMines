@@ -6,6 +6,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework import status
 from django.shortcuts import get_object_or_404
 from oauth2_provider.contrib.rest_framework import OAuth2Authentication, TokenHasReadWriteScope
+from custom_authentication.permissions import IsClientOrAdminOrSuperUser
 from oauth2_provider.models import Application
 from drf_yasg.utils import swagger_auto_schema
 from drf_yasg import openapi
@@ -40,7 +41,7 @@ def get_client_from_user(user):
 
 class SystemSettingsView(APIView):
     authentication_classes = [OAuth2Authentication]
-    permission_classes = [TokenHasReadWriteScope]
+    permission_classes = [TokenHasReadWriteScope, IsClientOrAdminOrSuperUser]
 
     @swagger_auto_schema(manual_parameters=[client_id_param, client_secret_param])
     def get(self, request):
@@ -93,7 +94,7 @@ class SystemSettingsView(APIView):
 
 class SystemSettingsResetView(APIView):
     authentication_classes = [OAuth2Authentication]
-    permission_classes = [TokenHasReadWriteScope]
+    permission_classes = [TokenHasReadWriteScope, IsClientOrAdminOrSuperUser]
 
     @swagger_auto_schema(manual_parameters=[client_id_param, client_secret_param])
     def post(self, request):
@@ -126,7 +127,7 @@ class SystemSettingsResetView(APIView):
 
 class SystemSettingsAuditTrailView(APIView):
     authentication_classes = [OAuth2Authentication]
-    permission_classes = [TokenHasReadWriteScope]
+    permission_classes = [TokenHasReadWriteScope, IsClientOrAdminOrSuperUser]
 
     @swagger_auto_schema(manual_parameters=[client_id_param, client_secret_param])
     def get(self, request):
@@ -156,7 +157,7 @@ class SystemSettingsAuditTrailView(APIView):
 
 
 class SystemSettingsSchemaView(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, IsClientOrAdminOrSuperUser]
 
     def get(self, request):
         schema = get_default_settings_schema()

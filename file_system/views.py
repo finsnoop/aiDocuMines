@@ -4,13 +4,14 @@ from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 from rest_framework import status
 from celery.result import AsyncResult
+from custom_authentication.permissions import IsClientOrAdminOrSuperUser
 
 from file_system.utils import get_user_file_tree
 from file_system.tasks import generate_user_file_tree_task
 
 
 class UserFileTreeView(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, IsClientOrAdminOrSuperUser]
 
     def get(self, request, *args, **kwargs):
         user_id = kwargs["user_id"]  # will be int because of <int:user_id>

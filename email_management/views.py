@@ -3,12 +3,14 @@ from __future__ import annotations
 from datetime import datetime
 from django.utils import timezone
 from django.db.models import Q
+from django.db import models
 from rest_framework.viewsets import ModelViewSet
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.filters import SearchFilter, OrderingFilter
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework import status
+from custom_authentication.permissions import IsClientOrAdminOrSuperUser
 
 from .models import EmailTemplate, OutboxEmail
 from .serializers import (
@@ -26,7 +28,7 @@ class EmailTemplateViewSet(ModelViewSet):
     """
     queryset = EmailTemplate.objects.all().order_by("-created_at")
     serializer_class = EmailTemplateSerializer
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, IsClientOrAdminOrSuperUser]
     filter_backends = [SearchFilter, OrderingFilter]
     search_fields = ["code", "name", "description"]
     ordering = ["-created_at"]
@@ -37,7 +39,7 @@ class OutboxEmailViewSet(ModelViewSet):
     Queue of emails to be rendered/sent via Celery.
     """
     queryset = OutboxEmail.objects.all().order_by("-created_at")
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, IsClientOrAdminOrSuperUser]
     filter_backends = [SearchFilter, OrderingFilter]
     search_fields = ["subject", "email_type", "status", "message_id", "provider_id"]
     ordering = ["-created_at"]

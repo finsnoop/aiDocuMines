@@ -154,6 +154,26 @@ def get_user_from_client_id(client_id):
         return None
 
 
+
+def _get_managed_user(request, user_id):
+    """
+    Multi-tenancy for admin actions: return the target user only if the acting
+    admin may manage them (same organisation; platform superusers manage everyone;
+    org admins can never touch platform superusers). Otherwise behave exactly as if
+    the user did not exist, so existing `except DoesNotExist` handlers return 404.
+    """
+    from core.access import can_manage_user
+    target = _get_managed_user(request, user_id)
+    if target.id != request.user.id and not can_manage_user(request.user, target):
+        raise CustomUser.DoesNotExist
+    return target
+
+
+def _can_grant_platform_roles(request):
+    from core.access import is_platform_superuser
+    return is_platform_superuser(request.user)
+
+
 class SignupView(APIView):
     authentication_classes = []
     permission_classes = [AllowAny]
@@ -584,7 +604,7 @@ class UserProfileView(APIView):
         return Response({
             "id": user.id,
             "email": user.email,
-            "organisation": user.client.name,
+            "organisation": user.client.name if user.client else None,
             "contact_name": user.contact_name,
             "contact_phone": user.contact_phone,
             "address": user.address,
@@ -687,10 +707,12 @@ class ListUsersView(APIView):
         tags=["Admin"],
     )
     def get(self, request):
-        if not request.user.is_staff:
+        if not request.user.is_staff and not request.user.is_superuser:
             return Response({"error": "Admin access required"}, status=status.HTTP_403_FORBIDDEN)
 
-        users = User.objects.filter(client=request.user.client)
+        # Superusers can see all users, admins can only see users from their client
+        from core.access import scope_users
+        users = scope_users(User.objects.all(), request.user)
 
         user_data = []
         for user in users:
@@ -729,7 +751,7 @@ class DisableUserView(APIView):
         # user_id = request.data.get("user_id")
 
         try:
-            user = User.objects.get(id=user_id)
+            user = _get_managed_user(request, user_id)
             user.is_active = False
             user.save()
 
@@ -771,7 +793,7 @@ class EnableUserView(APIView):
         # user_id = request.data.get("user_id")
 
         try:
-            user = User.objects.get(id=user_id)
+            user = _get_managed_user(request, user_id)
             user.is_active = True
             user.save()
 
@@ -842,7 +864,7 @@ class AdminResetUserPasswordView(APIView):
         new_password = request.data.get("new_password")
 
         try:
-            user = User.objects.get(id=user_id)
+            user = _get_managed_user(request, user_id)
             user.set_password(new_password)
             user.save()
 
@@ -888,7 +910,7 @@ class AdminResetUserPasswordView(APIView):
         new_password = request.data.get("new_password")
 
         try:
-            user = User.objects.get(id=user_id)
+            user = _get_managed_user(request, user_id)
             user.set_password(new_password)
             user.save()
 
@@ -926,13 +948,19 @@ class PromoteUserToAdminView(APIView):
             return Response({"error": "User ID is required"}, status=status.HTTP_400_BAD_REQUEST)
 
         try:
-            user = CustomUser.objects.get(id=user_id)
+            user = _get_managed_user(request, user_id)
 
-            if user.is_superuser:
+            if user.is_staff or user.is_superuser:
                 return Response({"message": "User is already an admin"}, status=status.HTTP_200_OK)
 
+            # Organisation admin by default. Platform-wide superuser status can only be
+            # granted by a platform superuser who explicitly asks for it.
             user.is_staff = True
-            user.is_superuser = True
+            if str(request.data.get("platform_superuser", "")).lower() == "true":
+                if not _can_grant_platform_roles(request):
+                    return Response({"error": "Only platform superusers can grant platform superuser status"},
+                                    status=status.HTTP_403_FORBIDDEN)
+                user.is_superuser = True
             user.save()
 
             # ✅ Adjust group roles
@@ -954,7 +982,10 @@ class UserActivityLogView(APIView):
 
     def get(self, request, user_id):
         """Fetch activity logs for a specific user."""
-        user = get_object_or_404(CustomUser, id=user_id)
+        try:
+            user = _get_managed_user(request, user_id)
+        except CustomUser.DoesNotExist:
+            return Response({"error": "User not found"}, status=status.HTTP_404_NOT_FOUND)
         logs = UserActivityLog.objects.filter(user=user).order_by('-timestamp')
 
         if logs.exists():
@@ -970,134 +1001,75 @@ class CreateAdminUserView(APIView):
     permission_classes = [IsFirstAdminOrSuperUser]
 
     def post(self, request):
+        """
+        Bootstrap the first platform superuser (open only while none exists), or
+        let an authenticated superuser create another one.
+
+        SECURITY: responses never contain passwords, and existing credentials are
+        never returned. The OAuth client secret of the NEW account is returned once,
+        to its creator, because it cannot be recovered later.
+        """
         superuser_file = "logs/.superuser_secrets.json"
-
-        # ✅ Check if the superuser file exists
-        if os.path.exists(superuser_file):
-            with open(superuser_file, "r") as f:
-                superuser_data = json.load(f)
-                # ✅ Check if the superuser data is valid
-                if "admin_email" in superuser_data and "admin_password" in superuser_data:
-                    return Response({
-                        "error": "Admin account already exists. Authentication required.",
-                        "email": superuser_data.get("admin_email"),
-                        "password": superuser_data.get("admin_password"),
-                        "client_id": superuser_data.get("client_id"),
-                        "client_secret": superuser_data.get("client_secret")
-                    }, status=status.HTTP_403_FORBIDDEN)
-        # ✅ Get the user model
-
         user_model = get_user_model()
+        is_bootstrap = not user_model.objects.filter(is_superuser=True).exists()
 
-        existing_admins = user_model.objects.filter(is_superuser=True)
+        if not is_bootstrap and not (
+            request.user and request.user.is_authenticated and request.user.is_superuser
+        ):
+            return Response(
+                {"error": "Admin account already exists. Authentication required."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
 
-        # 🔁 Get or create the Client instance
-        client, _ = Client.objects.get_or_create(name=data["organisation"])
-
-        # ✅ If no admin exists, allow open creation (initial bootstrap)
-        if not existing_admins.exists():
-            serializer = CreateAdminUserSerializer(data=request.data)
-            if serializer.is_valid():
-                data = serializer.validated_data
-
-                # ✅ Create first superuser
-                user = user_model.objects.create_superuser(
-                    email=data["email"],
-                    password=data["password"],
-                    client=client,
-                    contact_name=data["contact_name"],
-                    contact_phone=data["contact_phone"],
-                    address=data["address"],
-                    industry=data["industry"],
-                    use_case=data["use_case"]
-                )
-
-                # ✅ Generate and store OAuth credentials
-                raw_client_secret = Application.objects.generate_secret()
-                app = Application.objects.create(
-                    user=user,
-                    client_type=Application.CLIENT_CONFIDENTIAL,
-                    authorization_grant_type=Application.GRANT_CLIENT_CREDENTIALS,
-                    name="AI DocuMines API Access",
-                    client_secret=raw_client_secret
-                )
-
-                # ✅ Persist credentials for future reference
-                secrets_data = {
-                    "admin_email": data["email"],
-                    "admin_password": data["password"],
-                    "client_id": app.client_id,
-                    "client_secret": raw_client_secret
-                }
-
-                with open(superuser_file, "w") as f:
-                    json.dump(secrets_data, f, indent=4)
-
-                return Response({
-                    "message": "Admin user created successfully",
-                    "admin_email": data["email"],
-                    "admin_password": data["password"],
-                    "client_id": app.client_id,
-                    "client_secret": raw_client_secret
-                }, status=status.HTTP_201_CREATED)
-
-            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-
-        # ✅ All other admin creations require authenticated superuser
-        if not request.user or not request.user.is_authenticated or not request.user.is_superuser:
-            # Optional: show reference to existing admin credentials
-            if os.path.exists(superuser_file):
-                with open(superuser_file, "r") as f:
-                    superuser_data = json.load(f)
-
-                return Response({
-                    "info": "Admin account already exists. Authentication required.",
-                    "email": superuser_data.get("admin_email"),
-                    "password": superuser_data.get("admin_password"),
-                    "client_id": superuser_data.get("client_id"),
-                    "client_secret": superuser_data.get("client_secret")
-                }, status=status.HTTP_403_FORBIDDEN)
-
-            return Response({
-                "error": "Admin account already exists. Authentication required."
-            }, status=status.HTTP_403_FORBIDDEN)
-
-        # ✅ Authenticated superuser: proceed to create new admin
         serializer = CreateAdminUserSerializer(data=request.data)
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        data = serializer.validated_data
 
-        # 🔁 Get or create the Client instance
-        client, _ = Client.objects.get_or_create(name=data["organisation"])
+        organisation = data.get("organisation") or request.data.get("organisation")
+        if not organisation:
+            return Response({"organisation": ["This field is required."]},
+                            status=status.HTTP_400_BAD_REQUEST)
+        client, _ = Client.objects.get_or_create(name=organisation)
 
-        if serializer.is_valid():
-            data = serializer.validated_data
+        user = user_model.objects.create_superuser(
+            email=data["email"],
+            password=data["password"],
+            client=client,
+            contact_name=data["contact_name"],
+            contact_phone=data["contact_phone"],
+            address=data["address"],
+            industry=data["industry"],
+            use_case=data["use_case"],
+        )
 
-            user = user_model.objects.create_superuser(
-                email=data["email"],
-                password=data["password"],
-                client=client,
-                contact_name=data["contact_name"],
-                contact_phone=data["contact_phone"],
-                address=data["address"],
-                industry=data["industry"],
-                use_case=data["use_case"]
-            )
+        raw_client_secret = Application.objects.generate_secret()
+        app = Application.objects.create(
+            user=user,
+            client_type=Application.CLIENT_CONFIDENTIAL,
+            authorization_grant_type=Application.GRANT_CLIENT_CREDENTIALS,
+            name="AI DocuMines API Access",
+            client_secret=raw_client_secret,
+        )
 
-            raw_client_secret = Application.objects.generate_secret()
-            app = Application.objects.create(
-                user=user,
-                client_type=Application.CLIENT_CONFIDENTIAL,
-                authorization_grant_type=Application.GRANT_CLIENT_CREDENTIALS,
-                name="AI DocuMines API Access",
-                client_secret=raw_client_secret
-            )
+        if is_bootstrap:
+            # Server-side record for ops scripts (reset_and_create_superuser.sh).
+            os.makedirs(os.path.dirname(superuser_file), exist_ok=True)
+            with open(superuser_file, "w") as f:
+                json.dump({
+                    "admin_email": data["email"],
+                    "admin_password": data["password"],
+                    "client_id": app.client_id,
+                    "client_secret": raw_client_secret,
+                }, f, indent=4)
+            os.chmod(superuser_file, 0o600)
 
-            return Response({
-                "message": "Admin user created successfully",
-                "admin_email": data["email"],
-                "admin_password": data["password"],
-                "client_id": app.client_id,
-                "client_secret": raw_client_secret
-            }, status=status.HTTP_201_CREATED)
+        return Response({
+            "message": "Admin user created successfully",
+            "admin_email": data["email"],
+            "client_id": app.client_id,
+            "client_secret": raw_client_secret,
+        }, status=status.HTTP_201_CREATED)
 
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
@@ -1226,7 +1198,7 @@ class CreateUserView(APIView):
                 "user_id": user.id,
                 "email": user.email,
                 "temporary_password": temp_password,  # ✅ Include the generated password
-                "organisation": user.client.name,
+                "organisation": user.client.name if user.client else None,
                 "role": role.name,
                 "client_id": app.client_id,
                 "client_secret": raw_client_secret,
@@ -1244,11 +1216,11 @@ class RetrieveUserView(APIView):
 
     def get(self, request, user_id):
         try:
-            user = User.objects.get(id=user_id)
+            user = _get_managed_user(request, user_id)
             return Response({
                 "id": user.id,
                 "email": user.email,
-                "organisation": user.client.name,
+                "organisation": user.client.name if user.client else None,
                 "is_active": user.is_active,
                 "is_superuser": user.is_superuser,  # ✅ Check if they are an admin
                 "created_at": user.profile_created_at,
@@ -1426,14 +1398,29 @@ class WhoAmIView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
+        """
+        Verified identity for the token holder. Used by the frontend and by the
+        Node backend to derive user, tenant and RBAC server-side.
+        """
+        from core.access import user_role_names, primary_role, user_permissions, is_tenant_admin, is_platform_superuser
+        from oauth2_provider.models import Application
+
         user = request.user
         return Response({
             "id": user.id,
             "email": user.email,
-            "roles": [group.name for group in user.groups.all()],
+            "username": user.username,
+            "roles": sorted(user_role_names(user)),
+            "primary_role": primary_role(user),
+            "permissions": sorted(user_permissions(user)),
             "client": user.client.name if user.client else None,
+            "client_org_id": user.client_id,
+            "oauth_client_ids": list(Application.objects.filter(user=user).values_list("client_id", flat=True)),
+            "is_staff": user.is_staff,
             "is_superuser": user.is_superuser,
-            "2fa_enabled": user.is_2fa_enabled
+            "is_tenant_admin": is_tenant_admin(user),
+            "is_platform_superuser": is_platform_superuser(user),
+            "2fa_enabled": user.is_2fa_enabled,
         })
 
 
@@ -1453,7 +1440,7 @@ class DemoteUserFromAdminView(APIView):
 
     def post(self, request, user_id):
         try:
-            user = CustomUser.objects.get(id=user_id)
+            user = _get_managed_user(request, user_id)
 
             if not user.is_superuser:
                 return Response({"message": "User is not an admin"}, status=status.HTTP_400_BAD_REQUEST)
@@ -1482,6 +1469,10 @@ class SupersuperuserResetView(APIView):
 
     def post(self, request):
         import os
+        # Break-glass endpoints are disabled unless explicitly enabled on the server.
+        if os.environ.get("ENABLE_BREAK_GLASS_ENDPOINTS", "false").lower() != "true":
+            from django.http import Http404
+            raise Http404()
         import json
         from django.contrib.auth import get_user_model
         from custom_authentication.models import Client
@@ -1510,10 +1501,14 @@ class SupersuperuserResetView(APIView):
         if not user.check_password(password):
             return Response({"error": "Invalid email or password"}, status=status.HTTP_403_FORBIDDEN)
 
-        # Step 2: Verify against .env superuser
-        ADMIN_EMAIL = os.environ.get("DJANGO_SUPERUSER_EMAIL", "michael.kateregga@datasqan.com")
-        ADMIN_PASSWORD = os.environ.get("DJANGO_SUPERUSER_PASSWORD", "superpassword")
+        # Step 2: Verify against .env superuser (no hardcoded fallbacks)
+        ADMIN_EMAIL = os.environ.get("DJANGO_SUPERUSER_EMAIL", "")
+        ADMIN_PASSWORD = os.environ.get("DJANGO_SUPERUSER_PASSWORD", "")
         SECRETS_FILE_PATH = "logs/.superuser_secrets.json"
+
+        if not ADMIN_EMAIL or not ADMIN_PASSWORD:
+            return Response({"error": "Break-glass reset is not configured."},
+                            status=status.HTTP_503_SERVICE_UNAVAILABLE)
 
         if not user.is_superuser or user.email.lower() != ADMIN_EMAIL.lower():
             return Response({"error": "Unauthorized"}, status=status.HTTP_403_FORBIDDEN)
@@ -1574,7 +1569,6 @@ class SupersuperuserResetView(APIView):
             return Response({
                 "message": "Supersuperuser-triggered system reset complete",
                 "admin_email": ADMIN_EMAIL,
-                "admin_password": ADMIN_PASSWORD,
                 "client_id": app.client_id,
                 "client_secret": raw_client_secret
             }, status=status.HTTP_201_CREATED)
@@ -1590,6 +1584,10 @@ class SupersuperuserCleanDatabaseView(APIView):
 
     def post(self, request):
         import os
+        # Break-glass endpoints are disabled unless explicitly enabled on the server.
+        if os.environ.get("ENABLE_BREAK_GLASS_ENDPOINTS", "false").lower() != "true":
+            from django.http import Http404
+            raise Http404()
         from django.db import connection
         from django.contrib.auth import get_user_model
         from rest_framework.response import Response
@@ -1615,8 +1613,8 @@ class SupersuperuserCleanDatabaseView(APIView):
             return Response({"error": "Invalid credentials"}, status=403)
 
         # 🧠 Must match env-based supersuperuser
-        env_email = os.environ.get("DJANGO_SUPERUSER_EMAIL", "michael.kateregga@datasqan.com")
-        if not user.is_superuser or user.email.lower() != env_email.lower():
+        env_email = os.environ.get("DJANGO_SUPERUSER_EMAIL", "")
+        if not env_email or not user.is_superuser or user.email.lower() != env_email.lower():
             return Response({"error": "Unauthorized"}, status=403)
 
         try:
@@ -1666,3 +1664,385 @@ class SupersuperuserCleanDatabaseView(APIView):
         except Exception as e:
             logger.error(f"❌ Cleanup failed: {e}")
             return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# ROLE MANAGEMENT ENDPOINTS
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# Define the available roles in the system
+AVAILABLE_ROLES = [
+    {"name": "Admin", "description": "Full administrative access", "level": 100},
+    {"name": "Manager", "description": "Can manage users and projects within their client", "level": 80},
+    {"name": "Developer", "description": "Technical access for API integrations", "level": 60},
+    {"name": "Client", "description": "Standard client user access", "level": 40},
+    {"name": "Guest", "description": "Limited read-only access", "level": 20},
+]
+
+ROLE_NAMES = [role["name"] for role in AVAILABLE_ROLES]
+
+
+class ListRolesView(APIView):
+    """List all available roles in the system."""
+    authentication_classes = [OAuth2Authentication]
+    permission_classes = [IsAdminOrSuperUser]
+
+    @swagger_auto_schema(
+        operation_description="List all available roles that can be assigned to users.",
+        tags=["Admin - Roles"],
+        responses={200: "List of available roles"},
+    )
+    def get(self, request):
+        # Ensure all roles exist in the database
+        for role in AVAILABLE_ROLES:
+            Group.objects.get_or_create(name=role["name"])
+
+        return Response({
+            "roles": AVAILABLE_ROLES,
+            "total": len(AVAILABLE_ROLES)
+        }, status=status.HTTP_200_OK)
+
+
+class GetUserRolesView(APIView):
+    """Get all roles assigned to a specific user."""
+    authentication_classes = [OAuth2Authentication]
+    permission_classes = [IsAdminOrSuperUser]
+
+    @swagger_auto_schema(
+        operation_description="Get all roles assigned to a specific user.",
+        tags=["Admin - Roles"],
+        responses={200: "User roles", 404: "User not found"},
+    )
+    def get(self, request, user_id):
+        try:
+            user = _get_managed_user(request, user_id)
+            user_roles = list(user.groups.values_list("name", flat=True))
+
+            return Response({
+                "user_id": user.id,
+                "email": user.email,
+                "roles": user_roles,
+                "is_staff": user.is_staff,
+                "is_superuser": user.is_superuser,
+            }, status=status.HTTP_200_OK)
+
+        except CustomUser.DoesNotExist:
+            return Response({"error": "User not found"}, status=status.HTTP_404_NOT_FOUND)
+
+
+class AssignUserRoleView(APIView):
+    """Assign a role to a user."""
+    authentication_classes = [OAuth2Authentication]
+    permission_classes = [IsAdminOrSuperUser]
+
+    @swagger_auto_schema(
+        operation_description="Assign a role to a user. Multiple roles can be assigned.",
+        tags=["Admin - Roles"],
+        request_body=openapi.Schema(
+            type=openapi.TYPE_OBJECT,
+            properties={
+                "role": openapi.Schema(
+                    type=openapi.TYPE_STRING,
+                    description="Role name to assign",
+                    enum=ROLE_NAMES
+                ),
+                "set_staff": openapi.Schema(
+                    type=openapi.TYPE_BOOLEAN,
+                    description="Also set is_staff=True (for Admin role)",
+                    default=False
+                ),
+                "set_superuser": openapi.Schema(
+                    type=openapi.TYPE_BOOLEAN,
+                    description="Also set is_superuser=True (for Admin role)",
+                    default=False
+                ),
+            },
+            required=["role"],
+        ),
+        responses={200: "Role assigned", 400: "Invalid role", 404: "User not found"},
+    )
+    def post(self, request, user_id):
+        role_name = request.data.get("role")
+        set_staff = request.data.get("set_staff", False)
+        set_superuser = request.data.get("set_superuser", False)
+
+        if not role_name:
+            return Response({"error": "Role name is required"}, status=status.HTTP_400_BAD_REQUEST)
+
+        if role_name not in ROLE_NAMES:
+            return Response({
+                "error": f"Invalid role '{role_name}'. Available roles: {ROLE_NAMES}"
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            user = _get_managed_user(request, user_id)
+
+            # Platform role: only platform superusers may grant it
+            if role_name == "SuperAdmin" and not _can_grant_platform_roles(request):
+                return Response({"error": "Only platform superusers can assign the SuperAdmin role"},
+                                status=status.HTTP_403_FORBIDDEN)
+
+            # Prevent non-superusers from assigning Admin role
+            if role_name == "Admin" and not request.user.is_superuser:
+                return Response({
+                    "error": "Only superusers can assign the Admin role"
+                }, status=status.HTTP_403_FORBIDDEN)
+
+            # Get or create the role group
+            role_group, _ = Group.objects.get_or_create(name=role_name)
+
+            # Add the role to the user
+            user.groups.add(role_group)
+
+            # Optionally set staff/superuser flags
+            if set_staff or role_name == "Admin":
+                user.is_staff = True
+            if set_superuser:
+                if not request.user.is_superuser:
+                    return Response({
+                        "error": "Only superusers can grant superuser status"
+                    }, status=status.HTTP_403_FORBIDDEN)
+                user.is_superuser = True
+
+            user.save()
+
+            # Log the activity
+            log_activity(user, "ROLE_ASSIGNED", {
+                "role": role_name,
+                "assigned_by": request.user.id,
+                "assigned_by_email": request.user.email
+            })
+
+            return Response({
+                "message": f"Role '{role_name}' assigned to user {user.email}",
+                "user_id": user.id,
+                "email": user.email,
+                "roles": list(user.groups.values_list("name", flat=True)),
+                "is_staff": user.is_staff,
+                "is_superuser": user.is_superuser,
+            }, status=status.HTTP_200_OK)
+
+        except CustomUser.DoesNotExist:
+            return Response({"error": "User not found"}, status=status.HTTP_404_NOT_FOUND)
+
+
+class RemoveUserRoleView(APIView):
+    """Remove a role from a user."""
+    authentication_classes = [OAuth2Authentication]
+    permission_classes = [IsAdminOrSuperUser]
+
+    @swagger_auto_schema(
+        operation_description="Remove a role from a user.",
+        tags=["Admin - Roles"],
+        request_body=openapi.Schema(
+            type=openapi.TYPE_OBJECT,
+            properties={
+                "role": openapi.Schema(
+                    type=openapi.TYPE_STRING,
+                    description="Role name to remove",
+                    enum=ROLE_NAMES
+                ),
+                "revoke_staff": openapi.Schema(
+                    type=openapi.TYPE_BOOLEAN,
+                    description="Also set is_staff=False",
+                    default=False
+                ),
+                "revoke_superuser": openapi.Schema(
+                    type=openapi.TYPE_BOOLEAN,
+                    description="Also set is_superuser=False",
+                    default=False
+                ),
+            },
+            required=["role"],
+        ),
+        responses={200: "Role removed", 400: "Invalid role", 404: "User not found"},
+    )
+    def post(self, request, user_id):
+        role_name = request.data.get("role")
+        revoke_staff = request.data.get("revoke_staff", False)
+        revoke_superuser = request.data.get("revoke_superuser", False)
+
+        if not role_name:
+            return Response({"error": "Role name is required"}, status=status.HTTP_400_BAD_REQUEST)
+
+        if role_name not in ROLE_NAMES:
+            return Response({
+                "error": f"Invalid role '{role_name}'. Available roles: {ROLE_NAMES}"
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            user = _get_managed_user(request, user_id)
+
+            # Prevent removing Admin role from self
+            if role_name == "Admin" and user.id == request.user.id:
+                return Response({
+                    "error": "You cannot remove the Admin role from yourself"
+                }, status=status.HTTP_400_BAD_REQUEST)
+
+            # Prevent non-superusers from removing Admin role
+            if role_name == "Admin" and not request.user.is_superuser:
+                return Response({
+                    "error": "Only superusers can remove the Admin role"
+                }, status=status.HTTP_403_FORBIDDEN)
+
+            # Get the role group
+            try:
+                role_group = Group.objects.get(name=role_name)
+                user.groups.remove(role_group)
+            except Group.DoesNotExist:
+                pass  # Role doesn't exist, nothing to remove
+
+            # Optionally revoke staff/superuser flags
+            if revoke_staff:
+                user.is_staff = False
+            if revoke_superuser:
+                if not request.user.is_superuser:
+                    return Response({
+                        "error": "Only superusers can revoke superuser status"
+                    }, status=status.HTTP_403_FORBIDDEN)
+                user.is_superuser = False
+
+            # If removing Admin role, also revoke elevated permissions
+            if role_name == "Admin":
+                user.is_staff = False
+                user.is_superuser = False
+                # Assign Guest role as fallback
+                guest_group, _ = Group.objects.get_or_create(name="Guest")
+                user.groups.add(guest_group)
+
+            user.save()
+
+            # Log the activity
+            log_activity(user, "ROLE_REMOVED", {
+                "role": role_name,
+                "removed_by": request.user.id,
+                "removed_by_email": request.user.email
+            })
+
+            return Response({
+                "message": f"Role '{role_name}' removed from user {user.email}",
+                "user_id": user.id,
+                "email": user.email,
+                "roles": list(user.groups.values_list("name", flat=True)),
+                "is_staff": user.is_staff,
+                "is_superuser": user.is_superuser,
+            }, status=status.HTTP_200_OK)
+
+        except CustomUser.DoesNotExist:
+            return Response({"error": "User not found"}, status=status.HTTP_404_NOT_FOUND)
+
+
+class SetUserRolesView(APIView):
+    """Set all roles for a user (replaces existing roles)."""
+    authentication_classes = [OAuth2Authentication]
+    permission_classes = [IsAdminOrSuperUser]
+
+    @swagger_auto_schema(
+        operation_description="Set all roles for a user. This replaces all existing roles.",
+        tags=["Admin - Roles"],
+        request_body=openapi.Schema(
+            type=openapi.TYPE_OBJECT,
+            properties={
+                "roles": openapi.Schema(
+                    type=openapi.TYPE_ARRAY,
+                    items=openapi.Schema(type=openapi.TYPE_STRING, enum=ROLE_NAMES),
+                    description="List of role names to set"
+                ),
+                "set_staff": openapi.Schema(
+                    type=openapi.TYPE_BOOLEAN,
+                    description="Set is_staff flag",
+                    default=False
+                ),
+                "set_superuser": openapi.Schema(
+                    type=openapi.TYPE_BOOLEAN,
+                    description="Set is_superuser flag",
+                    default=False
+                ),
+            },
+            required=["roles"],
+        ),
+        responses={200: "Roles set", 400: "Invalid roles", 404: "User not found"},
+    )
+    def post(self, request, user_id):
+        role_names = request.data.get("roles", [])
+        set_staff = request.data.get("set_staff", False)
+        set_superuser = request.data.get("set_superuser", False)
+
+        if not role_names:
+            return Response({"error": "At least one role is required"}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Validate all roles
+        invalid_roles = [r for r in role_names if r not in ROLE_NAMES]
+        if invalid_roles:
+            return Response({
+                "error": f"Invalid roles: {invalid_roles}. Available roles: {ROLE_NAMES}"
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            user = _get_managed_user(request, user_id)
+
+            if "SuperAdmin" in role_names and not _can_grant_platform_roles(request):
+                return Response({"error": "Only platform superusers can assign the SuperAdmin role"},
+                                status=status.HTTP_403_FORBIDDEN)
+
+            # Check Admin role assignment permissions
+            if "Admin" in role_names and not request.user.is_superuser:
+                return Response({
+                    "error": "Only superusers can assign the Admin role"
+                }, status=status.HTTP_403_FORBIDDEN)
+
+            # Prevent removing Admin role from self
+            current_roles = set(user.groups.values_list("name", flat=True))
+            if "Admin" in current_roles and "Admin" not in role_names and user.id == request.user.id:
+                return Response({
+                    "error": "You cannot remove the Admin role from yourself"
+                }, status=status.HTTP_400_BAD_REQUEST)
+
+            # Clear all existing roles
+            user.groups.clear()
+
+            # Add new roles
+            for role_name in role_names:
+                role_group, _ = Group.objects.get_or_create(name=role_name)
+                user.groups.add(role_group)
+
+            # Set staff/superuser flags based on roles
+            if "Admin" in role_names:
+                user.is_staff = True
+                if set_superuser:
+                    if not request.user.is_superuser:
+                        return Response({
+                            "error": "Only superusers can grant superuser status"
+                        }, status=status.HTTP_403_FORBIDDEN)
+                    user.is_superuser = True
+            else:
+                user.is_staff = set_staff
+                if set_superuser:
+                    if not request.user.is_superuser:
+                        return Response({
+                            "error": "Only superusers can grant superuser status"
+                        }, status=status.HTTP_403_FORBIDDEN)
+                    user.is_superuser = set_superuser
+                else:
+                    user.is_superuser = False
+
+            user.save()
+
+            # Log the activity
+            log_activity(user, "ROLES_SET", {
+                "roles": role_names,
+                "set_by": request.user.id,
+                "set_by_email": request.user.email
+            })
+
+            return Response({
+                "message": f"Roles set for user {user.email}",
+                "user_id": user.id,
+                "email": user.email,
+                "roles": list(user.groups.values_list("name", flat=True)),
+                "is_staff": user.is_staff,
+                "is_superuser": user.is_superuser,
+            }, status=status.HTTP_200_OK)
+
+        except CustomUser.DoesNotExist:
+            return Response({"error": "User not found"}, status=status.HTTP_404_NOT_FOUND)

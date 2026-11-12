@@ -7,12 +7,14 @@ from rest_framework.response import Response
 from rest_framework import status
 from django.shortcuts import get_object_or_404
 from oauth2_provider.contrib.rest_framework import OAuth2Authentication, TokenHasReadWriteScope
+from custom_authentication.permissions import IsClientOrAdminOrSuperUser
 from oauth2_provider.models import Application
 from drf_yasg.utils import swagger_auto_schema
 from drf_yasg import openapi
 
 from core.models import File
 from document_structures import models, tasks, serializers
+from core.access import get_file_for_user, get_scoped_or_404, get_run_for_user, scope_by_file, scope_by_owner
 
 logger = logging.getLogger(__name__)
 
@@ -46,7 +48,7 @@ class SubmitDocumentPartitionAPIView(APIView):
     Starts document partitioning via unstructured for a specific file.
     """
     authentication_classes = [OAuth2Authentication]
-    permission_classes = [TokenHasReadWriteScope]
+    permission_classes = [TokenHasReadWriteScope, IsClientOrAdminOrSuperUser]
 
     @swagger_auto_schema(
         manual_parameters=[
@@ -78,7 +80,7 @@ class SubmitDocumentPartitionAPIView(APIView):
         if not user:
             return Response({"error": "Invalid client ID"}, status=status.HTTP_403_FORBIDDEN)
 
-        file_instance = get_object_or_404(File, id=file_id)
+        file_instance = get_file_for_user(request.user, file_id)
 
         if str(file_instance.user.id) != str(user.id):
             return Response({"error": "You are not authorized to process this file."}, status=status.HTTP_403_FORBIDDEN)
@@ -135,7 +137,7 @@ class DocumentStructureRunStatusAPIView(APIView):
     Checks status + optionally retrieves extracted elements for a DocumentStructureRun
     """
     authentication_classes = [OAuth2Authentication]
-    permission_classes = [TokenHasReadWriteScope]
+    permission_classes = [TokenHasReadWriteScope, IsClientOrAdminOrSuperUser]
 
     @swagger_auto_schema(
         manual_parameters=[
@@ -178,7 +180,7 @@ class SubmitDocumentComparisonAPIView(APIView):
     Starts a comparison between two DocumentStructureRuns.
     """
     authentication_classes = [OAuth2Authentication]
-    permission_classes = [TokenHasReadWriteScope]
+    permission_classes = [TokenHasReadWriteScope, IsClientOrAdminOrSuperUser]
 
     @swagger_auto_schema(
         manual_parameters=[
@@ -243,7 +245,7 @@ class DocumentComparisonStatusAPIView(APIView):
     Fetches result/status for a document comparison.
     """
     authentication_classes = [OAuth2Authentication]
-    permission_classes = [TokenHasReadWriteScope]
+    permission_classes = [TokenHasReadWriteScope, IsClientOrAdminOrSuperUser]
 
     @swagger_auto_schema(
         manual_parameters=[

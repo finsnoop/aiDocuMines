@@ -14,6 +14,7 @@ from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated, IsAdminUser, AllowAny
 from rest_framework import status, generics, filters
+from custom_authentication.permissions import IsClientOrAdminOrSuperUser
 
 from django.contrib.auth import get_user_model
 
@@ -224,7 +225,7 @@ class NextcloudRedirectView(LoginRequiredMixin, View):
 
 
 class NextcloudAutologinView(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, IsClientOrAdminOrSuperUser]
 
     def get(self, request):
         user = request.user

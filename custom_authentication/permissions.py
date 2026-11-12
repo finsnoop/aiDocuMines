@@ -68,23 +68,22 @@ class HasAnyRole(BasePermission):
         if not request.user or not request.user.is_authenticated:
             return False
 
-        # Also check x-role header (passed by frontend auth interceptor)
-        header_role = request.META.get("HTTP_X_ROLE", "") or getattr(request, "role", "")
-        if header_role:
-            for role in self.roles:
-                if role == 'admin' and header_role in ('Admin',):
-                    return True
-                if role.startswith('group:') and role.split(':', 1)[1] == header_role:
-                    return True
+        # Roles come from the authenticated user only (never from request headers).
+        from core.access import user_role_names, is_platform_superuser, is_tenant_admin
 
+        names = user_role_names(request.user)
         for role in self.roles:
-            if role == 'superuser' and request.user.is_superuser:
+            if role == 'superuser' and is_platform_superuser(request.user):
                 return True
-            elif role == 'admin' and (request.user.is_staff or request.user.groups.filter(name='Admin').exists()):
+            elif role == 'admin' and is_tenant_admin(request.user):
                 return True
             elif role.startswith('group:'):
                 group_name = role.split(':', 1)[1]
-                if request.user.groups.filter(name=group_name).exists():
+                if group_name in names:
+                    return True
+                # Every authenticated tenant user is at least a Client unless
+                # explicitly restricted to Guest.
+                if group_name == 'Client' and 'Guest' not in names:
                     return True
 
         return False

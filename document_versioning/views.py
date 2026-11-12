@@ -14,6 +14,7 @@ from oauth2_provider.contrib.rest_framework import OAuth2Authentication, TokenHa
 from drf_yasg.utils import swagger_auto_schema
 from drf_yasg import openapi
 from document_versioning.utils import get_next_version_number, generate_diff, restore_from_archive
+from core.access import get_file_for_user, get_scoped_or_404, get_run_for_user, scope_by_file, scope_by_owner
 
 
 logger = logging.getLogger(__name__)
@@ -81,7 +82,7 @@ class SubmitVersionAPIView(APIView):
         if not user:
             return Response({"error": "Invalid client ID"}, status=status.HTTP_401_UNAUTHORIZED)
 
-        file_instance = get_object_or_404(File, id=file_id)
+        file_instance = get_file_for_user(request.user, file_id)
 
         if file_instance.user != user:
             raise PermissionDenied("You are not authorized to version this file.")
@@ -123,7 +124,7 @@ class ListVersionsAPIView(APIView):
         if not user:
             return Response({"error": "Invalid client ID"}, status=status.HTTP_401_UNAUTHORIZED)
 
-        file_instance = get_object_or_404(File, id=file_id)
+        file_instance = get_file_for_user(request.user, file_id)
 
         if file_instance.user != user:
             raise PermissionDenied("You are not authorized to view versions of this file.")
@@ -173,7 +174,7 @@ class GetVersionDiffAPIView(APIView):
         if not user:
             return Response({"error": "Invalid client ID"}, status=status.HTTP_401_UNAUTHORIZED)
 
-        file_instance = get_object_or_404(File, id=file_id)
+        file_instance = get_file_for_user(request.user, file_id)
 
         if file_instance.user != user:
             raise PermissionDenied("You are not authorized to view diffs for this file.")
@@ -225,7 +226,7 @@ class CompareVersionsDetailedView(APIView):
         if not user:
             return Response({"error": "Invalid client ID"}, status=status.HTTP_401_UNAUTHORIZED)
 
-        file_instance = get_object_or_404(File, id=file_id)
+        file_instance = get_file_for_user(request.user, file_id)
 
         if file_instance.user != user:
             raise PermissionDenied("You are not authorized to compare versions for this file.")
@@ -298,7 +299,7 @@ class CheckVersionStatusAPIView(APIView):
             }, status=status.HTTP_200_OK)
 
         if file_id:
-            file_instance = get_object_or_404(File, id=file_id)
+            file_instance = get_file_for_user(request.user, file_id)
             versions = DocumentVersion.objects.filter(file=file_instance).count()
             latest = DocumentVersion.objects.filter(file=file_instance).order_by("-version_number").first()
             policy = VersionRetentionPolicy.objects.filter(project_id=file_instance.project_id).first()

@@ -20,6 +20,15 @@ from drf_yasg.utils import swagger_auto_schema
 from drf_yasg import openapi
 import logging
 import os
+from core.access import get_file_for_user, get_scoped_or_404, get_run_for_user, scope_by_file, scope_by_owner, client_name_q
+
+
+def _workflows(request):
+    return Workflow.objects.filter(client_name_q(request.user))
+
+
+def _workflow_runs(request):
+    return WorkflowRun.objects.filter(client_name_q(request.user))
 
 
 logger = logging.getLogger(__name__)
@@ -70,7 +79,7 @@ class WorkflowListCreateAPIView(APIView):
         manual_parameters=[client_id_param, client_secret_param],
     )
     def get(self, request):
-        workflows = Workflow.objects.all()
+        workflows = _workflows(request)
         serializer = WorkflowSerializer(workflows, many=True)
         return Response(serializer.data, status=status.HTTP_200_OK)
 
@@ -83,7 +92,8 @@ class WorkflowListCreateAPIView(APIView):
     def post(self, request):
         serializer = WorkflowSerializer(data=request.data)
         if serializer.is_valid():
-            serializer.save()
+            # Owner is always the authenticated user, never a value from the request.
+            serializer.save(client_name=request.user.username or request.user.email)
             return Response(serializer.data, status=status.HTTP_201_CREATED)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
@@ -98,7 +108,7 @@ class WorkflowDetailAPIView(APIView):
         manual_parameters=[client_id_param, client_secret_param],
     )
     def get(self, request, pk):
-        workflow = get_object_or_404(Workflow, id=pk)
+        workflow = get_object_or_404(_workflows(request), id=pk)
         serializer = WorkflowSerializer(workflow)
         return Response(serializer.data, status=status.HTTP_200_OK)
 
@@ -109,10 +119,10 @@ class WorkflowDetailAPIView(APIView):
         request_body=WorkflowSerializer,
     )
     def put(self, request, pk):
-        workflow = get_object_or_404(Workflow, id=pk)
+        workflow = get_object_or_404(_workflows(request), id=pk)
         serializer = WorkflowSerializer(workflow, data=request.data, partial=True)
         if serializer.is_valid():
-            serializer.save()
+            serializer.save(client_name=workflow.client_name)
             return Response(serializer.data, status=status.HTTP_200_OK)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
@@ -127,7 +137,7 @@ class WorkflowStepListAPIView(APIView):
         manual_parameters=[client_id_param, client_secret_param],
     )
     def get(self, request):
-        steps = WorkflowStep.objects.all()
+        steps = WorkflowStep.objects.filter(workflow__in=_workflows(request))
         serializer = WorkflowStepSerializer(steps, many=True)
         return Response(serializer.data, status=status.HTTP_200_OK)
 
@@ -142,7 +152,7 @@ class WorkflowAssignmentListAPIView(APIView):
         manual_parameters=[client_id_param, client_secret_param],
     )
     def get(self, request):
-        assignments = WorkflowAssignment.objects.all()
+        assignments = WorkflowAssignment.objects.filter(workflow__in=_workflows(request))
         serializer = WorkflowAssignmentSerializer(assignments, many=True)
         return Response(serializer.data, status=status.HTTP_200_OK)
 
@@ -169,8 +179,8 @@ class SubmitWorkflowRunAPIView(APIView):
         if not user:
             return Response({"error": "Invalid client ID"}, status=status.HTTP_401_UNAUTHORIZED)
 
-        file_instance = get_object_or_404(File, id=file_id)
-        workflow = get_object_or_404(Workflow, id=workflow_id)
+        file_instance = get_file_for_user(request.user, file_id)
+        workflow = get_object_or_404(_workflows(request), id=workflow_id)
 
         if file_instance.user != user:
             raise PermissionDenied("You are not authorized to use this file.")
@@ -223,7 +233,7 @@ class CheckWorkflowStatusAPIView(APIView):
         if not run_id:
             return Response({"error": "Missing `run_id` parameter"}, status=status.HTTP_400_BAD_REQUEST)
 
-        workflow_run = get_object_or_404(WorkflowRun, id=run_id)
+        workflow_run = get_object_or_404(_workflow_runs(request), id=run_id)
         serializer = WorkflowRunSerializer(workflow_run)
 
         sla_info = {}
@@ -256,14 +266,12 @@ class ApproveStepAPIView(APIView):
         if not step_assignment_id or action not in ("approve", "reject"):
             return Response({"error": "Missing or invalid parameters"}, status=status.HTTP_400_BAD_REQUEST)
 
-        assignment = get_object_or_404(WorkflowAssignment, id=step_assignment_id)
+        assignment = get_object_or_404(
+            WorkflowAssignment.objects.filter(workflow__in=_workflows(request)), id=step_assignment_id
+        )
 
         client_id = request.headers.get("X-Client-ID")
-        actor = "unknown"
-        if client_id:
-            user = get_user_from_client_id(client_id)
-            if user:
-                actor = user.username if user and user.username else user.email
+        actor = request.user.username or request.user.email
 
         run = WorkflowRun.objects.filter(workflow=assignment.workflow).first()
 
@@ -303,7 +311,7 @@ class WorkflowAuditLogListView(APIView):
         if not run_id:
             return Response({"error": "Missing `run_id` parameter"}, status=status.HTTP_400_BAD_REQUEST)
 
-        audit_logs = WorkflowAuditLog.objects.filter(run_id=run_id)
+        audit_logs = WorkflowAuditLog.objects.filter(run__in=_workflow_runs(request), run_id=run_id)
         serializer = WorkflowAuditLogSerializer(audit_logs, many=True)
         return Response(serializer.data, status=status.HTTP_200_OK)
 
@@ -332,7 +340,7 @@ class WorkflowRunSLAUpdateView(APIView):
         if not run_id:
             return Response({"error": "Missing `run_id` in request body"}, status=status.HTTP_400_BAD_REQUEST)
 
-        workflow_run = get_object_or_404(WorkflowRun, id=run_id)
+        workflow_run = get_object_or_404(_workflow_runs(request), id=run_id)
 
         from datetime import datetime
         from django.utils.dateparse import parse_datetime
@@ -347,11 +355,7 @@ class WorkflowRunSLAUpdateView(APIView):
         workflow_run.save()
 
         client_id = request.headers.get("X-Client-ID")
-        actor = "unknown"
-        if client_id:
-            user = get_user_from_client_id(client_id)
-            if user:
-                actor = user.username if user and user.username else user.email
+        actor = request.user.username or request.user.email
 
         log_audit(workflow_run, 'sla_updated', actor, details={
             'sla_deadline': sla_deadline,
@@ -385,7 +389,9 @@ class AddCommentToStepView(APIView):
         if not assignment_id or not comment:
             return Response({"error": "Missing `assignment_id` or `comment`"}, status=status.HTTP_400_BAD_REQUEST)
 
-        assignment = get_object_or_404(WorkflowAssignment, id=assignment_id)
+        assignment = get_object_or_404(
+            WorkflowAssignment.objects.filter(workflow__in=_workflows(request)), id=assignment_id
+        )
 
         existing_comments = assignment.comments or ""
         if existing_comments:
@@ -395,11 +401,7 @@ class AddCommentToStepView(APIView):
         assignment.save()
 
         client_id = request.headers.get("X-Client-ID")
-        actor = "unknown"
-        if client_id:
-            user = get_user_from_client_id(client_id)
-            if user:
-                actor = user.username if user and user.username else user.email
+        actor = request.user.username or request.user.email
 
         run = WorkflowRun.objects.filter(workflow=assignment.workflow).first()
         log_audit(run, 'comment_added', actor, step=assignment.step, details={

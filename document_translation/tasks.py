@@ -196,6 +196,7 @@ def translate_document_task(file_id, from_language, to_language):
     translation_run = TranslationRun.objects.create(
         project_id=file_entry.project_id,
         service_id=file_entry.service_id,
+        client=getattr(file_entry.user, 'client', None),
         client_name=file_entry.user.username or file_entry.user.email,
         status="Pending",
         from_language=from_language,
@@ -341,6 +342,7 @@ def translate_document_task(file_id, from_language, to_language):
     translation_run = TranslationRun.objects.create(
         project_id=file_entry.project_id,
         service_id=file_entry.service_id,
+        client=getattr(file_entry.user, 'client', None),
         client_name=file_entry.user.username or file_entry.user.email,
         status="Pending",
         from_language=from_language,
@@ -457,6 +459,7 @@ def translate_document_task(file_id, from_language, to_language):
     translation_run = TranslationRun.objects.create(
         project_id=file_entry.project_id,
         service_id=file_entry.service_id,
+        client=getattr(file_entry.user, 'client', None),
         client_name=file_entry.user.username if file_entry.user and file_entry.user.username else file_entry.user.email,
         status="Pending",  # ✅ Set to "Pending" initially
         from_language=from_language,

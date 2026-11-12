@@ -7,6 +7,7 @@ from typing import Dict, List, Optional, Tuple
 from datetime import datetime, timedelta
 from django.contrib.auth import get_user_model
 from django.db.models import Avg, Count, Q
+from django.db import models
 from .models import (
     WorkplaceCommunicationsRun, CommunicationMessage, WageHourAnalysis,
     ComplianceAlert

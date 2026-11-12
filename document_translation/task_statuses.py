@@ -17,6 +17,7 @@ from rest_framework.permissions import AllowAny
 # Swagger Imports
 from drf_yasg.utils import swagger_auto_schema
 from drf_yasg import openapi
+from core.access import get_file_for_user, get_scoped_or_404, get_run_for_user, scope_by_file, scope_by_owner
 
 logger = logging.getLogger(__name__)
 
@@ -82,14 +83,14 @@ class TranslationTaskStatusView(APIView):
         # ✅ Prefer run_id
         if run_id:
             try:
-                run_instance = TranslationRun.objects.get(id=run_id)
+                run_instance = get_run_for_user(request.user, TranslationRun, run_id)
             except TranslationRun.DoesNotExist:
                 return Response({"error": "No translation process found for the provided run_id"}, status=404)
 
         # ✅ Resolve via file_id if needed
         if not run_instance and file_id:
-            file_instance = get_object_or_404(File, id=file_id)
-            tf_for_file = TranslationFile.objects.filter(original_file=file_instance).order_by("-created_at").first()
+            file_instance = get_file_for_user(request.user, file_id)
+            tf_for_file = scope_by_file(request.user, TranslationFile.objects.filter(original_file=file_instance), 'original_file').order_by("-created_at").first()
             if tf_for_file:
                 run_instance = tf_for_file.run
 

@@ -95,6 +95,18 @@ def list_bulk_handlers() -> List[Dict]:
     ]
 
 
+
+def _requesting_user(user_id):
+    from django.contrib.auth import get_user_model
+    return get_user_model().objects.filter(id=user_id).select_related("client").first()
+
+
+def _tenant_fields(user_id):
+    """Owner + tenant for processing runs, so every bulk run is attributable to a tenant."""
+    from core.access import run_owner_fields
+    user = _requesting_user(user_id)
+    return run_owner_fields(user) if user else {}
+
 # ---- Run creators ----
 
 def _create_run(file_id, user_id, model_cls, status_default='Pending', user_field='user',
@@ -123,19 +135,19 @@ def _create_run(file_id, user_id, model_cls, status_default='Pending', user_fiel
 
 def _run_ocr(file_id, user_id):
     from document_ocr.models import OCRRun
-    run = OCRRun.objects.create(status='Pending')
+    run = OCRRun.objects.create(status='Pending', **_tenant_fields(user_id))
     return {'run_id': run.id}
 
 
 def _run_anonymization(file_id, user_id):
     from document_anonymizer.models import AnonymizationRun
-    run = AnonymizationRun.objects.create(status='Pending')
+    run = AnonymizationRun.objects.create(status='Pending', **_tenant_fields(user_id))
     return {'run_id': run.id}
 
 
 def _run_translation(file_id, user_id):
     from document_translation.models import TranslationRun
-    run = TranslationRun.objects.create(status='Pending')
+    run = TranslationRun.objects.create(status='Pending', **_tenant_fields(user_id))
     return {'translation_run_id': run.id}
 
 
@@ -146,7 +158,7 @@ def _run_pe(file_id, user_id):
     user = User.objects.filter(id=user_id).first()
     client = None
     if user:
-        client = Client.objects.filter(user=user).first()
+        client = getattr(user, 'client', None)
     run = DueDiligenceRun.objects.create(
         client=client,
         run_name=f'Bulk PE {file_id}',
@@ -161,7 +173,7 @@ def _run_ca(file_id, user_id):
     user = User.objects.filter(id=user_id).first()
     client = None
     if user:
-        client = Client.objects.filter(user=user).first()
+        client = getattr(user, 'client', None)
     run = MassClaimsRun.objects.create(
         client=client,
         status='intake',
@@ -176,7 +188,7 @@ def _run_le(file_id, user_id):
     user = User.objects.filter(id=user_id).first()
     client = None
     if user:
-        client = Client.objects.filter(user=user).first()
+        client = getattr(user, 'client', None)
     run = WorkplaceCommunicationsRun.objects.create(
         client=client,
     )
@@ -268,8 +280,10 @@ def _run_clustering(file_id, user_id):
 
 def _run_redlining(file_id, user_id):
     from document_redlining.models import RedliningRun
+    user = _requesting_user(user_id)
     run = RedliningRun.objects.create(
         status='Pending',
+        client_name=(user.username or user.email) if user else '',
     )
     return {'run_id': run.id, 'comparison_file_id': file_id}
 

@@ -213,6 +213,7 @@ def anonymize_document_task(file_id, file_type="plain", run_id=None):
         anonymization_run = AnonymizationRun.objects.create(
                 project_id=file_entry.project_id,
                 service_id=file_entry.service_id,
+                client=getattr(file_entry.user, 'client', None),
                 client_name=file_entry.user.username or file_entry.user.email,
                 status="Completed",
                 anonymization_type="Presidio-Spacy"

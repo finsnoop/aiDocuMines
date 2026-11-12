@@ -98,13 +98,15 @@ class SubmitClusteringAPIView(APIView):
         service_id = data['service_id']
         
         # Verify files belong to user
-        files = File.objects.filter(id__in=file_ids, project_id=project_id, service_id=service_id)
+        from core.access import get_files_for_user
+        files = [f for f in get_files_for_user(request.user, file_ids, "process")
+                 if f.project_id == project_id and f.service_id == service_id]
         
         for file_obj in files:
             if str(file_obj.user.id) != str(user.id):
                 raise PermissionDenied(f"You are not authorized to process file {file_obj.id}")
         
-        if files.count() < 2:
+        if len(files) < 2:
             return Response(
                 {"error": "At least 2 valid files are required for clustering"},
                 status=status.HTTP_400_BAD_REQUEST
@@ -139,7 +141,7 @@ class SubmitClusteringAPIView(APIView):
             "run_id": str(run.id),
             "task_id": task.id,
             "status": "Pending",
-            "file_count": files.count(),
+            "file_count": len(files),
             "message": "Clustering started"
         }, status=status.HTTP_202_ACCEPTED)
 

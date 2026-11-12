@@ -423,7 +423,7 @@ class IssueSpottingView(APIView):
             )
 
         # Ensure user owns the deal workspace
-        dd_run = get_object_or_404(DueDiligenceRun, pk=deal_workspace_id, client=request.user.client)
+        dd_run = get_object_or_404(DueDiligenceRun, pk=deal_workspace_id, client=request.user.client, client__isnull=False)
 
         # If no specific files, get all files for the DD run
         if file_ids:
@@ -501,7 +501,7 @@ class IssueSpottingView(APIView):
             )
 
         # Ensure user owns the deal workspace
-        dd_run = get_object_or_404(DueDiligenceRun, pk=deal_workspace_id, client=request.user.client)
+        dd_run = get_object_or_404(DueDiligenceRun, pk=deal_workspace_id, client=request.user.client, client__isnull=False)
 
         # Get risk clauses (issues) for this workspace
         issues = RiskClause.objects.filter(
@@ -546,7 +546,11 @@ class IssueSpottingView(APIView):
             try:
                 # Get a reference file to use its run (for proper file tree association)
                 # This ensures the report appears in the same folder structure as the source files
-                reference_file = files.first() if files.exists() else None
+                files = File.objects.filter(
+                    pe_classifications__due_diligence_run=dd_run,
+                    user=request.user,
+                ).distinct()
+                reference_file = files.first()
                 upload_run = reference_file.run if reference_file else dd_run.run
 
                 # Extract datetime_folder from DD run's files to maintain folder structure
@@ -688,7 +692,7 @@ class SyncDataRoomView(APIView):
                           status=status.HTTP_400_BAD_REQUEST)
 
         # Ensure user owns the deal workspace
-        dd_run = get_object_or_404(DueDiligenceRun, pk=deal_workspace_id, client=request.user.client)
+        dd_run = get_object_or_404(DueDiligenceRun, pk=deal_workspace_id, client=request.user.client, client__isnull=False)
 
         connectors = DataRoomConnector.objects.filter(
             due_diligence_run=dd_run,
@@ -730,7 +734,7 @@ class SyncDataRoomView(APIView):
             )
 
         # Ensure user owns the deal workspace
-        dd_run = get_object_or_404(DueDiligenceRun, pk=deal_workspace_id, client=request.user.client)
+        dd_run = get_object_or_404(DueDiligenceRun, pk=deal_workspace_id, client=request.user.client, client__isnull=False)
 
         # Create or update the connector
         connector, created = DataRoomConnector.objects.update_or_create(
@@ -1220,7 +1224,7 @@ class ClosingChecklistDetailView(APIView):
     permission_classes = [TokenHasReadWriteScope, IsClientOrAdmin]
 
     def get_object(self, pk, user):
-        return get_object_or_404(ClosingChecklist, pk=pk, client=user.client)
+        return get_object_or_404(ClosingChecklist, pk=pk, client=user.client, client__isnull=False)
 
     @swagger_auto_schema(
         operation_description="Retrieve a closing checklist item",
@@ -1531,7 +1535,7 @@ class ChecklistProgressView(APIView):
         if not dd_run_id:
             return Response({'error': 'dd_run_id is required'}, status=status.HTTP_400_BAD_REQUEST)
 
-        dd_run = get_object_or_404(DueDiligenceRun, pk=dd_run_id, client=request.user.client)
+        dd_run = get_object_or_404(DueDiligenceRun, pk=dd_run_id, client=request.user.client, client__isnull=False)
         items = ClosingChecklist.objects.filter(due_diligence_run=dd_run)
 
         total_items = items.count()
@@ -1591,7 +1595,7 @@ class PanelFirmListCreateView(APIView):
         responses={200: PanelFirmSerializer(many=True)}
     )
     def get(self, request):
-        queryset = PanelFirm.objects.filter(client=request.user.client, is_active=True)
+        queryset = PanelFirm.objects.filter(client=request.user.client, client__isnull=False, is_active=True)
 
         # Apply filters
         practice_area = request.query_params.get('filter_practice_area')
@@ -1634,7 +1638,7 @@ class RFPListCreateView(APIView):
         responses={200: RFPSerializer(many=True)}
     )
     def get(self, request):
-        queryset = RFP.objects.filter(client=request.user.client)
+        queryset = RFP.objects.filter(client=request.user.client, client__isnull=False)
 
         status_filter = request.query_params.get('status')
         if status_filter:
@@ -1684,7 +1688,7 @@ class BidAnalysisView(APIView):
         if not rfp_id:
             return Response({'error': 'rfp_id is required'}, status=status.HTTP_400_BAD_REQUEST)
 
-        rfp = get_object_or_404(RFP, pk=rfp_id, client=request.user.client)
+        rfp = get_object_or_404(RFP, pk=rfp_id, client=request.user.client, client__isnull=False)
         bids = RFPBid.objects.filter(rfp=rfp)
 
         # Build comparison matrix
@@ -1735,7 +1739,7 @@ class EngagementLetterListCreateView(APIView):
         responses={200: EngagementLetterSerializer(many=True)}
     )
     def get(self, request):
-        queryset = EngagementLetter.objects.filter(client=request.user.client)
+        queryset = EngagementLetter.objects.filter(client=request.user.client, client__isnull=False)
 
         firm_id = request.query_params.get('firm_id')
         if firm_id:
@@ -1781,7 +1785,7 @@ class SignatureTrackerListCreateView(APIView):
         responses={200: SignatureTrackerSerializer(many=True)}
     )
     def get(self, request):
-        queryset = SignatureTracker.objects.filter(client=request.user.client)
+        queryset = SignatureTracker.objects.filter(client=request.user.client, client__isnull=False)
 
         deal_workspace_id = request.query_params.get('deal_workspace_id')
         if deal_workspace_id:

@@ -28,6 +28,7 @@ from document_automation.tasks import process_automation_task
 from oauth2_provider.contrib.rest_framework import OAuth2Authentication, TokenHasReadWriteScope
 from drf_yasg.utils import swagger_auto_schema
 from drf_yasg import openapi
+from core.access import get_file_for_user, get_scoped_or_404, get_run_for_user, scope_by_file, scope_by_owner
 
 
 logger = logging.getLogger(__name__)
@@ -65,6 +66,10 @@ def get_user_from_client_id(client_id):
 
 class AutomationTemplateListCreateView(generics.ListCreateAPIView):
     queryset = AutomationTemplate.objects.all()
+
+    def get_queryset(self):
+        from core.access import scope_by_file
+        return scope_by_file(self.request.user, AutomationTemplate.objects.all(), "file")
     serializer_class = AutomationTemplateSerializer
     authentication_classes = [OAuth2Authentication]
     permission_classes = [TokenHasReadWriteScope]
@@ -88,6 +93,10 @@ class AutomationTemplateListCreateView(generics.ListCreateAPIView):
 
 class AutomationTemplateDetailView(generics.RetrieveAPIView):
     queryset = AutomationTemplate.objects.all()
+
+    def get_queryset(self):
+        from core.access import scope_by_file
+        return scope_by_file(self.request.user, AutomationTemplate.objects.all(), "file")
     serializer_class = AutomationTemplateSerializer
     authentication_classes = [OAuth2Authentication]
     permission_classes = [TokenHasReadWriteScope]
@@ -214,7 +223,7 @@ class DownloadAutomationResultAPIView(APIView):
         if not file_id:
             return Response({"error": "Missing `file_id` parameter"}, status=status.HTTP_400_BAD_REQUEST)
 
-        file_instance = get_object_or_404(File, id=file_id)
+        file_instance = get_file_for_user(request.user, file_id)
 
         if not os.path.exists(file_instance.filepath):
             return Response({"error": "Generated file not found."}, status=status.HTTP_404_NOT_FOUND)

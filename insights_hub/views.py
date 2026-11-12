@@ -9,6 +9,7 @@ from drf_yasg.utils import swagger_auto_schema
 from drf_yasg import openapi
 from oauth2_provider.models import Application
 from oauth2_provider.contrib.rest_framework import OAuth2Authentication, TokenHasReadWriteScope
+from custom_authentication.permissions import IsClientOrAdminOrSuperUser
 
 from .serializers import HomeInsightsSerializer
 from .services import compute_insights
@@ -59,7 +60,7 @@ class InsightsView(APIView):
     Auth: OAuth2 Bearer + X-Client-ID header (same as other apps).
     """
     authentication_classes = [OAuth2Authentication]
-    permission_classes = [TokenHasReadWriteScope]
+    permission_classes = [TokenHasReadWriteScope, IsClientOrAdminOrSuperUser]
 
     @swagger_auto_schema(
         operation_description="Return aggregated dashboard insights for the current OAuth2 client.",
@@ -110,7 +111,7 @@ class InsightsTaskStatusView(APIView):
     Poll Celery async computation (simple cache-based handoff).
     """
     authentication_classes = [OAuth2Authentication]
-    permission_classes = [TokenHasReadWriteScope]
+    permission_classes = [TokenHasReadWriteScope, IsClientOrAdminOrSuperUser]
 
     @swagger_auto_schema(
         operation_description="Check the status/result for an async insights compute task.",

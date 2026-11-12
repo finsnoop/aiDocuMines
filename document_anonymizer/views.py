@@ -29,6 +29,7 @@ from django.shortcuts import get_object_or_404
 from document_anonymizer.models import Anonymize
 from core.models import File
 from document_anonymizer.utils import export_to_markdown, export_to_docx, summarize_blocks, update_structured_block
+from custom_authentication.permissions import IsClientOrAdminOrSuperUser
 from document_anonymizer.tasks import compute_risk_score_task
 import uuid
 from document_anonymizer.tasks import compute_anonymization_stats_task
@@ -77,7 +78,7 @@ def get_user_from_client_id(client_id):
 
 class SubmitAnonymizationAPIView(ClientScopedViewMixin):
     authentication_classes = [OAuth2Authentication]
-    permission_classes = [TokenHasReadWriteScope, IsAdminOrManagerMutation]
+    permission_classes = [IsAuthenticated, TokenHasReadWriteScope, IsClientOrAdminOrSuperUser]
 
     @swagger_auto_schema(
         manual_parameters=[
@@ -192,6 +193,7 @@ class SubmitAnonymizationAPIView(APIView):
                 id=str(uuid.uuid4()),  # force UUID for consistency
                 project_id=project_id,
                 service_id=service_id,
+                client=getattr(user, 'client', None),
                 client_name=user.username or user.email,
                 status="Processing",
                 anonymization_type="Presidio-Spacy"
@@ -222,7 +224,7 @@ class SubmitAnonymizationAPIView(APIView):
 
 class DownloadAnonymizedFileAPIView(ClientScopedViewMixin):
     authentication_classes = [OAuth2Authentication]
-    permission_classes = [TokenHasReadWriteScope]
+    permission_classes = [IsAuthenticated, TokenHasReadWriteScope, IsClientOrAdminOrSuperUser]
 
     @swagger_auto_schema(
         manual_parameters=[
@@ -248,8 +250,8 @@ class DownloadAnonymizedFileAPIView(ClientScopedViewMixin):
             return Response({"error": "Invalid client ID"}, status=403)
 
         self.get_object_by_client(File.objects.all(), id=file_id)
-        anonymized_file = get_object_or_404(Anonymize, original_file_id=file_id, file_type=file_type, is_active=True)
-        de_anonymized_file = DeAnonymize.objects.filter(file_id=file_id).first()
+        anonymized_file = get_scoped_or_404(request.user, Anonymize, 'original_file', original_file_id=file_id, file_type=file_type, is_active=True)
+        de_anonymized_file = scope_by_file(request.user, DeAnonymize.objects.filter(file_id=file_id), 'file').first()
 
         if file_type == "structured":
             path = anonymized_file.anonymized_structured_filepath
@@ -283,12 +285,12 @@ class DownloadAnonymizedFileAPIView(ClientScopedViewMixin):
 
 class SubmitDeAnonymizationAPIView(APIView):
     authentication_classes = [OAuth2Authentication]
-    permission_classes = [TokenHasReadWriteScope]
+    permission_classes = [IsAuthenticated, TokenHasReadWriteScope, IsClientOrAdminOrSuperUser]
 
     @swagger_auto_schema(manual_parameters=[client_id_param, file_id_param])
     def post(self, request):
         file_id = request.query_params.get("file_id")
-        anonymized_file = get_object_or_404(Anonymize, original_file_id=file_id)
+        anonymized_file = get_scoped_or_404(request.user, Anonymize, 'original_file', original_file_id=file_id)
         deanonymize_document_task.delay(file_id)
         return Response({
             "message": "De-anonymization started.",
@@ -298,19 +300,20 @@ class SubmitDeAnonymizationAPIView(APIView):
 
 class DownloadDeAnonymizedFileAPIView(APIView):
     authentication_classes = [OAuth2Authentication]
-    permission_classes = [TokenHasReadWriteScope]
+    permission_classes = [IsAuthenticated, TokenHasReadWriteScope, IsClientOrAdminOrSuperUser]
 
     @swagger_auto_schema(manual_parameters=[client_id_param, file_id_param])
     def get(self, request):
         file_id = request.query_params.get("file_id")
-        deanonymized = get_object_or_404(DeAnonymize, file_id=file_id)
+        deanonymized = get_scoped_or_404(request.user, DeAnonymize, 'file', file_id=file_id)
         if not os.path.exists(deanonymized.unmasked_filepath):
             return Response({"error": "File not found."}, status=404)
         return FileResponse(open(deanonymized.unmasked_filepath, "rb"))
 
 
 class StructuredBlocksView(APIView):
-    permission_classes = [IsAuthenticated]
+    authentication_classes = [OAuth2Authentication]
+    permission_classes = [IsAuthenticated, IsClientOrAdminOrSuperUser]
 
     @swagger_auto_schema(manual_parameters=[
         openapi.Parameter('file_id', openapi.IN_QUERY, type=openapi.TYPE_STRING, required=True),
@@ -322,7 +325,7 @@ class StructuredBlocksView(APIView):
         flat = request.query_params.get("flat") == "true"
         include_coordinates = request.query_params.get("include_coordinates") == "true"
 
-        instance = get_object_or_404(Anonymize, original_file_id=file_id, is_active=True, file_type="structured")
+        instance = get_scoped_or_404(request.user, Anonymize, 'original_file', original_file_id=file_id, is_active=True, file_type="structured")
         path = instance.anonymized_structured_filepath
 
         with open(path, "r", encoding="utf-8") as f:
@@ -337,7 +340,8 @@ class StructuredBlocksView(APIView):
 
 class SummarizeBlocksView(APIView):
     parser_classes = [JSONParser]
-    permission_classes = [IsAuthenticated]
+    authentication_classes = [OAuth2Authentication]
+    permission_classes = [IsAuthenticated, IsClientOrAdminOrSuperUser]
 
     def post(self, request):
         file_id = request.data.get("file_id")
@@ -345,7 +349,7 @@ class SummarizeBlocksView(APIView):
         model = request.data.get("model", "phi-2")  # Default to local
         api_key = request.data.get("api_key")  # Optional for GPT-style models
 
-        instance = get_object_or_404(Anonymize, original_file_id=file_id, is_active=True, file_type="structured")
+        instance = get_scoped_or_404(request.user, Anonymize, 'original_file', original_file_id=file_id, is_active=True, file_type="structured")
         path = instance.anonymized_structured_filepath
 
         with open(path, "r", encoding="utf-8") as f:
@@ -357,14 +361,15 @@ class SummarizeBlocksView(APIView):
 
 class EditBlockView(APIView):
     parser_classes = [JSONParser]
-    permission_classes = [IsAuthenticated]
+    authentication_classes = [OAuth2Authentication]
+    permission_classes = [IsAuthenticated, IsClientOrAdminOrSuperUser]
 
     def patch(self, request):
         file_id = request.data.get("file_id")
         element_id = request.data.get("element_id")
         new_text = request.data.get("new_text")
 
-        instance = get_object_or_404(Anonymize, original_file_id=file_id, is_active=True, file_type="structured")
+        instance = get_scoped_or_404(request.user, Anonymize, 'original_file', original_file_id=file_id, is_active=True, file_type="structured")
         path = instance.anonymized_structured_filepath
 
         updated = update_structured_block(path, element_id, new_text)
@@ -373,13 +378,14 @@ class EditBlockView(APIView):
 
 class ExportBlocksView(APIView):
     parser_classes = [JSONParser]
-    permission_classes = [IsAuthenticated]
+    authentication_classes = [OAuth2Authentication]
+    permission_classes = [IsAuthenticated, IsClientOrAdminOrSuperUser]
 
     def post(self, request):
         file_id = request.data.get("file_id")
         export_format = request.data.get("export_format")
 
-        instance = get_object_or_404(Anonymize, original_file_id=file_id, is_active=True, file_type="structured")
+        instance = get_scoped_or_404(request.user, Anonymize, 'original_file', original_file_id=file_id, is_active=True, file_type="structured")
         path = instance.anonymized_structured_filepath
 
         if export_format == "markdown":
@@ -394,7 +400,8 @@ class ExportBlocksView(APIView):
 
 
 class DownloadStructuredMarkdownView(APIView):
-    permission_classes = [IsAuthenticated]
+    authentication_classes = [OAuth2Authentication]
+    permission_classes = [IsAuthenticated, IsClientOrAdminOrSuperUser]
 
     @swagger_auto_schema(
         manual_parameters=[file_id_param, variant_param]
@@ -404,10 +411,10 @@ class DownloadStructuredMarkdownView(APIView):
         variant = request.query_params.get("variant", "anonymized").lower()
 
         if variant == "original":
-            file = get_object_or_404(File, id=file_id)
+            file = get_file_for_user(request.user, file_id)
             path = file.filepath.replace(".pdf", ".md")
         else:
-            instance = get_object_or_404(Anonymize, original_file_id=file_id, is_active=True, file_type="structured")
+            instance = get_scoped_or_404(request.user, Anonymize, 'original_file', original_file_id=file_id, is_active=True, file_type="structured")
             path = instance.anonymized_structured_filepath.replace(".json", ".md")
 
         if not os.path.exists(path):
@@ -417,7 +424,8 @@ class DownloadStructuredMarkdownView(APIView):
 
 
 class DownloadStructuredHTMLView(APIView):
-    permission_classes = [IsAuthenticated]
+    authentication_classes = [OAuth2Authentication]
+    permission_classes = [IsAuthenticated, IsClientOrAdminOrSuperUser]
 
     @swagger_auto_schema(
         manual_parameters=[file_id_param, variant_param]
@@ -427,10 +435,10 @@ class DownloadStructuredHTMLView(APIView):
         variant = request.query_params.get("variant", "anonymized").lower()
 
         if variant == "original":
-            file = get_object_or_404(File, id=file_id)
+            file = get_file_for_user(request.user, file_id)
             path = file.filepath.replace(".pdf", ".html")
         else:
-            instance = get_object_or_404(Anonymize, original_file_id=file_id, is_active=True, file_type="structured")
+            instance = get_scoped_or_404(request.user, Anonymize, 'original_file', original_file_id=file_id, is_active=True, file_type="structured")
             path = instance.anonymized_html_filepath
 
         if not os.path.exists(path):
@@ -440,7 +448,8 @@ class DownloadStructuredHTMLView(APIView):
 
 
 class DownloadStructuredTextView(APIView):
-    permission_classes = [IsAuthenticated]
+    authentication_classes = [OAuth2Authentication]
+    permission_classes = [IsAuthenticated, IsClientOrAdminOrSuperUser]
 
     @swagger_auto_schema(
         manual_parameters=[file_id_param, variant_param]
@@ -450,13 +459,13 @@ class DownloadStructuredTextView(APIView):
         variant = request.query_params.get("variant", "anonymized").lower()
 
         if variant == "original":
-            file = get_object_or_404(File, id=file_id)
+            file = get_file_for_user(request.user, file_id)
             if (file.file_type or "").startswith("text/"):
                 path = file.filepath
             else:
                 return Response({"error": "Original structured text is not available for this file type."}, status=400)
         else:
-            instance = get_object_or_404(Anonymize, original_file_id=file_id, is_active=True, file_type="structured")
+            instance = get_scoped_or_404(request.user, Anonymize, 'original_file', original_file_id=file_id, is_active=True, file_type="structured")
             path = instance.anonymized_filepath
 
         if not os.path.exists(path):
@@ -466,7 +475,8 @@ class DownloadStructuredTextView(APIView):
 
 
 class DownloadStructuredJSONView(APIView):
-    permission_classes = [IsAuthenticated]
+    authentication_classes = [OAuth2Authentication]
+    permission_classes = [IsAuthenticated, IsClientOrAdminOrSuperUser]
 
     @swagger_auto_schema(
         manual_parameters=[file_id_param, variant_param]
@@ -476,10 +486,10 @@ class DownloadStructuredJSONView(APIView):
         variant = request.query_params.get("variant", "anonymized").lower()
 
         if variant == "original":
-            file = get_object_or_404(File, id=file_id)
+            file = get_file_for_user(request.user, file_id)
             path = file.filepath.replace(".pdf", ".json")
         else:
-            instance = get_object_or_404(Anonymize, original_file_id=file_id, is_active=True, file_type="structured")
+            instance = get_scoped_or_404(request.user, Anonymize, 'original_file', original_file_id=file_id, is_active=True, file_type="structured")
             path = instance.anonymized_structured_filepath
 
         if not os.path.exists(path):
@@ -495,7 +505,7 @@ from celery.result import AsyncResult
 
 class DocumentRiskScoreView(APIView):
     authentication_classes = [OAuth2Authentication]
-    permission_classes = [TokenHasReadWriteScope]
+    permission_classes = [IsAuthenticated, TokenHasReadWriteScope, IsClientOrAdminOrSuperUser]
 
     @swagger_auto_schema(manual_parameters=[file_id_param])
     def get(self, request):
@@ -513,7 +523,7 @@ class DocumentRiskScoreResultView(APIView):
     Fetches the result of a risk score analysis task
     """
     authentication_classes = [OAuth2Authentication]
-    permission_classes = [TokenHasReadWriteScope]
+    permission_classes = [IsAuthenticated, TokenHasReadWriteScope, IsClientOrAdminOrSuperUser]
 
     @swagger_auto_schema(manual_parameters=[
         openapi.Parameter("task_id", openapi.IN_QUERY, type=openapi.TYPE_STRING, required=True)
@@ -537,15 +547,16 @@ class DocumentRiskScoreResultView(APIView):
 
 
 class DownloadStructuredDocxView(APIView):
-    permission_classes = [IsAuthenticated]
+    authentication_classes = [OAuth2Authentication]
+    permission_classes = [IsAuthenticated, IsClientOrAdminOrSuperUser]
 
     def get(self, request):
         file_id = request.query_params.get("file_id")
         file_type = request.query_params.get("file_type")
 
         # Validate and fetch file
-        file_obj = get_object_or_404(File, id=file_id)
-        anonymize_obj = get_object_or_404(Anonymize, original_file=file_obj)
+        file_obj = get_file_for_user(request.user, file_id)
+        anonymize_obj = get_scoped_or_404(request.user, Anonymize, 'original_file', original_file=file_obj)
 
         docx_path = anonymize_obj.anonymized_structured_filepath.replace(".json", ".docx")
         if not os.path.exists(docx_path):
@@ -555,14 +566,15 @@ class DownloadStructuredDocxView(APIView):
 
 
 class DownloadRedactionReadyJSONView(APIView):
-    permission_classes = [IsAuthenticated]
+    authentication_classes = [OAuth2Authentication]
+    permission_classes = [IsAuthenticated, IsClientOrAdminOrSuperUser]
 
     @swagger_auto_schema(manual_parameters=[
         openapi.Parameter("file_id", openapi.IN_QUERY, type=openapi.TYPE_STRING, required=True)
     ])
     def get(self, request):
         file_id = request.query_params.get("file_id")
-        instance = get_object_or_404(Anonymize, original_file_id=file_id, is_active=True, file_type="structured")
+        instance = get_scoped_or_404(request.user, Anonymize, 'original_file', original_file_id=file_id, is_active=True, file_type="structured")
 
         with open(instance.anonymized_structured_filepath, "r", encoding="utf-8") as f:
             blocks = json.load(f)
@@ -590,10 +602,11 @@ class DownloadRedactionReadyJSONView(APIView):
 
 from django.core.cache import cache
 from datetime import datetime
+from core.access import get_file_for_user, get_scoped_or_404, get_run_for_user, scope_by_file, scope_by_owner
 
 class AnonymizationStatsView(APIView):
     authentication_classes = [OAuth2Authentication]
-    permission_classes = [TokenHasReadWriteScope]
+    permission_classes = [IsAuthenticated, TokenHasReadWriteScope, IsClientOrAdminOrSuperUser]
 
     @swagger_auto_schema(
         manual_parameters=[
@@ -637,7 +650,7 @@ class AnonymizationStatsView(APIView):
 
 class AnonymizationStatsResultView(APIView):
     authentication_classes = [OAuth2Authentication]
-    permission_classes = [TokenHasReadWriteScope]
+    permission_classes = [IsAuthenticated, TokenHasReadWriteScope, IsClientOrAdminOrSuperUser]
 
     @swagger_auto_schema(
         manual_parameters=[
@@ -673,13 +686,14 @@ class AnonymizationStatsResultView(APIView):
 
 class AnonymizationStatsHistoryView(generics.ListAPIView):
     authentication_classes = [OAuth2Authentication]
-    permission_classes = [TokenHasReadWriteScope]
+    permission_classes = [IsAuthenticated, TokenHasReadWriteScope, IsClientOrAdminOrSuperUser]
     serializer_class = AnonymizationStatsSerializer
     # pagination_class = PageNumberPagination  # Uses Django's default pagination
     pagination_class = StandardResultsSetPagination
 
     def get_queryset(self):
-        qs = AnonymizationStats.objects.all().order_by("-created_at")
+        from core.access import client_name_q
+        qs = AnonymizationStats.objects.filter(client_name_q(self.request.user)).order_by("-created_at")
 
         client_name = self.request.query_params.get("client_name")
         project_id = self.request.query_params.get("project_id")
@@ -698,7 +712,7 @@ class AnonymizationStatsHistoryView(generics.ListAPIView):
 
 class AnonymizationInsightsView(APIView):
     authentication_classes = [OAuth2Authentication]
-    permission_classes = [TokenHasReadWriteScope]
+    permission_classes = [IsAuthenticated, TokenHasReadWriteScope, IsClientOrAdminOrSuperUser]
 
     @swagger_auto_schema(
         operation_description="Fetch or compute anonymization insights for the current user.",
@@ -749,7 +763,7 @@ class AnonymizationInsightsView(APIView):
 
 class SupportedEntitiesView(APIView):
     authentication_classes = [OAuth2Authentication]
-    permission_classes = [TokenHasReadWriteScope]
+    permission_classes = [IsAuthenticated, TokenHasReadWriteScope, IsClientOrAdminOrSuperUser]
 
     @swagger_auto_schema(
         operation_description="Lists the actual spaCy & Presidio entity labels available at runtime.",

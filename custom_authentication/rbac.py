@@ -591,42 +591,29 @@ def seed_permissions_and_roles():
 
 class HasPermission(BasePermission):
     """
-    Check if user has a specific permission by codename.
-    Checks both Django's Permission model AND the x-role header.
+    Check that the authenticated user holds at least one of the given permission
+    codenames. Permissions are resolved from the user's roles (groups) and explicit
+    Django permissions via core.access. Request headers are never consulted.
 
     Usage:
         class MyView(APIView):
             permission_classes = [HasPermission('document.create')]
     """
 
+    require_all = False
+
     def __init__(self, *codenames):
         self.codenames = codenames
         super().__init__()
 
     def __call__(self):
+        # DRF instantiates every entry in permission_classes; returning self lets
+        # pre-configured instances be listed directly.
         return self
 
     def has_permission(self, request, view):
-        if not request.user or not request.user.is_authenticated:
-            return False
-
-        # Superusers bypass all checks
-        if request.user.is_superuser:
-            return True
-
-        # Check Django permissions
-        for codename in self.codenames:
-            if request.user.has_perm(f"custom_authentication.{codename}"):
-                return True
-
-        # Fallback: check x-role header against role definitions
-        header_role = request.META.get("HTTP_X_ROLE", "") or getattr(request, "role", "")
-        if header_role:
-            resolved = get_role_permissions(header_role)
-            if any(c in resolved for c in self.codenames):
-                return True
-
-        return False
+        from core.access import user_has_perm
+        return user_has_perm(request.user, *self.codenames, require_all=self.require_all)
 
 
 class HasAnyPermissions(HasPermission):
@@ -637,43 +624,18 @@ class HasAnyPermissions(HasPermission):
     pass
 
 
-class HasAllPermissions(BasePermission):
+class HasAllPermissions(HasPermission):
     """
     User needs ALL of the specified permissions.
     Usage: permission_classes = [HasAllPermissions('doc.create', 'doc.update')]
     """
-
-    def __init__(self, *codenames):
-        self.codenames = codenames
-        super().__init__()
-
-    def has_permission(self, request, view):
-        if not request.user or not request.user.is_authenticated:
-            return False
-        if request.user.is_superuser:
-            return True
-
-        # Check Django permissions
-        for codename in self.codenames:
-            if not request.user.has_perm(f"custom_authentication.{codename}"):
-                break
-        else:
-            return True
-
-        # Fallback: check x-role header
-        header_role = request.META.get("HTTP_X_ROLE", "") or getattr(request, "role", "")
-        if header_role:
-            resolved = get_role_permissions(header_role)
-            if all(c in resolved for c in self.codenames):
-                return True
-
-        return False
+    require_all = True
 
 
 class IsAdminOrManagerMutation(BasePermission):
     """
     Allows reads (GET, HEAD, OPTIONS) for any authenticated user.
-    Requires Admin or Manager role for writes.
+    Requires Admin or Manager role (from the user's own roles) for writes.
     """
 
     def has_permission(self, request, view):
@@ -681,15 +643,8 @@ class IsAdminOrManagerMutation(BasePermission):
             return False
         if request.method in SAFE_METHODS:
             return True
-
-        header_role = request.META.get("HTTP_X_ROLE", "") or getattr(request, "role", "")
-        if header_role in ("Admin", "SuperAdmin", "Manager"):
-            return True
-        if request.user.groups.filter(name__in=["Admin", "SuperAdmin", "Manager"]).exists():
-            return True
-        if request.user.is_superuser or request.user.is_staff:
-            return True
-        return False
+        from core.access import is_manager_or_admin
+        return is_manager_or_admin(request.user)
 
 
 class RequireAdminOrManagerMutation(BasePermission):
@@ -698,14 +653,9 @@ class RequireAdminOrManagerMutation(BasePermission):
     def has_permission(self, request, view):
         if not request.user or not request.user.is_authenticated:
             return False
-        header_role = request.META.get("HTTP_X_ROLE", "") or getattr(request, "role", "")
-        if header_role in ("Admin", "SuperAdmin", "Manager"):
-            return True
-        if request.user.groups.filter(name__in=["Admin", "SuperAdmin", "Manager"]).exists():
-            return True
-        if request.user.is_superuser or request.user.is_staff:
-            return True
-        return False
+        from core.access import is_manager_or_admin
+        return is_manager_or_admin(request.user)
+
 
 
 # ---------------------------------------------------------------------------

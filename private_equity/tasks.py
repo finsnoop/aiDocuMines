@@ -5,6 +5,7 @@ import json
 from django.contrib.auth import get_user_model
 from django.utils import timezone
 from django.db import transaction
+from django.db.models import Count
 from django.conf import settings
 from core.models import File
 from core.utils import register_generated_file

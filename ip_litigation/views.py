@@ -51,7 +51,7 @@ class PatentAnalysisRunListCreateView(APIView):
         # Filter by client for multi-tenant isolation
         # Fall back to user filter if client is not available
         if hasattr(request.user, 'client') and request.user.client:
-            runs = PatentAnalysisRun.objects.filter(client=request.user.client)
+            runs = PatentAnalysisRun.objects.filter(client=request.user.client, client__isnull=False)
         else:
             runs = PatentAnalysisRun.objects.filter(run__user=request.user)
         serializer = PatentAnalysisRunSerializer(runs, many=True)
@@ -89,7 +89,7 @@ class PatentAnalysisRunDetailView(APIView):
         """Get patent analysis run details"""
         # Filter by client for multi-tenant isolation
         if hasattr(request.user, 'client') and request.user.client:
-            analysis_run = get_object_or_404(PatentAnalysisRun, pk=pk, client=request.user.client)
+            analysis_run = get_object_or_404(PatentAnalysisRun, pk=pk, client=request.user.client, client__isnull=False)
         else:
             analysis_run = get_object_or_404(PatentAnalysisRun, pk=pk, run__user=request.user)
         serializer = PatentAnalysisRunSerializer(analysis_run)
@@ -105,7 +105,7 @@ class PatentAnalysisRunDetailView(APIView):
         """Update patent analysis run"""
         # Filter by client for multi-tenant isolation
         if hasattr(request.user, 'client') and request.user.client:
-            analysis_run = get_object_or_404(PatentAnalysisRun, pk=pk, client=request.user.client)
+            analysis_run = get_object_or_404(PatentAnalysisRun, pk=pk, client=request.user.client, client__isnull=False)
         else:
             analysis_run = get_object_or_404(PatentAnalysisRun, pk=pk, run__user=request.user)
         serializer = PatentAnalysisRunSerializer(analysis_run, data=request.data, partial=True, context={'request': request})
@@ -123,7 +123,7 @@ class PatentAnalysisRunDetailView(APIView):
         """Delete patent analysis run"""
         # Filter by client for multi-tenant isolation
         if hasattr(request.user, 'client') and request.user.client:
-            analysis_run = get_object_or_404(PatentAnalysisRun, pk=pk, client=request.user.client)
+            analysis_run = get_object_or_404(PatentAnalysisRun, pk=pk, client=request.user.client, client__isnull=False)
         else:
             analysis_run = get_object_or_404(PatentAnalysisRun, pk=pk, run__user=request.user)
         analysis_run.delete()

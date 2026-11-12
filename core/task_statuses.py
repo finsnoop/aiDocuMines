@@ -10,6 +10,7 @@ from .models import Run, File, Metadata, EndpointResponseTable
 import logging
 import os
 import uuid
+from core.access import get_file_for_user, get_scoped_or_404, get_run_for_user, scope_by_file, scope_by_owner
 
 logger = logging.getLogger(__name__)
 
@@ -43,7 +44,7 @@ class UploadStatusView(APIView):
         run_id = request.query_params.get("run_id")
 
         # ✅ Validate Run ID
-        run = get_object_or_404(Run, run_id=run_id)
+        run = get_object_or_404(scope_by_owner(request.user, Run.objects.all()), run_id=run_id)
 
         # ✅ Fetch all files associated with this run
         files = File.objects.filter(run=run)

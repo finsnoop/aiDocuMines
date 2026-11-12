@@ -19,6 +19,7 @@ from oauth2_provider.contrib.rest_framework import (
 
 from django.conf import settings
 from oauth2_provider.contrib.rest_framework import OAuth2Authentication, TokenHasReadWriteScope
+from custom_authentication.permissions import IsClientOrAdminOrSuperUser
 
 from .utils import (
     build_overview,
@@ -113,7 +114,7 @@ ALLOW_CLIENT_CREDS_FOR_HOME_ANALYTICS = getattr(
 
 class OAuth2SecuredAPIView(APIView):
     authentication_classes = [OAuth2Authentication]
-    permission_classes = [TokenHasReadWriteScope]  # requires "read" or "write" scope
+    permission_classes = [TokenHasReadWriteScope, IsClientOrAdminOrSuperUser]  # requires "read" or "write" scope
 
     def _get_user(self, request):
         header_client_id = request.headers.get("X-Client-ID")
@@ -142,7 +143,7 @@ class OAuth2SecuredAPIView(APIView):
 '''
 class OAuth2SecuredAPIView(APIView):
     authentication_classes = [OAuth2Authentication]
-    permission_classes = [TokenHasReadWriteScope]  # requires 'read' or 'write' scope
+    permission_classes = [TokenHasReadWriteScope, IsClientOrAdminOrSuperUser]  # requires 'read' or 'write' scope
 
     def _get_user(self, request):
         """

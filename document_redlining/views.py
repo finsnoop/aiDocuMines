@@ -15,6 +15,7 @@ from drf_yasg import openapi
 import logging
 import os
 import mimetypes
+from core.access import get_file_for_user, get_scoped_or_404, get_run_for_user, scope_by_file, scope_by_owner
 
 
 logger = logging.getLogger(__name__)
@@ -83,8 +84,8 @@ class SubmitRedliningAPIView(APIView):
         if not user:
             return Response({"error": "Invalid client ID"}, status=status.HTTP_401_UNAUTHORIZED)
 
-        file_instance = get_object_or_404(File, id=file_id)
-        comparison_instance = get_object_or_404(File, id=comparison_file_id)
+        file_instance = get_file_for_user(request.user, file_id)
+        comparison_instance = get_file_for_user(request.user, comparison_file_id)
 
         if file_instance.user != user or comparison_instance.user != user:
             raise PermissionDenied("You are not authorized to compare these files.")
