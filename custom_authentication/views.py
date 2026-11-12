@@ -163,7 +163,7 @@ def _get_managed_user(request, user_id):
     the user did not exist, so existing `except DoesNotExist` handlers return 404.
     """
     from core.access import can_manage_user
-    target = _get_managed_user(request, user_id)
+    target = CustomUser.objects.get(id=user_id)
     if target.id != request.user.id and not can_manage_user(request.user, target):
         raise CustomUser.DoesNotExist
     return target

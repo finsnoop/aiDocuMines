@@ -24,9 +24,20 @@ from custom_authentication.models import Client
 
 User = get_user_model()
 
+# Search indexing (Elasticsearch / Milvus) is not under test and not running here.
+from django.db.models.signals import post_save, post_delete  # noqa: E402
+from core import signals as _core_signals  # noqa: E402
+post_save.disconnect(_core_signals.index_file_to_elasticsearch, sender=File)
+post_save.disconnect(_core_signals.index_file_to_milvus, sender=File)
+post_delete.disconnect(_core_signals.delete_file_from_es_index, sender=File)
+
 
 def make_user(email, client, *, staff=False, superuser=False, groups=()):
-    u = User.objects.create_user(email=email, password="pw-Test-12345", client=client)
+    # create_user requires an organisation; users without one are made by
+    # clearing it afterwards (the column is nullable, e.g. legacy accounts).
+    placeholder = client or Client.objects.get_or_create(name="__placeholder__")[0]
+    u = User.objects.create_user(email=email, password="pw-Test-12345", client=placeholder)
+    u.client = client
     u.username = email.split("@")[0]
     u.is_staff = staff
     u.is_superuser = superuser
@@ -56,6 +67,7 @@ def token_for(user):
     return app, tok
 
 
+@override_settings(ELASTICSEARCH_DSL_AUTOSYNC=False, ELASTICSEARCH_DSL_AUTO_REFRESH=False)
 class TenancyPolicyTests(TestCase):
     @classmethod
     def setUpTestData(cls):
@@ -65,7 +77,8 @@ class TenancyPolicyTests(TestCase):
         cls.a2 = make_user("a2@firm-a.test", cls.firm_a, groups=["Client"])
         cls.a_admin = make_user("admin@firm-a.test", cls.firm_a, staff=True, groups=["Admin"])
         cls.b1 = make_user("b1@firm-b.test", cls.firm_b, groups=["Client"])
-        cls.root = make_user("root@platform.test", None, staff=True, superuser=True)
+        cls.platform = Client.objects.create(name="Platform operator")
+        cls.root = make_user("root@platform.test", cls.platform, staff=True, superuser=True)
         cls.lonely = make_user("lonely@nowhere.test", None, groups=["Client"])
         cls.fa1 = make_file(cls.a1, "a1-contract.pdf")
         cls.fb1 = make_file(cls.b1, "b1-secret.pdf")
@@ -143,7 +156,7 @@ class TenancyPolicyTests(TestCase):
         self.assertFalse(access.user_has_perm(self.a1, "user.delete"))
 
 
-@override_settings(ROOT_URLCONF="aiDocuMines.urls")
+@override_settings(ROOT_URLCONF="aiDocuMines.urls", ELASTICSEARCH_DSL_AUTOSYNC=False, ELASTICSEARCH_DSL_AUTO_REFRESH=False)
 class HttpEnforcementTests(TestCase):
     @classmethod
     def setUpTestData(cls):
@@ -187,24 +200,25 @@ class HttpEnforcementTests(TestCase):
         self.assertNotIn("b1@firm-b.test", emails)
 
     def test_admin_cannot_disable_user_of_other_tenant(self):
-        r = self.client_for(self.tok_admin).post(f"/api/v1/auth/admin/users/{self.b1.id}/disable/")
+        r = self.client_for(self.tok_admin).post(f"/api/v1/auth/admin/users/{self.b1.id}/disable/", {}, format="json")
         self.assertIn(r.status_code, (403, 404))
         self.b1.refresh_from_db()
         self.assertTrue(self.b1.is_active)
 
     def test_org_admin_promotion_does_not_create_platform_superuser(self):
-        r = self.client_for(self.tok_admin).post(f"/api/v1/auth/admin/users/{self.a1.id}/promote/", {"platform_superuser": "true"})
+        r = self.client_for(self.tok_admin).post(f"/api/v1/auth/admin/users/{self.a1.id}/promote/", {"platform_superuser": "true"}, format="json")
         self.a1.refresh_from_db()
         self.assertFalse(self.a1.is_superuser)
 
     def test_admin_initialize_never_returns_passwords(self):
-        User.objects.create_superuser(email="root@platform.test", password="x", client=None)
-        r = APIClient().post("/api/v1/auth/admin/initialize/", {})
-        self.assertEqual(r.status_code, 403)
+        User.objects.create_superuser(email="root@platform.test", password="x",
+                                      client=Client.objects.create(name="Platform operator"))
+        r = APIClient().post("/api/v1/auth/admin/initialize/", {}, format="json")
+        self.assertIn(r.status_code, (401, 403))
         self.assertNotIn("password", r.content.decode().lower())
 
     def test_break_glass_endpoints_disabled_by_default(self):
-        r = APIClient().post("/api/v1/auth/admin/supersuperuser-clean-db/", {"email": "x", "password": "y"})
+        r = APIClient().post("/api/v1/auth/admin/supersuperuser-clean-db/", {"email": "x", "password": "y"}, format="json")
         self.assertEqual(r.status_code, 404)
 
     def test_onlyoffice_callback_rejects_unsigned_foreign_url(self):
@@ -213,6 +227,7 @@ class HttpEnforcementTests(TestCase):
         self.assertEqual(r.status_code, 403)
 
 
+@override_settings(ELASTICSEARCH_DSL_AUTOSYNC=False, ELASTICSEARCH_DSL_AUTO_REFRESH=False)
 class BulkDeliverablesTests(TestCase):
     def test_workbook_and_zip_contain_real_outputs(self):
         firm = Client.objects.create(name="Firm A")

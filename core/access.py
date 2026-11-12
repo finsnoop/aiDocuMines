@@ -189,17 +189,24 @@ _ACTION_TO_EFFECTIVE_FLAG = {
 
 def _shared_file_ids_q(user, action: str) -> Q:
     """Files explicitly shared with `user` via any of the platform's sharing models."""
+    from django.utils import timezone
+
     flag = _ACTION_TO_EFFECTIVE_FLAG.get(action, "can_download")
-    q = Q(**{f"effectiveaccess__user": user, f"effectiveaccess__{flag}": True})
+    q = Q(**{"effectiveaccess__user": user, f"effectiveaccess__{flag}": True})
+
+    # FileAccessEntry grants (per link, optional expiry).
+    entry_flag = {
+        "view": "can_read", "download": "can_read", "process": "can_read",
+        "rename": "can_write", "move": "can_write",
+        "delete": "can_delete", "share": "can_share",
+    }.get(action, "can_read")
+    not_expired = (Q(folder_links__access_entries__expires_at__isnull=True)
+                   | Q(folder_links__access_entries__expires_at__gt=timezone.now()))
+    q |= Q(folder_links__access_entries__user=user,
+           **{f"folder_links__access_entries__{entry_flag}": True}) & not_expired
+
     if action in ("view", "download", "process"):
         q |= Q(folder_links__shared_with=user)
-        q |= Q(folder_links__access_entries__user=user)
-    elif action in ("rename", "move"):
-        q |= Q(folder_links__access_entries__user=user,
-               folder_links__access_entries__access_level__in=["write", "owner"])
-    elif action in ("delete", "share"):
-        q |= Q(folder_links__access_entries__user=user,
-               folder_links__access_entries__access_level="owner")
     return q
 
 

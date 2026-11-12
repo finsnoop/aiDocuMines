@@ -9,6 +9,15 @@ logger = logging.getLogger(__name__)
 
 @receiver(post_save, sender=File)
 def index_file_to_elasticsearch(sender, instance, **kwargs):
+    # Search indexing must never stop a document being saved: if Elasticsearch
+    # is unavailable the file is still stored and can be re-indexed later.
+    try:
+        _index_file_to_elasticsearch(instance)
+    except Exception as exc:
+        logger.warning("Elasticsearch indexing skipped for file %s: %s", instance.id, exc)
+
+
+def _index_file_to_elasticsearch(instance):
     from document_search.utils import extract_text
     client_id = None
     if instance.user and instance.user.client:
