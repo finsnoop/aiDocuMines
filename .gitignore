@@ -201,3 +201,15 @@ ImageMagick-7.*/utilities/magick
 !.github/workflows/
 !.github/workflows/deploy.yml
 
+
+# Local backups / scratch copies (use git history instead)
+*.bk
+*.bk[0-9]
+*.latest
+*.latest_v[0-9]
+*.original/
+*.now
+*.old
+dump.rdb
+__pycache__/
+*.pyc
