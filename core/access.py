@@ -187,6 +187,44 @@ _ACTION_TO_EFFECTIVE_FLAG = {
 }
 
 
+MATTER_MEMBER_ACTIONS = {"view", "download", "process", "rename", "move"}
+
+
+def _matter_member_files_q(user, action: str) -> Q:
+    """Files in matters the user is a team member of (same organisation only)."""
+    tid = tenant_id(user)
+    if action not in MATTER_MEMBER_ACTIONS or tid is None:
+        return Q(pk__in=[])
+    from core.models import Matter
+
+    names = list(Matter.objects.filter(client_id=tid, members=user).values_list("name", flat=True))
+    if not names:
+        return Q(pk__in=[])
+    return Q(user__client_id=tid, project_id__in=names)
+
+
+def matters_for_user(user):
+    """Matters visible to `user`: platform superuser all; tenant admin their org; others where member/creator."""
+    from core.models import Matter
+
+    qs = Matter.objects.all()
+    if is_platform_superuser(user):
+        return qs
+    tid = tenant_id(user)
+    if is_tenant_admin(user) and tid is not None:
+        return qs.filter(client_id=tid)
+    return qs.filter(Q(members=user) | Q(created_by=user), client_id=tid).distinct()
+
+
+def can_manage_matter(user, matter) -> bool:
+    """Rename, close, change the team: creator, tenant admin/manager of that org, platform superuser."""
+    if is_platform_superuser(user):
+        return True
+    if matter.client_id != tenant_id(user):
+        return False
+    return matter.created_by_id == user.id or is_manager_or_admin(user)
+
+
 def _shared_file_ids_q(user, action: str) -> Q:
     """Files explicitly shared with `user` via any of the platform's sharing models."""
     from django.utils import timezone
@@ -224,6 +262,7 @@ def accessible_files_q(user, action: str = "view", prefix: str = "") -> Q:
     if is_tenant_admin(user) and tenant_id(user) is not None:
         q |= Q(user__client_id=tenant_id(user))
     q |= _shared_file_ids_q(user, action)
+    q |= _matter_member_files_q(user, action)
 
     if prefix:
         return _prefix_q(q, prefix)

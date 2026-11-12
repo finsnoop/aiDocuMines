@@ -35,8 +35,18 @@ from core.onlyoffice_views import (
     OnlyOfficeDocServerUrlView
 )
 
+from .views_matters import (MatterCreateView, MatterDetailView, MatterListView, MatterMembersView,
+                            MatterUploadView)
+
 urlpatterns = [
     # ✅ File Upload Endpoint
+    # Matters (a deal, case or request: documents, workflows, results and team)
+    path("projects/", MatterListView.as_view(), name="matter-list"),
+    path("projects/create/", MatterCreateView.as_view(), name="matter-create"),
+    path("projects/<uuid:matter_id>/", MatterDetailView.as_view(), name="matter-detail"),
+    path("projects/<uuid:matter_id>/members/", MatterMembersView.as_view(), name="matter-members"),
+    path("projects/<uuid:matter_id>/members/<int:user_id>/", MatterMembersView.as_view(), name="matter-member"),
+    path("projects/<uuid:matter_id>/upload/", MatterUploadView.as_view(), name="matter-upload"),
     path("upload/", FileUploadView.as_view(), name="file-upload"),
 
     # ✅ Task Status (Universal)

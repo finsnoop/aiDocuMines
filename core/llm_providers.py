@@ -1,0 +1,130 @@
+"""
+Language-model provider configuration shared by the Assistant, workflows and the
+model-list proxy.
+
+Server-side configuration (environment variables):
+
+    LITELLM_BASE_URL      LiteLLM proxy, e.g. http://litellm:4000        (default)
+    LITELLM_API_KEY       LiteLLM master/virtual key
+    OLLAMA_URL            e.g. http://ollama:11434
+    VLLM_URL              e.g. http://vllm:8000/v1
+    VLLM_API_KEY
+    OPENAI_API_KEY
+    LLM_ALLOWED_HOSTS     comma-separated extra hosts a user may point a provider at
+                          (anything else falls back to the server default; this stops
+                          the proxy being used to reach arbitrary internal addresses)
+    LLM_DEFAULT_PROVIDER  litellm | ollama | vllm | openai   (default litellm)
+"""
+from __future__ import annotations
+
+import os
+from typing import Optional
+from urllib.parse import urlparse
+
+import requests
+
+PROVIDERS = ("litellm", "ollama", "vllm", "openai")
+REQUEST_TIMEOUT = 15
+
+
+def _env(name: str, default: str = "") -> str:
+    return (os.getenv(name) or default).strip()
+
+
+def default_provider() -> str:
+    p = _env("LLM_DEFAULT_PROVIDER", "litellm").lower()
+    return p if p in PROVIDERS else "litellm"
+
+
+def default_endpoint(provider: str) -> str:
+    return {
+        "litellm": _env("LITELLM_BASE_URL", "http://litellm:4000"),
+        "ollama": _env("OLLAMA_URL", "http://ollama:11434"),
+        "vllm": _env("VLLM_URL", "http://vllm:8000/v1"),
+        "openai": "https://api.openai.com/v1",
+    }.get(provider, "")
+
+
+def default_api_key(provider: str) -> str:
+    return {
+        "litellm": _env("LITELLM_API_KEY"),
+        "vllm": _env("VLLM_API_KEY", "EMPTY"),
+        "openai": _env("OPENAI_API_KEY"),
+    }.get(provider, "")
+
+
+def _allowed_hosts(provider: str) -> set:
+    hosts = {h.strip().lower() for h in _env("LLM_ALLOWED_HOSTS").split(",") if h.strip()}
+    default_host = urlparse(default_endpoint(provider)).hostname
+    if default_host:
+        hosts.add(default_host.lower())
+    return hosts
+
+
+def resolve_endpoint(provider: str, requested: Optional[str]) -> str:
+    """The requested endpoint if its host is allowed, otherwise the server default."""
+    if provider == "openai":
+        return default_endpoint("openai")
+    if requested:
+        parsed = urlparse(requested.strip())
+        if parsed.scheme in ("http", "https") and (parsed.hostname or "").lower() in _allowed_hosts(provider):
+            return requested.strip().rstrip("/")
+    return default_endpoint(provider).rstrip("/")
+
+
+def resolve_api_key(provider: str, requested: Optional[str]) -> str:
+    return (requested or "").strip() or default_api_key(provider)
+
+
+def openai_compatible_base(provider: str, endpoint: str) -> str:
+    """LiteLLM and vLLM speak the OpenAI API under /v1."""
+    base = endpoint.rstrip("/")
+    if provider in ("litellm", "vllm") and not base.endswith("/v1"):
+        base += "/v1"
+    return base
+
+
+class ProviderError(Exception):
+    def __init__(self, message: str, status: int = 502):
+        super().__init__(message)
+        self.status = status
+
+
+def list_models(provider: str, endpoint: Optional[str] = None, api_key: Optional[str] = None) -> dict:
+    """
+    Models available from a provider, in the provider's own response shape:
+    Ollama -> {"models": [{"name": ...}]}, everything else -> {"data": [{"id": ...}]}.
+    """
+    provider = (provider or default_provider()).lower()
+    if provider not in PROVIDERS:
+        raise ProviderError(f"Unsupported provider '{provider}'.", status=400)
+
+    url_base = resolve_endpoint(provider, endpoint)
+    key = resolve_api_key(provider, api_key)
+
+    if provider == "ollama":
+        url = f"{url_base}/api/tags"
+        headers = {}
+    else:
+        if provider == "openai" and not key:
+            raise ProviderError("No OpenAI API key is configured.", status=400)
+        url = f"{openai_compatible_base(provider, url_base)}/models"
+        headers = {"Authorization": f"Bearer {key}"} if key else {}
+
+    try:
+        resp = requests.get(url, headers=headers, timeout=REQUEST_TIMEOUT)
+    except requests.RequestException as exc:
+        raise ProviderError(f"The {provider} model server could not be reached.") from exc
+    if resp.status_code in (401, 403):
+        raise ProviderError(f"The {provider} model server rejected the API key.", status=502)
+    if resp.status_code >= 400:
+        raise ProviderError(f"The {provider} model server returned HTTP {resp.status_code}.")
+    try:
+        data = resp.json()
+    except ValueError as exc:
+        raise ProviderError(f"The {provider} model server returned an unreadable response.") from exc
+
+    if provider == "ollama":
+        return {"models": data.get("models", []) if isinstance(data, dict) else []}
+    items = data.get("data", []) if isinstance(data, dict) else []
+    return {"object": "list", "data": items}

@@ -1,4 +1,5 @@
 from django.urls import path
+from .views_layout import DashboardLayoutView
 from .views import (
     health,
     HomeDashAllView,
@@ -15,6 +16,7 @@ urlpatterns = [
     path("health/", health, name="home_analytics_health"),
 
     # Overview (alias of “me/” for nicer API)
+    path("dashboard-layout/", DashboardLayoutView.as_view(), name="home-dash-layout"),
     path("overview/", HomeDashAllView.as_view(), name="home-dash-overview"),
     path("me/", HomeDashAllView.as_view(), name="home-dash-me"),
 

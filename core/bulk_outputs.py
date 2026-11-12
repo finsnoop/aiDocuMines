@@ -162,6 +162,7 @@ def _register_file(job: BulkJob, path: str, folder) -> Optional[File]:
             project_id=job.project_id,
             service_id=job.service_id,
             storage=storage,
+            document_type="deliverable",
         )
     except IntegrityError:
         f = File.objects.filter(user=job.user, md5_hash=md5).first()

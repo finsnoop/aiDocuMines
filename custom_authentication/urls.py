@@ -10,6 +10,8 @@ from .views import (
     ListRolesView, GetUserRolesView, AssignUserRoleView, RemoveUserRoleView, SetUserRolesView
 )
 
+from .views_activity import MyActivityView
+
 urlpatterns = [
     # 🔐 AUTHENTICATION ENDPOINTS
     path("signup/", SignupView.as_view(), name="auth_signup"),
@@ -26,6 +28,7 @@ urlpatterns = [
     path("user/profile/", UserProfileView.as_view(), name="user_profile"),
     path("user/profile/update/", UpdateUserProfileView.as_view(), name="user_profile_update"),
     path("user/account/deactivate/", DeactivateAccountView.as_view(), name="user_account_deactivate"),
+    path("user/activity/", MyActivityView.as_view(), name="user_activity"),
     path("user/account/delete/", DeleteAccountView.as_view(), name="user_account_delete"),
 
     # 🛠️ API KEY MANAGEMENT

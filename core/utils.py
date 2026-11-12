@@ -67,6 +67,12 @@ def str_to_bool(value):
     return str(value).strip().lower() in {"true", "yes", "1", "y", "t"}
 
 
+def is_safe_path_segment(value: str) -> bool:
+    """True when `value` can be used as one directory name without escaping its parent."""
+    v = str(value or "")
+    return bool(v.strip()) and not any(bad in v for bad in ("/", "\\", "..", chr(0)))
+
+
 def sanitize_filename(filename: str) -> str:
     """Sanitize the filename by removing/normalizing special characters."""
     # Replace German/special characters with ASCII

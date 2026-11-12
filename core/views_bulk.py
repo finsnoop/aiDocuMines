@@ -17,6 +17,7 @@ from core.bulk_registry import get_bulk_handler, list_bulk_handlers
 from core.service_catalog import ALL_SERVICES
 from core.tasks_bulk import get_service_display_name
 from document_operations.models import Folder, FileFolderLink
+from core.prompt_templates import prompt_for
 
 logger = logging.getLogger(__name__)
 
@@ -55,6 +56,7 @@ class BulkServiceCatalogView(APIView):
             entry = dict(svc)
             hjt = svc.get("handler_job_type")
             entry["has_handler"] = hjt in handlers if hjt else False
+            entry.setdefault("prompt_template", prompt_for(entry))
             enriched.append(entry)
         return Response({
             "count": len(enriched),

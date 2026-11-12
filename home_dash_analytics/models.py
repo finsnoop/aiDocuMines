@@ -23,3 +23,21 @@ class HomeAnalyticsSnapshot(models.Model):
     def __str__(self) -> str:
         return f"HomeAnalyticsSnapshot(user={self.user_id}, at={self.generated_at:%Y-%m-%d %H:%M})"
 
+
+
+class DashboardLayout(models.Model):
+    """A user's dashboard widget layout and UI preferences, optionally per matter/service."""
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="dashboard_layouts")
+    project_id = models.CharField(max_length=255, blank=True, default="")
+    service_id = models.CharField(max_length=255, blank=True, default="")
+    layout = models.JSONField(default=list, blank=True)
+    ui_prefs = models.JSONField(default=dict, blank=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=["user", "project_id", "service_id"], name="uniq_dashboard_layout_scope"),
+        ]
+
+    def __str__(self) -> str:
+        return f"DashboardLayout(user={self.user_id}, project={self.project_id or '-'}, service={self.service_id or '-'})"

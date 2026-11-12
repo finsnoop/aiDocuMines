@@ -15,7 +15,7 @@ from .tasks import process_metadata
 from django.shortcuts import get_object_or_404
 from oauth2_provider.models import Application
 from oauth2_provider.contrib.rest_framework import OAuth2Authentication, TokenHasReadWriteScope
-from .utils import save_uploaded_file
+from .utils import save_uploaded_file, is_safe_path_segment
 from django.http import FileResponse
 import logging
 from django.db.utils import IntegrityError
@@ -125,6 +125,8 @@ class FileUploadView(APIView):
 
         if not (project_id and project_id.strip()) or not (service_id and service_id.strip()) or not files:
             return Response({"error": "Missing required fields"}, status=400)
+        if not (is_safe_path_segment(project_id) and is_safe_path_segment(service_id)):
+            return Response({"error": "project_id and service_id cannot contain slashes or '..'"}, status=400)
 
         # ── Per-upload run & path scaffold ───────────────────────────────────
         timestamp = datetime.utcnow().strftime("%Y%m%d%H%M%S")
@@ -176,7 +178,7 @@ class FileUploadView(APIView):
                     filepath=dup_self.filepath,
                     file_size=dup_self.file_size,
                     file_type=dup_self.file_type,
-                    md5_hash=dup_self.md5_hash,
+                    md5_hash=None,  # copies share content; the hash stays unique per user
                     user=user,
                     project_id=project_id,
                     service_id=service_id,
@@ -262,89 +264,94 @@ class FileUploadView(APIView):
             file_payload.append(_resp(fresh, "File uploaded successfully."))
 
 
-            def trigger_indexing():
-                try:
-                    from core.models import EndpointResponseTable
-
-                    endpoint_response = EndpointResponseTable.objects.create(
-                        run=run,
-                        client=user,  # ✅ correct field name in model
-                        endpoint_name="/api/v1/document-search/index/",
-                        response_data={"auto_trigger": True},  # ✅ corresponds to JSONField
-                        status="Pending"  # ✅ must match one of the allowed choices
-                    )
-                    logger.info("✅ Created EndpointResponseTable entry with ID: %s for file_id=%s", endpoint_response.id, fresh.id)
-
-                    index_file.apply_async((fresh.id,), {"force": True}, task_id=str(endpoint_response.id))
-                    logger.info("🚀 Indexing task successfully queued for file_id=%s", fresh.id)
-
-                except Exception as e:
-                    logger.exception("❌ Failed to trigger indexing for file_id=%s. Error: %s", fresh.id, str(e))
-
-
-            def trigger_anonymization():
-                try:
-                    # Decide anonymization file_type for your pipeline
-                    # Use "structured" if you want JSON blocks; fallback to "plain"
-                    file_type = "structured" if fresh.file_type.lower() in [
-                        "application/pdf",
-                        "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-                    ] else "plain"
-
-                    # Create a run record to track this anonymization
-                    anon_run = AnonymizationRun.objects.create(
-                        project_id=project_id,
-                        service_id=service_id,
-                        client=getattr(user, 'client', None),
-                        client_name=user.username or user.email,
-                        status="Processing",
-                        anonymization_type="Presidio"  # or "Presidio-Spacy" to match your choice
-                    )
-
-                    # Queue anonymization (idempotence handled inside the task if you prefer)
-                    anonymize_document_task.apply_async((fresh.id, file_type, str(anon_run.id)))
-
-                    # If your anonymize task doesn’t already compute risk, also queue this:
-                    compute_risk_score_task.apply_async((fresh.id,), countdown=0)
-
-                    # (Optional) log to EndpointResponseTable (like you do for indexing)
-                    EndpointResponseTable.objects.create(
-                        run=run,
-                        client=user,
-                        endpoint_name="/api/v1/document-anonymizer/submit-anonymization/",
-                        response_data={"auto_trigger": True, "file_id": fresh.id, "file_type": file_type},
-                        status="Pending"
-                    )
-                    logger.info("🔐 Auto-anonymization queued for file_id=%s (type=%s)", fresh.id, file_type)
-                except Exception:
-                    logger.exception("❌ Failed to queue anonymization for file_id=%s", fresh.id)
-
-
-            if fresh.file_type.lower() not in ["application/pdf", "application/vnd.openxmlformats-officedocument.wordprocessingml.document"]:
-                logger.info("⏭️   Skipping indexing for unsupported type: %s", fresh.file_type)
-            elif not getattr(getattr(user, "settings", None), "auto_index_enabled", True):
-                logger.info("⚙️ Auto-indexing disabled for user %s", user.id)
-            elif File.objects.filter(user=fresh.user, md5_hash=fresh.md5_hash, vector_chunks__isnull=False).exclude(id=fresh.id).exists():
-                logger.info("♻️ Skipping indexing – vector chunks already exist for file with same MD5: %s", fresh.md5_hash)
-            else:
-                logger.info("🧠 Queueing indexing to happen after transaction commit")
-                transaction.on_commit(trigger_indexing)
-
-            # NEW:
-            transaction.on_commit(lambda: extract_document_text_task.delay(fresh.id))
-            
-            # queue after transaction commits (same pattern you use for indexing)
-            transaction.on_commit(trigger_anonymization)
-
-            # Delete any old cached insights
-            UserInsights.objects.filter(user=request.user).delete()
-
-            # Launch async insights regeneration
-            generate_insights_for_user.delay(request.user.id)
-
-            process_bulk_metadata.delay(str(run.run_id))
+            queue_post_upload_processing(user, run, fresh, project_id, service_id)
 
         return Response({"run_id": str(run.run_id), "files": file_payload}, status=201)
+
+
+def queue_post_upload_processing(user, run, fresh, project_id, service_id):
+    """Text extraction, search indexing, auto-anonymisation and insights for a newly stored file."""
+    def trigger_indexing():
+        try:
+            from core.models import EndpointResponseTable
+
+            endpoint_response = EndpointResponseTable.objects.create(
+                run=run,
+                client=user,  # ✅ correct field name in model
+                endpoint_name="/api/v1/document-search/index/",
+                response_data={"auto_trigger": True},  # ✅ corresponds to JSONField
+                status="Pending"  # ✅ must match one of the allowed choices
+            )
+            logger.info("✅ Created EndpointResponseTable entry with ID: %s for file_id=%s", endpoint_response.id, fresh.id)
+
+            index_file.apply_async((fresh.id,), {"force": True}, task_id=str(endpoint_response.id))
+            logger.info("🚀 Indexing task successfully queued for file_id=%s", fresh.id)
+
+        except Exception as e:
+            logger.exception("❌ Failed to trigger indexing for file_id=%s. Error: %s", fresh.id, str(e))
+
+
+    def trigger_anonymization():
+        try:
+            # Decide anonymization file_type for your pipeline
+            # Use "structured" if you want JSON blocks; fallback to "plain"
+            file_type = "structured" if fresh.file_type.lower() in [
+                "application/pdf",
+                "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+            ] else "plain"
+
+            # Create a run record to track this anonymization
+            anon_run = AnonymizationRun.objects.create(
+                project_id=project_id,
+                service_id=service_id,
+                client=getattr(user, 'client', None),
+                client_name=user.username or user.email,
+                status="Processing",
+                anonymization_type="Presidio"  # or "Presidio-Spacy" to match your choice
+            )
+
+            # Queue anonymization (idempotence handled inside the task if you prefer)
+            anonymize_document_task.apply_async((fresh.id, file_type, str(anon_run.id)))
+
+            # If your anonymize task doesn’t already compute risk, also queue this:
+            compute_risk_score_task.apply_async((fresh.id,), countdown=0)
+
+            # (Optional) log to EndpointResponseTable (like you do for indexing)
+            EndpointResponseTable.objects.create(
+                run=run,
+                client=user,
+                endpoint_name="/api/v1/document-anonymizer/submit-anonymization/",
+                response_data={"auto_trigger": True, "file_id": fresh.id, "file_type": file_type},
+                status="Pending"
+            )
+            logger.info("🔐 Auto-anonymization queued for file_id=%s (type=%s)", fresh.id, file_type)
+        except Exception:
+            logger.exception("❌ Failed to queue anonymization for file_id=%s", fresh.id)
+
+
+    if fresh.file_type.lower() not in ["application/pdf", "application/vnd.openxmlformats-officedocument.wordprocessingml.document"]:
+        logger.info("⏭️   Skipping indexing for unsupported type: %s", fresh.file_type)
+    elif not getattr(getattr(user, "settings", None), "auto_index_enabled", True):
+        logger.info("⚙️ Auto-indexing disabled for user %s", user.id)
+    elif File.objects.filter(user=fresh.user, md5_hash=fresh.md5_hash, vector_chunks__isnull=False).exclude(id=fresh.id).exists():
+        logger.info("♻️ Skipping indexing – vector chunks already exist for file with same MD5: %s", fresh.md5_hash)
+    else:
+        logger.info("🧠 Queueing indexing to happen after transaction commit")
+        transaction.on_commit(trigger_indexing)
+
+    # NEW:
+    transaction.on_commit(lambda: extract_document_text_task.delay(fresh.id))
+
+    # queue after transaction commits (same pattern you use for indexing)
+    transaction.on_commit(trigger_anonymization)
+
+    # Delete any old cached insights
+    UserInsights.objects.filter(user=user).delete()
+
+    # Launch async insights regeneration
+    generate_insights_for_user.delay(user.id)
+
+    process_bulk_metadata.delay(str(run.run_id))
 
 
 # ── helper utilities (keep near the view or in utils.py) ─────────────────────

@@ -379,3 +379,38 @@ class BulkJobFileResult(models.Model):
     def __str__(self):
         return f"BulkJobFileResult({self.bulk_job_id}, file={self.file_id}) - {self.status}"
 
+
+
+class Matter(models.Model):
+    """
+    A client matter (deal, case, investigation, request). Documents belong to a
+    matter through File.project_id == Matter.name within the same organisation.
+
+    Team members get access to every document in the matter, so a matter can be
+    worked on by a team instead of one uploader.
+    """
+    STATUS_CHOICES = [("open", "Open"), ("closed", "Closed")]
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    client = models.ForeignKey(
+        "custom_authentication.Client", on_delete=models.CASCADE, related_name="matters", null=True, blank=True,
+    )
+    name = models.CharField(max_length=255)
+    reference = models.CharField(max_length=100, blank=True, default="")
+    practice_area = models.CharField(max_length=100, blank=True, default="")
+    description = models.TextField(blank=True, default="")
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default="open", db_index=True)
+    created_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, related_name="matters_created")
+    members = models.ManyToManyField(User, related_name="matters", blank=True)
+    ai_budget = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["-updated_at"]
+        constraints = [
+            models.UniqueConstraint(fields=["client", "name"], name="uniq_matter_name_per_client"),
+        ]
+
+    def __str__(self):
+        return self.name

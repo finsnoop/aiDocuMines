@@ -299,6 +299,27 @@ def dispatch_to_llm(
             # Include url & model to make ops/debugging trivial
             raise RuntimeError(f"Ollama invocation failed (url={base_url}, model={model}): {e}")
 
+    elif provider == "litellm":
+        # LiteLLM proxy: one OpenAI-compatible endpoint in front of every provider
+        from core.llm_providers import resolve_endpoint, resolve_api_key, openai_compatible_base
+
+        base_url = openai_compatible_base("litellm", resolve_endpoint("litellm", llm_config.get("endpoint")))
+        api_key = resolve_api_key("litellm", llm_config.get("api_key")) or "EMPTY"
+        try:
+            client = OpenAI(api_key=api_key, base_url=base_url)
+            messages = _build_messages_for_openai(previous_messages, chunk, query_text, model)
+            response = client.chat.completions.create(
+                model=model,
+                messages=messages,
+                max_tokens=1024,
+                temperature=temperature,
+                timeout=timeout,
+            )
+            text = response.choices[0].message.content or ""
+            return text if isinstance(text, str) else str(text)
+        except Exception as e:
+            raise RuntimeError(f"LiteLLM invocation failed (model={model}): {e}")
+
     elif provider == "vllm":
         # vLLM exposes an OpenAI-compatible API
         base_url = (
