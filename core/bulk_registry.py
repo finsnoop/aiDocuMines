@@ -21,6 +21,7 @@ def _bulk_call_adapter(task_func, *, single_file_param=True, user_id_param=True,
     """
     def adapter(file_id_or_ids, user_id, **kwargs):
         multi_file = kwargs.pop('multi_file', False)
+        inline = kwargs.pop('inline', False)
         args = {}
         if multi_file:
             args['file_ids'] = file_id_or_ids
@@ -36,7 +37,9 @@ def _bulk_call_adapter(task_func, *, single_file_param=True, user_id_param=True,
             args.update(run_creator(file_id_or_ids, user_id))
         if extra_params:
             args.update(extra_params)
-        return task_func.delay(**args)
+        # inline=True runs the service in the calling worker and returns its
+        # result, so bulk jobs report real completion and real errors.
+        return task_func.apply(kwargs=args) if inline else task_func.delay(**args)
 
     adapter.__name__ = f'{task_func.__name__}_bulk_adapter'
     return adapter
@@ -58,18 +61,17 @@ class BulkServiceHandler:
         self._call_adapter = call_adapter
         self.batch_all = batch_all
 
-    def call(self, file_id: int, user_id: int, **kwargs):
+    def call(self, file_id: int, user_id: int, inline: bool = False, **kwargs):
         if self._call_adapter:
-            return self._call_adapter(file_id, user_id, **kwargs)
-        if self.requires_run:
-            return self.task_func.delay(file_id, user_id)
-        return self.task_func.delay(file_id)
+            return self._call_adapter(file_id, user_id, inline=inline, **kwargs)
+        args = (file_id, user_id) if self.requires_run else (file_id,)
+        return self.task_func.apply(args=args) if inline else self.task_func.delay(*args)
 
-    def call_batch(self, file_ids: List[int], user_id: int, **kwargs):
+    def call_batch(self, file_ids: List[int], user_id: int, inline: bool = False, **kwargs):
         """Dispatch a single task with all file_ids for batch_all handlers."""
         if self._call_adapter:
-            return self._call_adapter(file_ids, user_id, multi_file=True, **kwargs)
-        return self.task_func.delay(file_ids, user_id)
+            return self._call_adapter(file_ids, user_id, multi_file=True, inline=inline, **kwargs)
+        return self.task_func.apply(args=(file_ids, user_id)) if inline else self.task_func.delay(file_ids, user_id)
 
 
 _registry: Dict[str, BulkServiceHandler] = {}
@@ -152,7 +154,7 @@ def _run_translation(file_id, user_id):
 
 
 def _run_pe(file_id, user_id):
-    from private_equity.models import DueDiligenceRun, Client
+    from private_equity.models import DueDiligenceRun
     from django.contrib.auth import get_user_model
     User = get_user_model()
     user = User.objects.filter(id=user_id).first()
@@ -167,7 +169,7 @@ def _run_pe(file_id, user_id):
 
 
 def _run_ca(file_id, user_id):
-    from class_actions.models import MassClaimsRun, Client
+    from class_actions.models import MassClaimsRun
     from django.contrib.auth import get_user_model
     User = get_user_model()
     user = User.objects.filter(id=user_id).first()
@@ -182,7 +184,7 @@ def _run_ca(file_id, user_id):
 
 
 def _run_le(file_id, user_id):
-    from labor_employment.models import WorkplaceCommunicationsRun, Client
+    from labor_employment.models import WorkplaceCommunicationsRun
     from django.contrib.auth import get_user_model
     User = get_user_model()
     user = User.objects.filter(id=user_id).first()

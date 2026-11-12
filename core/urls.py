@@ -21,6 +21,7 @@ from core.views_bulk import (
     BulkJobListView,
     BulkJobCancelView,
     BulkJobRetryView,
+    BulkJobDownloadView,
 )
 
 
@@ -94,6 +95,7 @@ urlpatterns = [
     path("bulk/<str:job_id>/results/", BulkJobResultsView.as_view(), name="bulk-results"),
     path("bulk/<str:job_id>/cancel/", BulkJobCancelView.as_view(), name="bulk-cancel"),
     path("bulk/<str:job_id>/retry/", BulkJobRetryView.as_view(), name="bulk-retry"),
+    path("bulk/<str:job_id>/download/", BulkJobDownloadView.as_view(), name="bulk-download"),
     
 ]
 

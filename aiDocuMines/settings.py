@@ -303,6 +303,8 @@ CORS_ALLOW_HEADERS = list(default_headers) + [
     "x-user-id",
 ]
 CORS_ALLOW_METHODS = ["GET", "POST", "OPTIONS", "PUT", "PATCH", "DELETE"]
+# Let the browser read download filenames on cross-origin file responses.
+CORS_EXPOSE_HEADERS = ["Content-Disposition"]
 
 FILE_UPLOAD_MAX_MEMORY_SIZE = 25 * 1024 * 1024
 DATA_UPLOAD_MAX_MEMORY_SIZE = 50 * 1024 * 1024

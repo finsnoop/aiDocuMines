@@ -1,16 +1,16 @@
-import json
 import logging
-import os
-from datetime import datetime
 from typing import List, Optional
 
-from celery import shared_task, group, chain, chord
+from celery import shared_task, chord
 from django.db import transaction
 from django.db.models import F
 from django.utils import timezone
 
-from core.models import BulkJob, BulkJobFileResult, File, Run, Storage
+from core.models import BulkJob, BulkJobFileResult, File
 from core.bulk_registry import get_bulk_handler
+from core.bulk_outputs import (
+    build_deliverables, collect_output_files, describe_outputs, summarise_value,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -20,10 +20,12 @@ BATCH_CHUNK_SIZE = 50
 def get_service_display_name(job_type: str) -> str:
     """Look up display_name from the service catalog."""
     from core.service_catalog import ALL_SERVICES
+    # Jobs store the handler name (e.g. "ai_translation"); the catalogue keys
+    # services by service_type. Accept either.
     for svc in ALL_SERVICES:
-        if svc["service_type"] == job_type:
+        if job_type in (svc.get("service_type"), svc.get("handler_job_type")):
             return svc.get("display_name", job_type)
-    return job_type
+    return job_type.replace("_", " ").title()
 
 
 def get_bulk_output_folder(job: BulkJob):
@@ -66,78 +68,33 @@ def get_bulk_output_folder(job: BulkJob):
     return output_folder
 
 
-def create_bulk_output_file(file_id: int, job: BulkJob, result_data: dict) -> Optional[int]:
-    """Create a File record for the bulk-processed result and link it to the output folder.
-
-    Returns the output File id, or None on failure.
-    """
+def _link_into_output_folder(job: BulkJob, files) -> None:
+    """Make the job's output folder contain the real output documents."""
+    if not files or not job.folder_id:
+        return
     from document_operations.models import FileFolderLink
-    from django.contrib.contenttypes.models import ContentType
 
-    try:
-        input_file = File.objects.get(id=file_id)
-    except File.DoesNotExist:
-        logger.error(f"Input file {file_id} not found for bulk job {job.id}")
+    folder = get_bulk_output_folder(job)
+    if folder is None:
+        return
+    for f in files:
+        FileFolderLink.objects.get_or_create(file=f, folder=folder)
+
+
+def _service_failure(result) -> Optional[str]:
+    """Error text if an inline Celery result (or the service's return value) reports failure."""
+    if result is None:
         return None
-
-    output_folder = get_bulk_output_folder(job)
-    if not output_folder:
-        logger.warning(f"No output folder available for bulk job {job.id}")
-        return None
-
-    # Create Run for this output artifact
-    run = Run.objects.create(
-        user=job.user,
-        status="Completed",
-    )
-
-    # Create Storage linked to the Run
-    storage = Storage.objects.create(
-        user=job.user,
-        content_type=ContentType.objects.get_for_model(Run),
-        object_id=run.run_id,
-        output_storage_location=None,
-    )
-
-    # Derive output filename from input file
-    base_name, ext = os.path.splitext(input_file.filename)
-    output_filename = f"{base_name}_{job.job_type}_result.json"
-
-    # Build a meaningful filepath
-    output_dir = os.path.join(
-        os.path.dirname(input_file.filepath) if input_file.filepath else "",
-        ".batch-output",
-        output_folder.name,
-    )
-    output_filepath = os.path.join(output_dir, output_filename)
-
-    output_file = File.objects.create(
-        filename=output_filename,
-        filepath=output_filepath,
-        file_size=len(json.dumps(result_data, default=str)),
-        file_type="application/json",
-        extension="json",
-        md5_hash=None,
-        origin_file=input_file,
-        status="Completed",
-        run=run,
-        content=json.dumps(result_data, indent=2, default=str),
-        user=job.user,
-        project_id=job.project_id,
-        service_id=job.service_id,
-        storage=storage,
-    )
-
-    FileFolderLink.objects.create(
-        file=output_file,
-        folder=output_folder,
-    )
-
-    logger.info(
-        f"Created bulk output file {output_file.id} -> "
-        f"folder {output_folder.id} ({output_folder.name})"
-    )
-    return output_file.id
+    if hasattr(result, "failed") and result.failed():
+        exc = getattr(result, "result", None)
+        return f"{type(exc).__name__}: {exc}" if exc else "The service failed"
+    value = getattr(result, "result", result)
+    if isinstance(value, dict):
+        if value.get("error"):
+            return str(value["error"])
+        if str(value.get("status", "")).lower() in ("failed", "error"):
+            return str(value.get("message") or value.get("detail") or "The service reported a failure")
+    return None
 
 
 @shared_task(bind=True)
@@ -145,40 +102,42 @@ def process_batch_all_files_in_bulk(self, file_ids: List[int], user_id: int,
                                      job_id: str, job_type: str,
                                      project_id: str = None,
                                      service_id: str = None, **kwargs):
-    """Handle a batch_all task: dispatches all file_ids to the handler in one call."""
+    """Handle a batch_all job: the service processes all files in one call."""
     handler = get_bulk_handler(job_type)
     if not handler:
         logger.error(f"No handler for job_type={job_type}")
         return {"error": f"No handler for {job_type}"}
 
-    logger.info(f"process_batch_all_files_in_bulk: job={job_id}, "
-                f"handler={job_type}, files={len(file_ids)}")
+    started = timezone.now()
+    BulkJobFileResult.objects.filter(bulk_job_id=job_id).update(status="Processing", started_at=started)
+    logger.info(f"process_batch_all_files_in_bulk: job={job_id}, handler={job_type}, files={len(file_ids)}")
     try:
-        result = handler.call_batch(file_ids, user_id, project_id=project_id,
+        result = handler.call_batch(file_ids, user_id, inline=True, project_id=project_id,
                                     service_id=service_id, **kwargs)
-        # Mark all files as Completed
-        with transaction.atomic():
-            BulkJobFileResult.objects.filter(bulk_job_id=job_id).update(
+        failure = _service_failure(result)
+        if failure:
+            raise RuntimeError(failure)
+        value = getattr(result, "result", result)
+        job_fields = summarise_value(value)
+
+        job = BulkJob.objects.get(id=job_id)
+        for fid in file_ids:
+            input_file = File.objects.filter(id=fid).first()
+            outputs = collect_output_files(input_file, started) if input_file else []
+            _link_into_output_folder(job, outputs)
+            BulkJobFileResult.objects.filter(bulk_job_id=job_id, file_id=fid).update(
                 status="Completed",
-                result_data={"task_id": result.id if result else None},
+                result_data={"outputs": describe_outputs(outputs), "fields": job_fields},
                 completed_at=timezone.now(),
             )
-            BulkJob.objects.filter(id=job_id).update(
-                processed_files=len(file_ids),
-            )
-        return {"status": "completed", "task_id": result.id if result else None,
-                "file_count": len(file_ids)}
+        BulkJob.objects.filter(id=job_id).update(processed_files=len(file_ids))
+        return {"status": "completed", "file_count": len(file_ids)}
     except Exception as exc:
         logger.exception(f"Batch-all handler failed for job {job_id}")
-        with transaction.atomic():
-            BulkJobFileResult.objects.filter(bulk_job_id=job_id).update(
-                status="Failed",
-                error_message=str(exc),
-                completed_at=timezone.now(),
-            )
-            BulkJob.objects.filter(id=job_id).update(
-                failed_files=len(file_ids),
-            )
+        BulkJobFileResult.objects.filter(bulk_job_id=job_id).update(
+            status="Failed", error_message=str(exc)[:4000], completed_at=timezone.now(),
+        )
+        BulkJob.objects.filter(id=job_id).update(failed_files=len(file_ids))
         return {"error": str(exc), "file_count": len(file_ids)}
 
 
@@ -186,62 +145,47 @@ def process_batch_all_files_in_bulk(self, file_ids: List[int], user_id: int,
 def process_single_file_in_bulk(self, file_id: int, user_id: int, job_id: str,
                                  job_type: str, project_id: str = None,
                                  service_id: str = None, **kwargs):
+    """
+    Run the service for one document and wait for it, so the per-file status is
+    true, then record the real output documents and the service's key results.
+    """
     handler = get_bulk_handler(job_type)
     if not handler:
         logger.error(f"No handler for job_type={job_type}")
         return {"error": f"No handler for {job_type}", "file_id": file_id}
 
+    started = timezone.now()
+    BulkJobFileResult.objects.filter(bulk_job_id=job_id, file_id=file_id).update(
+        status="Processing", started_at=started, task_id=self.request.id,
+    )
     try:
-        result = handler.call(file_id, user_id, project_id=project_id,
+        result = handler.call(file_id, user_id, inline=True, project_id=project_id,
                               service_id=service_id, **kwargs)
-        result_data = {"status": "completed", "task_id": result.id if result else None}
+        failure = _service_failure(result)
+        if failure:
+            raise RuntimeError(failure)
+        value = getattr(result, "result", result)
 
+        input_file = File.objects.get(id=file_id)
+        outputs = collect_output_files(input_file, started)
+        job = BulkJob.objects.get(id=job_id)
+        _link_into_output_folder(job, outputs)
+
+        result_data = {"outputs": describe_outputs(outputs), "fields": summarise_value(value)}
         with transaction.atomic():
-            BulkJobFileResult.objects.update_or_create(
-                bulk_job_id=job_id,
-                file_id=file_id,
-                defaults={
-                    "status": "Completed",
-                    "result_data": result_data,
-                    "completed_at": timezone.now(),
-                    "task_id": result.id if result else None,
-                }
+            BulkJobFileResult.objects.filter(bulk_job_id=job_id, file_id=file_id).update(
+                status="Completed", result_data=result_data, completed_at=timezone.now(),
             )
-            BulkJob.objects.filter(id=job_id).update(
-                processed_files=F("processed_files") + 1
-            )
-
-        # Best-effort: create output file record + folder link
-        try:
-            job = BulkJob.objects.get(id=job_id)
-            output_file_id = create_bulk_output_file(file_id, job, result_data)
-            if output_file_id:
-                result_data["output_file_id"] = output_file_id
-                BulkJobFileResult.objects.filter(
-                    bulk_job_id=job_id, file_id=file_id
-                ).update(result_data=result_data)
-        except Exception as exc:
-            logger.warning(
-                f"Failed to create output file for bulk {job_id} file {file_id}: {exc}"
-            )
-
-        return result_data
+            BulkJob.objects.filter(id=job_id).update(processed_files=F("processed_files") + 1)
+        return {"file_id": file_id, "outputs": len(outputs)}
 
     except Exception as exc:
         logger.exception(f"Failed to process file {file_id} for bulk job {job_id}")
         with transaction.atomic():
-            BulkJobFileResult.objects.update_or_create(
-                bulk_job_id=job_id,
-                file_id=file_id,
-                defaults={
-                    "status": "Failed",
-                    "error_message": str(exc),
-                    "completed_at": timezone.now(),
-                }
+            BulkJobFileResult.objects.filter(bulk_job_id=job_id, file_id=file_id).update(
+                status="Failed", error_message=str(exc)[:4000], completed_at=timezone.now(),
             )
-            BulkJob.objects.filter(id=job_id).update(
-                failed_files=F("failed_files") + 1
-            )
+            BulkJob.objects.filter(id=job_id).update(failed_files=F("failed_files") + 1)
         return {"error": str(exc), "file_id": file_id}
 
 
@@ -380,6 +324,16 @@ def finalize_bulk_job(self, results, job_id: str):
         "completed_at", "result_summary",
     ])
 
+    # Consolidated deliverables: results workbook + ZIP of output documents.
+    if completed > 0:
+        try:
+            folder = get_bulk_output_folder(job) if job.folder_id else None
+            deliverables = build_deliverables(job, get_service_display_name(job.job_type), folder)
+            job.result_summary = {**(job.result_summary or {}), "deliverables": deliverables}
+            job.save(update_fields=["result_summary"])
+        except Exception:
+            logger.exception(f"Could not build deliverables for bulk job {job_id}")
+
     return {
         "job_id": job_id,
         "status": job.status,
@@ -396,11 +350,11 @@ def cancel_bulk_job(job_id: str):
     except BulkJob.DoesNotExist:
         return {"error": "Job not found"}
 
-    from celery.task.control import revoke
+    from aiDocuMines.celery_app import app as celery_app
 
     if job.celery_group_id:
         try:
-            revoke(job.celery_group_id, terminate=True, signal="SIGTERM")
+            celery_app.control.revoke(job.celery_group_id, terminate=True, signal="SIGTERM")
         except Exception as exc:
             logger.warning(f"Failed to revoke group {job.celery_group_id}: {exc}")
 

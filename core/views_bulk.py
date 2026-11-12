@@ -15,6 +15,7 @@ from oauth2_provider.contrib.rest_framework import OAuth2Authentication, TokenHa
 from core.models import BulkJob, BulkJobFileResult, File
 from core.bulk_registry import get_bulk_handler, list_bulk_handlers
 from core.service_catalog import ALL_SERVICES
+from core.tasks_bulk import get_service_display_name
 from document_operations.models import Folder, FileFolderLink
 
 logger = logging.getLogger(__name__)
@@ -396,6 +397,7 @@ class BulkJobListView(APIView):
                 {
                     "job_id": str(j.id),
                     "job_type": j.job_type,
+                    "display_name": get_service_display_name(j.job_type),
                     "status": j.status,
                     "total_files": j.total_files,
                     "processed_files": j.processed_files,
@@ -474,3 +476,46 @@ class BulkJobRetryView(APIView):
             "message": f"Retrying {retry_count} files",
             "retry_count": retry_count,
         })
+
+
+class BulkJobDownloadView(APIView):
+    """
+    Download a finished bulk job's deliverables:
+      ?format=xlsx  results workbook (one row per document)   [default]
+      ?format=zip   all output documents, grouped by source document
+    Built on demand for jobs that finished before deliverables existed.
+    """
+
+    authentication_classes = [OAuth2Authentication]
+    permission_classes = [TokenHasReadWriteScope]
+
+    def get(self, request, job_id):
+        import os
+        from django.http import FileResponse, Http404
+        from core.access import scope_by_owner
+        from core.bulk_outputs import build_deliverables
+        from core.tasks_bulk import get_bulk_output_folder, get_service_display_name
+
+        job = get_object_or_404(scope_by_owner(request.user, BulkJob.objects.all()), id=job_id)
+        if job.status in ("Pending", "Processing"):
+            return Response({"error": "The job is still running."}, status=409)
+
+        fmt = (request.query_params.get("format") or "xlsx").lower()
+        key = {"xlsx": "xlsx_file_id", "zip": "zip_file_id"}.get(fmt)
+        if not key:
+            return Response({"error": "format must be xlsx or zip"}, status=400)
+
+        deliverables = (job.result_summary or {}).get("deliverables") or {}
+        file_id = deliverables.get(key)
+        f = File.objects.filter(id=file_id, user=job.user).first() if file_id else None
+        if f is None or not os.path.isfile(f.filepath):
+            folder = get_bulk_output_folder(job) if job.folder_id else None
+            deliverables = build_deliverables(job, get_service_display_name(job.job_type), folder)
+            job.result_summary = {**(job.result_summary or {}), "deliverables": deliverables}
+            job.save(update_fields=["result_summary"])
+            file_id = deliverables.get(key)
+            f = File.objects.filter(id=file_id, user=job.user).first() if file_id else None
+        if f is None or not os.path.isfile(f.filepath):
+            raise Http404("This job produced no output documents." if fmt == "zip" else "Results not available.")
+
+        return FileResponse(open(f.filepath, "rb"), as_attachment=True, filename=f.filename)
