@@ -22,10 +22,15 @@ from .views import (
     FileAliasView, FileAliasDetailView, FolderAliasView, FolderAliasDetailView,
 )
 
+from .views_table import DocumentFacetsView, DocumentTableView
+
 urlpatterns = [
     # 📁 FOLDER OPERATIONS
     # path("folders/", FolderListView.as_view(), name="folder_list"),
     # path("folders/", FolderCreateView.as_view(), name="create-folder"),
+    # Flat, paginated document table (all accessible documents)
+    path("table/", DocumentTableView.as_view(), name="document_table"),
+    path("table/facets/", DocumentFacetsView.as_view(), name="document_table_facets"),
     path("folders/", FolderListCreateView.as_view(), name="folder_list_create"),
     path("folders/create-child/", CreateChildFolderView.as_view(), name="folder_create_child"),
     path("files/<int:pk>/trash/", TrashSingleFileView.as_view(), name="trash-file"),

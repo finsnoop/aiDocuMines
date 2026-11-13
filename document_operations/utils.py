@@ -526,26 +526,76 @@ def set_password_protection(file_id, password_hint, actor=None):
 
 
 
-def register_file_folder_link(file_obj):
-    """
-    Derives folder from file.path and links the file to it.
-    Guarantees one-to-one FileFolderLink creation.
-    """
-    from document_operations.utils import get_or_create_folder_tree, link_file_to_folder
+# Folder names that only exist in server storage paths and must never appear in a user's tree.
+STORAGE_PATH_NAMES = {"app", "media", "uploads", "demo", "temp", "tmp", "var", "home", "srv", "data", ""}
 
-    # Check if file already has a folder link using the correct related_name
-    # The FileFolderLink model uses related_name="folder_links" (plural)
+
+def folder_parts_for(file_obj):
+    """
+    Folders below <matter>/<service>/ for a file, as the user should see them:
+    the sub-path after "<project_id>/<service_id>/" in its storage path, or, when
+    the storage path does not contain it (copies of another matter's file,
+    renamed matters, imported files), the upload date (YYYYMMDD).
+    Server storage directories (app/media/uploads/<ids>/...) are never used.
+    """
+    from django.utils import timezone
+
+    path = (file_obj.filepath or "").replace("\\", "/")
+    marker = f"{file_obj.project_id}/{file_obj.service_id}/"
+    parts = []
+    if file_obj.project_id and file_obj.service_id and marker in path:
+        parts = [p for p in os.path.dirname(path.split(marker, 1)[1]).split("/") if p]
+        parts = [p for p in parts if p.lower() != "temp"]
+    if not parts:
+        created = getattr(file_obj, "created_at", None) or timezone.now()
+        parts = [created.strftime("%Y%m%d")]
+    return parts
+
+
+def register_file_folder_link(file_obj):
+    """Link a file to its folder (<matter>/<service>/<date or sub-folders>), once."""
     if file_obj.folder_links.exists():
         return  # already linked
-
-    project_id, service_id = file_obj.project_id, file_obj.service_id
     try:
-        relative_path = file_obj.filepath.split(f"{project_id}/{service_id}/", 1)[-1]
-        folder_parts = os.path.dirname(relative_path).split("/")
         folder = get_or_create_folder_tree(
-            folder_parts, user=file_obj.user, project_id=project_id, service_id=service_id
+            folder_parts_for(file_obj), user=file_obj.user,
+            project_id=file_obj.project_id, service_id=file_obj.service_id,
         )
         FileFolderLink.objects.create(file=file_obj, folder=folder)
     except Exception as e:
         raise Exception(f"Failed to register FileFolderLink for file {file_obj.id}: {e}")
+
+
+def repair_misplaced_folder_links(batch_size=500):
+    """
+    Re-file documents that were linked under server storage folders
+    (app/media/uploads/...) and delete those folders once empty.
+    Returns (files_moved, folders_deleted). Safe to run repeatedly.
+    """
+    roots = list(Folder.objects.filter(parent__isnull=True, name__in=STORAGE_PATH_NAMES)
+                 .values_list("id", flat=True))
+    if not roots:
+        return 0, 0
+    bad, frontier = set(roots), list(roots)
+    while frontier:
+        children = list(Folder.objects.filter(parent_id__in=frontier).values_list("id", flat=True))
+        frontier = [c for c in children if c not in bad]
+        bad.update(frontier)
+
+    moved = 0
+    links = FileFolderLink.objects.filter(folder_id__in=bad).select_related("file", "file__user")
+    for link in links.iterator(chunk_size=batch_size):
+        f = link.file
+        target = get_or_create_folder_tree(folder_parts_for(f), user=f.user,
+                                           project_id=f.project_id, service_id=f.service_id)
+        if target.id != link.folder_id:
+            FileFolderLink.objects.filter(pk=link.pk).update(folder=target)
+            moved += 1
+
+    deleted = 0
+    for folder_id in roots:  # delete the storage-path chains that are now empty
+        ids = [fid for fid in bad if fid]
+        if not FileFolderLink.objects.filter(folder_id__in=ids).exists():
+            deleted += Folder.objects.filter(id=folder_id).delete()[0]
+    return moved, deleted
 
