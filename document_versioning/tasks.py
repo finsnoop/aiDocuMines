@@ -15,7 +15,7 @@ from document_versioning.utils import (
     enforce_retention_policy,
     get_next_version_number,
 )
-from core.utils import register_generated_file
+from core.utils import register_generated_file, get_logical_path
 
 
 logger = logging.getLogger(__name__)
@@ -104,7 +104,7 @@ def create_version_task(file_id, run_id):
         "file_id": file_id,
         "version_number": version_number,
         "version_id": str(version.id),
-        "filepath": snapshot_path,
+        "filepath": get_logical_path(snapshot_path),
         "file_hash": file_hash,
         "checksum_sha256": checksum_sha256,
         "file_size": file_size,
@@ -112,7 +112,7 @@ def create_version_task(file_id, run_id):
         "registered_outputs": [{
             "filename": registered.filename,
             "file_id": registered.id,
-            "path": registered.filepath,
+            "path": get_logical_path(registered.filepath, registered.filename),
         }],
     }
 

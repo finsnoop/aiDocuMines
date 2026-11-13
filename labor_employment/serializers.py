@@ -1,6 +1,7 @@
 from rest_framework import serializers
 from django.contrib.auth import get_user_model
 from core.models import File, Run
+from core.utils import get_user_client
 from custom_authentication.models import Client
 from .models import (
     WorkplaceCommunicationsRun, CommunicationMessage, WageHourAnalysis,
@@ -147,6 +148,13 @@ class EEOCPacketSerializer(serializers.ModelSerializer):
     status_display = serializers.CharField(source='get_status_display', read_only=True)
     message_count = serializers.SerializerMethodField()
     document_count = serializers.SerializerMethodField()
+    packet_name = serializers.CharField(required=False, default='EEOC Packet')
+    complainant_name = serializers.CharField(required=False, default='Unknown Complainant')
+    complaint_type = serializers.CharField(required=False, default='discrimination')
+    incident_date = serializers.DateField(required=False, default=None, allow_null=True)
+    complaint_summary = serializers.CharField(required=False, default='Pending analysis', allow_blank=True)
+    relevant_messages = serializers.JSONField(required=False, default=list)
+    supporting_documents = serializers.JSONField(required=False, default=list)
     
     class Meta:
         model = EEOCPacket
@@ -250,6 +258,12 @@ class ComplianceAlertSerializer(serializers.ModelSerializer):
 class WorkplaceCommunicationsRunCreateSerializer(serializers.ModelSerializer):
     """Serializer for creating a new WorkplaceCommunicationsRun with associated Run"""
     
+    case_name = serializers.CharField(required=False, default='Untitled Matter')
+    case_type = serializers.CharField(required=False, default='workplace_communications')
+    company_name = serializers.CharField(required=False, default='Unknown Company')
+    analysis_start_date = serializers.DateField(required=False, default=None, allow_null=True)
+    analysis_end_date = serializers.DateField(required=False, default=None, allow_null=True)
+    
     class Meta:
         model = WorkplaceCommunicationsRun
         fields = [
@@ -260,19 +274,10 @@ class WorkplaceCommunicationsRunCreateSerializer(serializers.ModelSerializer):
     def create(self, validated_data):
         """Create a new Run and associated WorkplaceCommunicationsRun with client context"""
         user = self.context['request'].user
+        client = get_user_client(user)
 
-        # Handle admin users without a client - get or create default client
-        if not user.client:
-            client, _ = Client.objects.get_or_create(
-                name="System Admin",
-                defaults={
-                    "address": "System",
-                    "industry": "Legal Tech",
-                    "use_case": "Administrative Operations"
-                }
-            )
-        else:
-            client = user.client
+        # Ensure required fields have defaults
+        validated_data.setdefault('company_name', 'Unspecified Company')
 
         # Create the core Run first
         run = Run.objects.create(

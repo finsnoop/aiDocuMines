@@ -8,6 +8,21 @@ from django.contrib.auth import get_user_model
 User = get_user_model()
 
 
+def _clean_tree(nodes):
+    """Remove inaccessible files (id < 0) and prune empty folders."""
+    cleaned = []
+    for node in nodes:
+        if node["type"] == "file":
+            if isinstance(node["id"], int) and node["id"] >= 0:
+                cleaned.append(node)
+        elif node["type"] == "folder":
+            children = _clean_tree(node.get("children", []))
+            if children:
+                node["children"] = children
+                cleaned.append(node)
+    return cleaned
+
+
 def get_user_file_tree(user, base_upload_dir=None):
     if not base_upload_dir:
         base_upload_dir = os.path.abspath(os.path.join("media", "uploads"))
@@ -19,16 +34,18 @@ def get_user_file_tree(user, base_upload_dir=None):
     all_files = File.objects.filter(id__in=accessible_ids)
     file_map = {os.path.normpath(os.path.abspath(f.filepath)): f.id for f in all_files}
 
-    fallback_id_counter = {"counter": -1}
-
-    def get_or_assign_id(filepath):
-        norm_path = os.path.normpath(os.path.abspath(filepath))
-        if norm_path in file_map:
-            return file_map[norm_path]
-        else:
-            new_id = fallback_id_counter["counter"]
-            fallback_id_counter["counter"] -= 1
-            return new_id
+    def resolve_folder_name(folder_name):
+        """If folder_name is a UUID, look up the human-readable project name."""
+        import uuid
+        try:
+            uuid.UUID(folder_name)
+            from core.models import Project
+            project = Project.objects.filter(id=folder_name).first()
+            if project:
+                return project.project_name
+        except (ValueError, Exception):
+            pass
+        return folder_name
 
     def build_tree(abs_dir, rel_path_parts):
         items = []
@@ -42,14 +59,16 @@ def get_user_file_tree(user, base_upload_dir=None):
             rel_path = os.path.join(*rel_path_parts, entry)
 
             if os.path.isdir(abs_path):
+                display_name = resolve_folder_name(entry)
                 items.append({
                     "id": entry,
-                    "name": entry,
+                    "name": display_name,
                     "type": "folder",
                     "children": build_tree(abs_path, rel_path_parts + [entry])
                 })
             else:
-                file_id = get_or_assign_id(abs_path)
+                norm_path = os.path.normpath(os.path.abspath(abs_path))
+                file_id = file_map.get(norm_path, -1)
                 download_url = f"/media/uploads/{rel_path}".replace("\\", "/")
                 items.append({
                     "id": file_id,
@@ -71,23 +90,13 @@ def get_user_file_tree(user, base_upload_dir=None):
         if not os.path.isdir(client_dir):
             continue
 
-        # --- CHANGE (A): only traverse the current user's dir, and hide user_id in tree ---
         user_dir = os.path.join(client_dir, str(user.id))
-        if not os.path.isdir(user_dir):
-            continue
+        if os.path.isdir(user_dir):
+            children = build_tree(user_dir, [client_id, str(user.id)])
+            children = _clean_tree(children)
+            file_tree.extend(children)
 
-        # Show a client-level folder; children start at user's root
-        file_tree.append({
-            "id": client_id,
-            "name": client_id,
-            "type": "folder",
-            # IMPORTANT: rel_path_parts includes user.id so download_url stays correct,
-            # but user.id never appears in visible folder 'name's (coming from disk entries).
-            "children": build_tree(user_dir, [client_id, str(user.id)])
-        })
-        # --- END CHANGE (A) ---
-
-    # 2️⃣ Virtual folders for shared files (hide the owner user_id in display)
+    # 2️⃣ Virtual folders for shared files
     seen_virtual_paths = set()
 
     for file in all_files:
@@ -102,20 +111,14 @@ def get_user_file_tree(user, base_upload_dir=None):
         if len(parts) < 3:
             continue
 
-
         # 🚩 Skip files you own — they're already in the physical tree!
-        if str(parts[1]) == str(user.id):
+        if file.user_id == user.id:
             continue
 
-
-        # parts = [client, owner_user_id, ..., filename]
-        client = parts[0]
         filename = parts[-1]
 
-        # --- CHANGE (B): do NOT inject any user_id in the visible tree ---
-        # Display path skips parts[1] (owner_user_id)
-        display_parts = [client] + parts[2:-1]
-        # --- END CHANGE (B) ---
+        # Display path skips parts[0] (client) and parts[1] (owner_user_id)
+        display_parts = parts[2:-1]
 
         # Dedup by display path + filename
         display_key = tuple(display_parts + [filename])
@@ -140,7 +143,6 @@ def get_user_file_tree(user, base_upload_dir=None):
             else:
                 current_level = match["children"]
 
-        # ⬇️ Add the file itself (download_url keeps original path incl. owner id)
         current_level.append({
             "id": file.id,
             "name": filename,
@@ -149,4 +151,3 @@ def get_user_file_tree(user, base_upload_dir=None):
         })
 
     return file_tree
-

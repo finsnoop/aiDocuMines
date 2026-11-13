@@ -166,7 +166,7 @@ OAUTH2_PROVIDER = {
 
 REST_FRAMEWORK = {
     "DEFAULT_AUTHENTICATION_CLASSES": [
-        "oauth2_provider.contrib.rest_framework.OAuth2Authentication",
+        "custom_authentication.authentication.ClientBoundOAuth2Authentication",
     ],
     "DEFAULT_PERMISSION_CLASSES": [
         "rest_framework.permissions.IsAuthenticated",
@@ -317,6 +317,9 @@ CELERY_TASK_SERIALIZER = "json"
 CELERY_RESULT_SERIALIZER = "json"
 CELERY_TIMEZONE = "UTC"
 CELERY_BROKER_CONNECTION_RETRY_ON_STARTUP = True
+# Use a dedicated queue so tasks are not consumed/discarded by foreign
+# workers sharing this Redis broker (e.g. crypto/ecobserve cel_workers).
+CELERY_TASK_DEFAULT_QUEUE = "ai_documines"
 
 EMAIL_BACKEND = "django.core.mail.backends.smtp.EmailBackend"
 EMAIL_HOST = "smtp.gmail.com"

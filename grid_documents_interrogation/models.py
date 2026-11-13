@@ -40,12 +40,6 @@ class DatabaseConnection(models.Model):
             decrypted_password = str(self.password)  # This should trigger decryption
             password = quote_plus(decrypted_password)
 
-            print(f"[🔐 DB URI DEBUG]")
-            print(f"   Raw Username: {self.username}")
-            print(f"   Raw Password: {self.password}")
-            print(f"   Encoded Username: {username}")
-            print(f"   Encoded Password: {password}")
-
             if self.database_type == "postgres":
                 uri = f"postgresql://{username}:{password}@{self.host}:{self.port}/{self.database_name}"
             elif self.database_type == "mysql":
@@ -55,10 +49,8 @@ class DatabaseConnection(models.Model):
             else:
                 raise ValueError(f"Unsupported database type: {self.database_type}")
 
-            print(f"[🔌 Final Connection URI]: {uri}")
             return uri
-        except Exception as e:
-            print(f"[❌ URI Build Failed]: {e}")
+        except Exception:
             raise
 
     '''

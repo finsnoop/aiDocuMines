@@ -139,7 +139,14 @@ def _extract_docx(path: Path) -> str:
         return ""
     try:
         doc = Document(str(path))
-        return "\n".join(p.text for p in doc.paragraphs)
+        parts = [p.text for p in doc.paragraphs if p.text]
+        # Redline/comparison documents keep most content in tables.
+        for table in doc.tables:
+            for row in table.rows:
+                cells = [c.text.strip() for c in row.cells if c.text and c.text.strip()]
+                if cells:
+                    parts.append(" | ".join(cells))
+        return "\n".join(parts)
     except Exception as e:
         LOGGER.error("DOCX extract failed [%s]: %s", path.name, e)
         return ""

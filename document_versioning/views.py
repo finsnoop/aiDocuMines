@@ -8,9 +8,11 @@ from django.shortcuts import get_object_or_404
 from django.contrib.auth import get_user_model
 from oauth2_provider.models import Application
 from core.models import File
+from core.utils import get_logical_path
 from document_versioning.models import DocumentVersion, VersionDiff, VersionRetentionPolicy, VersionManifest, VersionArchiveRecord
 from document_versioning.tasks import create_version_task
-from oauth2_provider.contrib.rest_framework import OAuth2Authentication, TokenHasReadWriteScope
+from oauth2_provider.contrib.rest_framework import TokenHasReadWriteScope
+from custom_authentication.authentication import ClientBoundOAuth2Authentication as OAuth2Authentication
 from drf_yasg.utils import swagger_auto_schema
 from drf_yasg import openapi
 from document_versioning.utils import get_next_version_number, generate_diff, restore_from_archive
@@ -134,7 +136,7 @@ class ListVersionsAPIView(APIView):
             {
                 "id": str(v.id),
                 "version_number": v.version_number,
-                "filepath": v.filepath,
+                "filepath": get_logical_path(v.filepath),
                 "file_hash": v.file_hash,
                 "file_size": v.file_size,
                 "mime_type": v.mime_type,
@@ -286,7 +288,7 @@ class CheckVersionStatusAPIView(APIView):
                 "id": str(version.id),
                 "file_id": str(version.file.id),
                 "version_number": version.version_number,
-                "filepath": version.filepath,
+                "filepath": get_logical_path(version.filepath),
                 "file_hash": version.file_hash,
                 "file_size": version.file_size,
                 "mime_type": version.mime_type,
@@ -347,7 +349,7 @@ class DownloadVersionAPIView(APIView):
                 return Response({
                     "version_id": str(version.id),
                     "version_number": version.version_number,
-                    "filepath": archive_record.archived_path,
+                    "filepath": get_logical_path(archive_record.archived_path),
                     "file_hash": version.file_hash,
                     "is_archived": True,
                     "archive_format": archive_record.archive_format,
@@ -361,7 +363,7 @@ class DownloadVersionAPIView(APIView):
         return Response({
             "version_id": str(version.id),
             "version_number": version.version_number,
-            "filepath": version.filepath,
+            "filepath": get_logical_path(version.filepath),
             "file_hash": version.file_hash,
             "file_size": version.file_size,
             "mime_type": version.mime_type,

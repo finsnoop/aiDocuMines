@@ -76,6 +76,25 @@ services:
         # timeout: 5s
         # retries: 3
 
+  litellm:
+    image: ghcr.io/berriai/litellm:main-stable
+    container_name: aidocumines_litellm
+    restart: unless-stopped
+    command: ["--config", "/app/config.yaml", "--port", "4000", "--num_workers", "2"]
+    ports: ["4000:4000"]
+    volumes:
+      - ./litellm/config.yaml:/app/config.yaml:ro
+    environment:
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - LITELLM_MASTER_KEY=${LITELLM_MASTER_KEY}
+    networks: [captain-overlay-network]
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:4000/health/liveliness', timeout=5).status==200 else 1)\""]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+
   db_prepare:
     build: { context: ., dockerfile: Dockerfile }
     container_name: aidocumines_db_prepare

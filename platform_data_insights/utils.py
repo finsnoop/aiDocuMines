@@ -1,10 +1,14 @@
 # platform_data_insights/utils.py
 
+from core.utils import get_logical_path
 from core.models import File, Metadata, Run, Storage
 from django.db.models import Count, Sum, Avg, Max, Min, Q
 from django.utils import timezone
 from datetime import timedelta
 from django.db.models.functions import TruncDate
+from document_anonymizer.models import Anonymize
+from document_translation.models import TranslationFile
+from grid_documents_interrogation.models import Topic, Query
 
 
 def calculate_user_insights(user):
@@ -89,6 +93,9 @@ def calculate_user_insights(user):
         .values("upload_storage_location", "output_storage_location")
         .annotate(count=Count("upload_storage_location"))
     )
+    for storage_entry in storages:
+        storage_entry["upload_storage_location"] = get_logical_path(storage_entry["upload_storage_location"])
+        storage_entry["output_storage_location"] = get_logical_path(storage_entry["output_storage_location"])
 
     # 9. Average document size
     size_summary = file_qs.aggregate(
@@ -131,17 +138,47 @@ def calculate_user_insights(user):
 
     total_cost = runs.aggregate(total=Sum("cost"))["total"] or 0
 
+    # 13. Anonymized docs
+    anonymized_docs_count = Anonymize.objects.filter(
+        original_file__user=user
+    ).count()
+
+    # 14. Translated files
+    translated_docs_count = TranslationFile.objects.filter(
+        original_file__user=user
+    ).count()
+
+    # 15. Insights generated (topics + queries)
+    topics_count = Topic.objects.filter(user=user).count()
+    queries_count = Query.objects.filter(user=user).count()
+    insights_count = topics_count + queries_count
+
+    # 16. Modified files (recently updated, not newly created)
+    day_ago = timezone.now() - timedelta(days=1)
+    modified_files_count = file_qs.filter(
+        updated_at__gte=day_ago,
+        created_at__lt=day_ago
+    ).count()
+
+    # 17. Files at risk: failed + delayed processing
+    files_at_risk_count = failed_file_count + delayed_files_count
+
     return {
         "total_file_count": total_file_count,
         "pending_file_count": pending_file_count,
         "failed_file_count": failed_file_count,
         "processing_file_count": processing_file_count,
+        "modified_files_count": modified_files_count,
+        "files_at_risk_count": files_at_risk_count,
         "recent_files": recent_files,
         "doc_type_distribution": doc_type_distribution,
         "top_file_types": top_file_types,
         "volume_trend": volume_trend,
         "duplicate_files": duplicate_files,
         "encrypted_docs_count": encrypted_count,
+        "anonymized_docs_count": anonymized_docs_count,
+        "translated_docs_count": translated_docs_count,
+        "insights_count": insights_count,
         "metadata_completeness": completeness,
         "metadata_issues": metadata_issues,
         "storages": storages,

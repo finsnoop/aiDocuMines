@@ -35,7 +35,6 @@ class SignupSerializer(serializers.ModelSerializer):
         password = validated_data.pop("password")
         organisation_name = validated_data.pop("organisation")
 
-        from core.models import Client
         client, _ = Client.objects.get_or_create(name=organisation_name)
 
         user = User.objects.create_user(client=client, **validated_data)

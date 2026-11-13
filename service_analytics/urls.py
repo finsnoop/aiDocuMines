@@ -4,6 +4,7 @@ from service_analytics.views import (
     RecentActivityAPIView,
     CreateServiceExecutionView,
     ToolDataInsightsAPIView,
+    ReportsListView,
 )
 
 urlpatterns = [
@@ -11,5 +12,5 @@ urlpatterns = [
     path('recent-activity/', RecentActivityAPIView.as_view(), name='service-analytics-recent-activity'),
     path('executions/create/', CreateServiceExecutionView.as_view(), name='service-execution-create'),
     path('tool-data/', ToolDataInsightsAPIView.as_view(), name='service-analytics-tool-data'),
+    path('reports/', ReportsListView.as_view(), name='service-analytics-reports'),
 ]
-

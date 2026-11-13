@@ -5,7 +5,7 @@ from rest_framework.response import Response
 from rest_framework import status, generics
 from pymilvus import Collection, connections
 
-from oauth2_provider.contrib.rest_framework import OAuth2Authentication
+from custom_authentication.authentication import ClientBoundOAuth2Authentication as OAuth2Authentication
 from custom_authentication.rbac import HasPermission
 
 from django.core.cache import cache
@@ -63,8 +63,8 @@ def _get_partition_names(accessible_file_ids):
 
 def _load_collection_partitions(partitions=None):
     """Connect and load only the specified partitions (or none = load all)."""
-    if not connections.has_connection("default"):
-        connections.connect(alias="default", host=MILVUS_HOST, port=MILVUS_PORT)
+    from document_search.milvus_client import ensure_milvus_connection
+    ensure_milvus_connection()
     _ensure_collection()
     collection = Collection(COLLECTION_NAME)
     if partitions:

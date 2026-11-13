@@ -4,6 +4,7 @@ from rest_framework.response import Response
 from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
 from django.shortcuts import get_object_or_404
+from django.http import FileResponse
 from .models import (
     Folder, FileFolderLink, UserFileHide, UserFolderHide,
     FileColorTag, FolderColorTag, FileAlias, FolderAlias,
@@ -15,27 +16,25 @@ from .serializers import (
     FileAliasSerializer, FolderAliasSerializer,
 )
 from core.models import File
+from core.utils import get_logical_path
 from custom_authentication.permissions import IsOwner, HasEffectiveAccess, HasAnyAccess, IsAdminOrSuperUser
 from .models import COLOR_CHOICES
+from .utils import restore_file_from_trash, restore_folder_from_trash, delete_file
 from .tasks import (
     async_bulk_trash_files,
     async_bulk_trash_folders,
-    async_bulk_restore_folders,
     async_bulk_delete_folders,
     async_bulk_move_files_to_folder,
     async_rename_file,
     async_rename_folder,
-    async_delete_file,
-    async_delete_folder,
     async_duplicate_file,
     async_copy_file,
     async_zip_files,
     async_password_protect_file,
-    async_restore_file,
-    async_restore_folder,
 )
 
 import os
+import mimetypes
 import shutil
 from document_operations.models import FileVersion
 from django.conf import settings
@@ -47,7 +46,7 @@ from drf_yasg import openapi
 
 from django.contrib.auth.models import Group
 from .tasks import async_grant_public_link
-from .utils import update_access_level_for_user
+from .utils import update_access_level_for_user, same_tenant
 from .models import FileAccessEntry
 from django.contrib.auth import get_user_model
 from document_operations.utils import set_password_protection
@@ -172,27 +171,60 @@ class MoveFilesView(APIView):
 
 
 class DeleteFileView(APIView):
-    permission_classes = [IsAuthenticated, IsOwner, HasEffectiveAccess, IsAdminOrSuperUser]
+    """
+    Permanently delete a file. Only the owner (or a user with effective access)
+    can permanently delete their own trashed files.
+    """
+    permission_classes = [IsAuthenticated, IsOwner, HasEffectiveAccess]
 
     def delete(self, request, pk):
         file_link = get_object_or_404(FileFolderLink, pk=pk)
-
-        FileAuditLog.objects.create(
-            file=file_link.file,
-            user=request.user,
-            action="deleted"
-        )
-
-        async_delete_file.delay(pk)
-        return Response({"message": "File deletion initiated."}, status=202)
+        self.check_object_permissions(request, file_link)
+        delete_file(file_link.id, actor=request.user)
+        return Response({"message": "File deleted."}, status=200)
 
 
 class DeleteFolderView(APIView):
-    permission_classes = [IsAuthenticated, IsOwner, HasEffectiveAccess, IsAdminOrSuperUser]
+    """
+    Permanently delete a folder. Only the owner (or a user with effective access)
+    can permanently delete their own trashed folders.
+    """
+    permission_classes = [IsAuthenticated, IsOwner, HasEffectiveAccess]
 
     def delete(self, request, pk):
-        async_delete_folder.delay(pk)
-        return Response({"message": "Folder deletion initiated."}, status=202)
+        import os
+        from core.models import File as CoreFile
+
+        folder = get_object_or_404(Folder, pk=pk)
+        self.check_object_permissions(request, folder)
+
+        # Collect all file paths before cascade delete removes the DB rows
+        filepaths = self._collect_folder_filepaths(folder)
+        # Collect child folder filepaths too (Django cascade deletes subfolders)
+        for child in folder.subfolders.all():
+            filepaths.extend(self._collect_folder_filepaths(child))
+
+        folder.delete()
+
+        # Remove physical files from disk
+        for fpath in filepaths:
+            if fpath and os.path.isfile(fpath):
+                try:
+                    os.remove(fpath)
+                except OSError:
+                    pass
+
+        return Response({"message": "Folder deleted."}, status=200)
+
+    def _collect_folder_filepaths(self, folder):
+        """Recursively collect absolute file paths from a folder and its subfolders."""
+        paths = []
+        for link in folder.files.select_related('file').all():
+            if link.file.filepath:
+                paths.append(link.file.filepath)
+        for child in folder.subfolders.all():
+            paths.extend(self._collect_folder_filepaths(child))
+        return paths
 
 
 class DuplicateFileView(APIView):
@@ -254,24 +286,16 @@ class RestoreFileView(APIView):
     permission_classes = [IsAuthenticated, HasEffectiveAccess]
 
     def post(self, request, pk):
-        file_link = get_object_or_404(FileFolderLink, pk=pk)
-
-        FileAuditLog.objects.create(
-            file=file_link.file,
-            user=request.user,
-            action="restored"
-        )
-
-        async_restore_file.delay(pk)
-        return Response({"message": "File restore initiated."}, status=202)
+        restore_file_from_trash(pk, actor=request.user)
+        return Response({"message": "File restored."}, status=status.HTTP_200_OK)
 
 
 class RestoreFolderView(APIView):
     permission_classes = [IsAuthenticated, HasEffectiveAccess]
 
     def post(self, request, pk):
-        async_restore_folder.delay(pk)
-        return Response({"message": "Folder restore initiated."}, status=202)
+        result = restore_folder_from_trash(pk)
+        return Response(result, status=status.HTTP_200_OK)
 
 
 class ListFileVersionsView(APIView):
@@ -285,7 +309,7 @@ class ListFileVersionsView(APIView):
             "version": v.version_number,
             "uploaded_at": v.uploaded_at,
             "uploaded_by": v.uploaded_by.email if v.uploaded_by else "Unknown",
-            "file_path": v.file_path,
+            "file_path": get_logical_path(v.file_path),
         } for v in versions]
         return Response(data, status=200)
 
@@ -331,8 +355,13 @@ class SharedFilesView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        access_links = FileAccessEntry.objects.filter(user=request.user).select_related("file_link__file")
-        file_links = [entry.file_link for entry in access_links]
+        client_id = getattr(request.user, "client_id", None)
+        access_links = FileAccessEntry.objects.filter(user=request.user).select_related("file_link__file__user")
+        if not client_id:
+            access_links = access_links.none()
+        else:
+            access_links = access_links.filter(file_link__file__user__client_id=client_id)
+        file_links = [entry.file_link for entry in access_links if entry.file_link]
         serializer = FileFolderLinkSerializer(file_links, many=True)
         return Response(serializer.data)
 
@@ -383,39 +412,47 @@ class ShareFileView(APIView):
         user_ids = request.data.get("user_ids", []) or []
         emails = request.data.get("emails", []) or []
         level = request.data.get("access_level", "read")
+        owner = file_link.file.user
+        if not same_tenant(request.user, owner):
+            return Response({"error": "You can only share files inside your organisation."}, status=403)
 
         access_map = {
             "read":  {"can_read": True},
             "write": {"can_read": True, "can_write": True},
-            "owner": {"can_read": True, "can_write": True, "can_share": True, "is_owner": True}
+            "owner": {"can_read": True, "can_write": True, "can_delete": True, "can_share": True}
         }
         perms = access_map.get(level, {"can_read": True})
+        client_id = owner.client_id
 
-        # Resolve emails to user IDs
         if emails:
-            resolved = list(User.objects.filter(email__in=emails).values_list("id", flat=True))
-            user_ids = list(set(user_ids + resolved))
-            unresolved = set(emails) - set(User.objects.filter(email__in=emails).values_list("email", flat=True))
+            resolved_users = User.objects.filter(email__in=emails, client_id=client_id)
+            resolved = list(resolved_users.values_list("id", flat=True))
+            user_ids = list(set(list(user_ids) + resolved))
+            unresolved = set(emails) - set(resolved_users.values_list("email", flat=True))
             if unresolved:
-                return Response({"error": f"Users not found: {', '.join(unresolved)}"}, status=404)
+                return Response({"error": "Users not found in your organisation."}, status=404)
 
         if not user_ids:
             return Response({"error": "No users provided."}, status=400)
 
+        recipients = []
         for uid in user_ids:
-            user = get_object_or_404(User, pk=uid)
+            user = get_object_or_404(User, pk=uid, client_id=client_id)
+            if not same_tenant(owner, user):
+                return Response({"error": "Documents can only be shared with users in the same organisation."}, status=403)
             FileAccessEntry.objects.update_or_create(
                 file_link=file_link,
                 user=user,
                 defaults={**perms, "granted_by": request.user}
             )
+            recipients.append(user.id)
 
         file_link.is_shared = True
         file_link.save()
 
         return Response({
             "message": "File shared successfully.",
-            "shared_with": user_ids,
+            "shared_with": recipients,
             "access_level": level
         }, status=200)
 
@@ -440,13 +477,27 @@ class FilePreviewView(APIView):
     def get(self, request, pk):
         file_link = get_object_or_404(FileFolderLink, pk=pk)
         self.check_object_permissions(request, file_link)
-        file = file_link.file
+        file_obj = file_link.file
 
-        return Response({
-            "filename": file.filename,
-            "filetype": file.file_type,
-            "preview_url": file.file.url,  # or some logic to return base64/image/text preview
-        })
+        real_path = file_obj.filepath
+        if not real_path or not os.path.exists(real_path):
+            return Response({"error": "File not found on storage"}, status=404)
+
+        content_type, _ = mimetypes.guess_type(real_path)
+        if not content_type:
+            content_type = "application/octet-stream"
+
+        filename = os.path.basename(real_path)
+
+        try:
+            return FileResponse(
+                open(real_path, "rb"),
+                as_attachment=False,
+                filename=filename,
+                content_type=content_type
+            )
+        except Exception as e:
+            return Response({"error": f"Failed to read file: {str(e)}"}, status=500)
 
 
 
@@ -586,8 +637,17 @@ class BulkRestoreFoldersView(APIView):
         folder_ids = request.data.get("folder_ids", [])
         if not folder_ids:
             return Response({"error": "Missing folder_ids list."}, status=400)
-        async_bulk_restore_folders.delay(folder_ids)
-        return Response({"message": "Bulk folder restore initiated."}, status=202)
+        from document_operations.utils import restore_folder_recursive
+        from document_operations.models import Folder
+        results = []
+        for fid in folder_ids:
+            try:
+                folder = Folder.objects.get(id=fid)
+                restore_folder_recursive(folder)
+                results.append(f"Restored {folder.name}")
+            except Folder.DoesNotExist:
+                results.append(f"Folder {fid} not found")
+        return Response({"message": results}, status=status.HTTP_200_OK)
 
 
 class BulkDeleteFoldersView(APIView):
@@ -605,9 +665,14 @@ class SharedTreeView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
+        client_id = getattr(request.user, "client_id", None)
         access_entries = FileAccessEntry.objects.filter(user=request.user).select_related(
-            'file_link__file', 'file_link__folder'
+            'file_link__file__user', 'file_link__folder'
         )
+        if not client_id:
+            access_entries = access_entries.none()
+        else:
+            access_entries = access_entries.filter(file_link__file__user__client_id=client_id)
         owner_map = {}
         for entry in access_entries:
             link = entry.file_link
@@ -763,15 +828,17 @@ class TrashFolderView(APIView):
     """
     PATCH /api/v1/documents/folders/<uuid:pk>/trash/
 
-    Moves a single folder to trash.
+    Moves a single folder to trash.  Idempotent – if already trashed
+    the call still succeeds so that the frontend can safely retry.
     """
     permission_classes = [IsAuthenticated, HasEffectiveAccess]
 
     def patch(self, request, pk):
         folder = get_object_or_404(Folder, pk=pk)
         self.check_object_permissions(request, folder)
-        folder.is_trashed = True
-        folder.save()
+        if not folder.is_trashed:
+            folder.is_trashed = True
+            folder.save()
         return Response({"message": f"Folder {pk} moved to trash."}, status=200)
 
 
@@ -1067,14 +1134,24 @@ class ShareWithGroupView(APIView):
         group_name = request.data.get("group_name")
         level = request.data.get("access_level", "read")
         group = get_object_or_404(Group, name=group_name)
+        owner = file_link.file.user
+        if not same_tenant(request.user, owner):
+            return Response({"error": "You can only share files inside your organisation."}, status=403)
 
         perms = {
             "read":  {"can_read": True},
             "write": {"can_read": True, "can_write": True},
-            "owner": {"can_read": True, "can_write": True, "can_share": True, "is_owner": True}
+            "owner": {"can_read": True, "can_write": True, "can_share": True, "can_delete": True}
         }.get(level, {"can_read": True})
 
-        for user in group.user_set.all():
+        recipients = [
+            user for user in group.user_set.all()
+            if same_tenant(owner, user)
+        ]
+        if not recipients:
+            return Response({"error": "No users in that group belong to your organisation."}, status=403)
+
+        for user in recipients:
             FileAccessEntry.objects.update_or_create(
                 file_link=file_link,
                 user=user,
@@ -1084,7 +1161,10 @@ class ShareWithGroupView(APIView):
         file_link.is_shared = True
         file_link.save()
 
-        return Response({"message": f"Shared with group {group_name}"}, status=200)
+        return Response({
+            "message": f"Shared with group {group_name}",
+            "shared_with": [user.id for user in recipients],
+        }, status=200)
 
 
 class SetAccessLevelView(APIView):

@@ -1,6 +1,7 @@
 from __future__ import annotations
 from django.conf import settings
 from django.db import models
+import json
 
 
 class HomeAnalyticsSnapshot(models.Model):
@@ -22,4 +23,19 @@ class HomeAnalyticsSnapshot(models.Model):
 
     def __str__(self) -> str:
         return f"HomeAnalyticsSnapshot(user={self.user_id}, at={self.generated_at:%Y-%m-%d %H:%M})"
+
+
+class DashboardLayout(models.Model):
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="dashboard_layouts")
+    project_id = models.CharField(max_length=255, null=True, blank=True)
+    service_id = models.CharField(max_length=255, null=True, blank=True)
+    layout = models.JSONField(default=list)
+    ui_prefs = models.JSONField(default=dict, blank=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        unique_together = ["user", "project_id", "service_id"]
+
+    def __str__(self) -> str:
+        return f"DashboardLayout(user={self.user_id}, project={self.project_id}, service={self.service_id})"
 

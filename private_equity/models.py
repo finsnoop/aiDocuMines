@@ -464,7 +464,7 @@ class ClosingChecklist(models.Model):
     due_diligence_run = models.ForeignKey(DueDiligenceRun, on_delete=models.CASCADE, related_name='closing_checklists')
 
     # Item details
-    item_name = models.CharField(max_length=500, help_text="Checklist item description")
+    item_name = models.CharField(max_length=500, blank=True, default='', help_text="Checklist item description")
     category = models.CharField(max_length=50, choices=CHECKLIST_CATEGORIES, default='legal')
     priority = models.CharField(max_length=20, choices=PRIORITY_LEVELS, default='medium')
 
@@ -793,7 +793,7 @@ class PanelFirm(models.Model):
     client = models.ForeignKey('custom_authentication.Client', on_delete=models.CASCADE, related_name='pe_panel_firms')
 
     # Firm details
-    name = models.CharField(max_length=255)
+    name = models.CharField(max_length=255, blank=True, default='')
     practice_areas = models.JSONField(default=list, help_text="List of practice areas")
     regions = models.JSONField(default=list, help_text="List of regions covered")
 
@@ -858,8 +858,8 @@ class RFP(models.Model):
     client = models.ForeignKey('custom_authentication.Client', on_delete=models.CASCADE, related_name='pe_rfps')
 
     # RFP details
-    title = models.CharField(max_length=500)
-    matter_type = models.CharField(max_length=50, choices=MATTER_TYPES)
+    title = models.CharField(max_length=500, blank=True, default='Untitled RFP')
+    matter_type = models.CharField(max_length=50, choices=MATTER_TYPES, blank=True, default='general')
     description = models.TextField(blank=True)
 
     # Link to deal (optional)
@@ -871,7 +871,7 @@ class RFP(models.Model):
     requirements = models.JSONField(default=list, help_text="List of requirements")
 
     # Timeline
-    response_deadline = models.DateTimeField()
+    response_deadline = models.DateTimeField(null=True, blank=True)
     project_start_date = models.DateField(null=True, blank=True)
     project_end_date = models.DateField(null=True, blank=True)
 
@@ -966,12 +966,12 @@ class EngagementLetter(models.Model):
 
     # Links
     due_diligence_run = models.ForeignKey(DueDiligenceRun, on_delete=models.SET_NULL, null=True, blank=True, related_name='engagement_letters')
-    firm = models.ForeignKey(PanelFirm, on_delete=models.CASCADE, related_name='engagement_letters')
+    firm = models.ForeignKey(PanelFirm, on_delete=models.CASCADE, related_name='engagement_letters', null=True, blank=True)
     rfp = models.ForeignKey(RFP, on_delete=models.SET_NULL, null=True, blank=True, related_name='engagement_letters')
 
     # Engagement details
-    scope_description = models.TextField()
-    fee_arrangement = models.CharField(max_length=20, choices=FEE_ARRANGEMENTS)
+    scope_description = models.TextField(blank=True, default='')
+    fee_arrangement = models.CharField(max_length=20, choices=FEE_ARRANGEMENTS, blank=True, default='hourly')
     agreed_fee = models.DecimalField(max_digits=15, decimal_places=2, null=True, blank=True)
     fee_cap = models.DecimalField(max_digits=15, decimal_places=2, null=True, blank=True)
 
@@ -1037,11 +1037,11 @@ class SignatureTracker(models.Model):
     due_diligence_run = models.ForeignKey(DueDiligenceRun, on_delete=models.CASCADE, related_name='signature_trackers')
 
     # Document info
-    document_name = models.CharField(max_length=500)
+    document_name = models.CharField(max_length=500, blank=True, default='')
     document_file = models.ForeignKey('core.File', on_delete=models.SET_NULL, null=True, blank=True, related_name='pe_signature_documents')
 
     # Signature details
-    signatory_name = models.CharField(max_length=255)
+    signatory_name = models.CharField(max_length=255, blank=True, default='')
     signatory_email = models.EmailField(blank=True)
     signatory_role = models.CharField(max_length=100, blank=True)
 
@@ -1100,7 +1100,7 @@ class ConditionPrecedent(models.Model):
     due_diligence_run = models.ForeignKey(DueDiligenceRun, on_delete=models.CASCADE, related_name='conditions_precedent')
 
     # CP details
-    name = models.CharField(max_length=500)
+    name = models.CharField(max_length=500, blank=True, default='')
     description = models.TextField(blank=True)
     category = models.CharField(max_length=50, choices=CP_CATEGORIES, default='legal')
 
@@ -1159,7 +1159,7 @@ class ClosingBinder(models.Model):
     due_diligence_run = models.ForeignKey(DueDiligenceRun, on_delete=models.CASCADE, related_name='closing_binders')
 
     # Binder details
-    name = models.CharField(max_length=255)
+    name = models.CharField(max_length=255, blank=True, default='Untitled Binder')
     format = models.CharField(max_length=10, choices=BINDER_FORMAT, default='pdf')
     include_toc = models.BooleanField(default=True)
     include_signature_pages = models.BooleanField(default=True)
@@ -1226,8 +1226,8 @@ class Covenant(models.Model):
     due_diligence_run = models.ForeignKey(DueDiligenceRun, on_delete=models.CASCADE, related_name='covenants')
 
     # Covenant details
-    name = models.CharField(max_length=500)
-    covenant_type = models.CharField(max_length=30, choices=COVENANT_TYPES)
+    name = models.CharField(max_length=500, blank=True, default='')
+    covenant_type = models.CharField(max_length=30, choices=COVENANT_TYPES, blank=True, default='financial')
     description = models.TextField(blank=True)
 
     # Thresholds
@@ -1295,8 +1295,8 @@ class ConsentFiling(models.Model):
     due_diligence_run = models.ForeignKey(DueDiligenceRun, on_delete=models.CASCADE, related_name='consent_filings')
 
     # Filing details
-    name = models.CharField(max_length=500)
-    filing_type = models.CharField(max_length=30, choices=FILING_TYPES)
+    name = models.CharField(max_length=500, blank=True, default='')
+    filing_type = models.CharField(max_length=30, choices=FILING_TYPES, blank=True, default='other')
     description = models.TextField(blank=True)
 
     # Parties

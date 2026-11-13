@@ -12,13 +12,10 @@ from rest_framework import status
 from drf_yasg.utils import swagger_auto_schema
 from drf_yasg import openapi
 
-from oauth2_provider.contrib.rest_framework import (
-    OAuth2Authentication,
-    TokenHasReadWriteScope,
-)
+from oauth2_provider.contrib.rest_framework import TokenHasReadWriteScope
 
 from django.conf import settings
-from oauth2_provider.contrib.rest_framework import OAuth2Authentication, TokenHasReadWriteScope
+from custom_authentication.authentication import ClientBoundOAuth2Authentication as OAuth2Authentication
 
 from .utils import (
     build_overview,
@@ -28,7 +25,7 @@ from .utils import (
     build_top_files,
     build_top_searches,
 )
-from .models import HomeAnalyticsSnapshot
+from .models import HomeAnalyticsSnapshot, DashboardLayout
 
 logger = logging.getLogger(__name__)
 
@@ -356,5 +353,72 @@ class HomeDashTopSearchesView(OAuth2SecuredAPIView):
             return Response(build_top_searches(user, limit), status=status.HTTP_200_OK)
         except Exception as e:
             logger.exception("HomeDashTopSearchesView failed")
+            return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+class DashboardLayoutView(OAuth2SecuredAPIView):
+    @swagger_auto_schema(
+        operation_description="Get or update the widget layout for the current user.",
+        tags=["Home Analytics"],
+        manual_parameters=[
+            client_id_param,
+            openapi.Parameter("project_id", openapi.IN_QUERY, type=openapi.TYPE_STRING, required=False),
+            openapi.Parameter("service_id", openapi.IN_QUERY, type=openapi.TYPE_STRING, required=False),
+        ],
+    )
+    def get(self, request):
+        user, err = self._get_user(request)
+        if err:
+            return err
+        project_id = request.query_params.get("project_id") or None
+        service_id = request.query_params.get("service_id") or None
+        try:
+            obj = DashboardLayout.objects.filter(user=user, project_id=project_id, service_id=service_id).first()
+            if obj:
+                return Response({"layout": obj.layout, "ui_prefs": obj.ui_prefs}, status=status.HTTP_200_OK)
+            return Response({"layout": [], "ui_prefs": {}}, status=status.HTTP_200_OK)
+        except Exception as e:
+            logger.exception("DashboardLayoutView GET failed")
+            return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+    @swagger_auto_schema(
+        operation_description="Upsert the widget layout for the current user.",
+        tags=["Home Analytics"],
+        manual_parameters=[
+            client_id_param,
+            openapi.Parameter("project_id", openapi.IN_QUERY, type=openapi.TYPE_STRING, required=False),
+            openapi.Parameter("service_id", openapi.IN_QUERY, type=openapi.TYPE_STRING, required=False),
+        ],
+        request_body=openapi.Schema(
+            type=openapi.TYPE_OBJECT,
+            properties={
+                "layout": openapi.Schema(type=openapi.TYPE_ARRAY, items=openapi.Schema(type=openapi.TYPE_OBJECT)),
+                "ui_prefs": openapi.Schema(type=openapi.TYPE_OBJECT),
+            },
+        ),
+    )
+    def put(self, request):
+        user, err = self._get_user(request)
+        if err:
+            return err
+        project_id = request.query_params.get("project_id") or None
+        service_id = request.query_params.get("service_id") or None
+        layout = request.data.get("layout", [])
+        if not isinstance(layout, list):
+            return Response({"error": "layout must be an array"}, status=status.HTTP_400_BAD_REQUEST)
+        ui_prefs = request.data.get("ui_prefs")
+        if ui_prefs is not None and not isinstance(ui_prefs, dict):
+            return Response({"error": "ui_prefs must be an object"}, status=status.HTTP_400_BAD_REQUEST)
+        defaults: dict = {"layout": layout}
+        if ui_prefs is not None:
+            defaults["ui_prefs"] = ui_prefs
+        try:
+            obj, created = DashboardLayout.objects.update_or_create(
+                user=user, project_id=project_id, service_id=service_id,
+                defaults=defaults,
+            )
+            return Response({"layout": obj.layout, "ui_prefs": obj.ui_prefs}, status=status.HTTP_200_OK)
+        except Exception as e:
+            logger.exception("DashboardLayoutView PUT failed")
             return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 

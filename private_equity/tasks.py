@@ -7,7 +7,7 @@ from django.utils import timezone
 from django.db import transaction
 from django.conf import settings
 from core.models import File
-from core.utils import register_generated_file
+from core.utils import register_generated_file, get_logical_path
 from .models import (
     DueDiligenceRun, DocumentClassification, RiskClause, FindingsReport
 )
@@ -352,7 +352,7 @@ def classify_document_task(self, file_id, dd_run_id, user_id, project_id=None, s
             output_dir = os.path.join(
                 settings.MEDIA_ROOT,
                 "uploads",
-                str(file_obj.user.client.client_id) if hasattr(file_obj.user, 'client') else "default",
+                str(file_obj.user.client.id) if hasattr(file_obj.user, 'client') else "default",
                 str(file_obj.user.id),
                 effective_project_id or "default_project",
                 effective_service_id or "pe_classification",
@@ -384,7 +384,7 @@ def classify_document_task(self, file_id, dd_run_id, user_id, project_id=None, s
                 registered_outputs.append({
                     "filename": registered.filename,
                     "file_id": registered.id,
-                    "path": registered.filepath
+                    "path": get_logical_path(registered.filepath, registered.filename)
                 })
 
                 logger.info(f"✅ Registered classification report file: {registered.filename} (file_id={registered.id})")
@@ -512,7 +512,7 @@ def extract_risk_clauses_task(self, file_id, dd_run_id, user_id, project_id=None
             output_dir = os.path.join(
                 settings.MEDIA_ROOT,
                 "uploads",
-                str(file_obj.user.client.client_id) if hasattr(file_obj.user, 'client') else "default",
+                str(file_obj.user.client.id) if hasattr(file_obj.user, 'client') else "default",
                 str(file_obj.user.id),
                 effective_project_id or "default_project",
                 effective_service_id or "pe_risk_extraction",
@@ -544,7 +544,7 @@ def extract_risk_clauses_task(self, file_id, dd_run_id, user_id, project_id=None
                 registered_outputs.append({
                     "filename": registered.filename,
                     "file_id": registered.id,
-                    "path": registered.filepath
+                    "path": get_logical_path(registered.filepath, registered.filename)
                 })
 
                 logger.info(f"✅ Registered risk clauses report file: {registered.filename} (file_id={registered.id})")
@@ -728,7 +728,7 @@ def generate_findings_report_task(self, dd_run_id, user_id, report_name="Due Dil
             output_dir = os.path.join(
                 settings.MEDIA_ROOT,
                 "uploads",
-                str(client.client_id) if hasattr(client, 'client_id') else "default",
+                str(client.id) if client else "default",
                 str(user.id),
                 final_project_id,
                 final_service_id,
@@ -767,7 +767,7 @@ def generate_findings_report_task(self, dd_run_id, user_id, report_name="Due Dil
                 registered_outputs.append({
                     "filename": registered.filename,
                     "file_id": registered.id,
-                    "path": registered.filepath
+                    "path": get_logical_path(registered.filepath, registered.filename)
                 })
 
                 logger.info(f"✅ Registered findings report file: {registered.filename} (file_id={registered.id})")

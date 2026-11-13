@@ -7,11 +7,12 @@ from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status, permissions
 from rest_framework.parsers import MultiPartParser, FormParser
-from oauth2_provider.contrib.rest_framework import OAuth2Authentication, TokenHasReadWriteScope
+from oauth2_provider.contrib.rest_framework import TokenHasReadWriteScope
+from custom_authentication.authentication import ClientBoundOAuth2Authentication as OAuth2Authentication
 from drf_yasg.utils import swagger_auto_schema
 from drf_yasg import openapi
 
-from core.utils import generate_and_register_service_report
+from core.utils import generate_and_register_service_report, clean_request_data_for_serializer, get_user_client
 
 from custom_authentication.permissions import IsClientOrAdmin, IsClientOrAdminOrSuperUser
 from core.models import File
@@ -63,7 +64,7 @@ class WorkplaceCommunicationsRunListCreateView(APIView):
     )
     def post(self, request):
         """Create a new workplace communications run"""
-        serializer = WorkplaceCommunicationsRunCreateSerializer(data=request.data, context={'request': request})
+        serializer = WorkplaceCommunicationsRunCreateSerializer(data=clean_request_data_for_serializer(request.data, WorkplaceCommunicationsRunCreateSerializer), context={'request': request})
         if serializer.is_valid():
             communications_run = serializer.save()
             response_serializer = WorkplaceCommunicationsRunSerializer(communications_run)
@@ -396,7 +397,7 @@ class EEOCPacketView(APIView):
     )
     def post(self, request):
         """Generate a new EEOC packet"""
-        serializer = EEOCPacketSerializer(data=request.data)
+        serializer = EEOCPacketSerializer(data=clean_request_data_for_serializer(request.data, EEOCPacketSerializer))
         if serializer.is_valid():
             # Ensure user owns the communications run
             comm_run = get_object_or_404(WorkplaceCommunicationsRun, pk=request.data.get('communications_run'), run__user=request.user)
@@ -884,6 +885,7 @@ class ServiceExecutionListCreateView(APIView):
             # Create service execution
             execution = ServiceExecution.objects.create(
                 user=request.user,
+                client=get_user_client(request.user),
                 workplace_communications_run=workplace_communications_run,
                 service_type=data['service_type'],
                 service_name=data['service_name'],
@@ -1002,6 +1004,8 @@ class ServiceOutputListCreateView(APIView):
 
             # Create service output
             output = ServiceOutput.objects.create(
+                user=request.user,
+                client=get_user_client(request.user),
                 service_execution=service_execution,
                 output_name=data['output_name'],
                 output_type=data['output_type'],

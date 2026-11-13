@@ -1,6 +1,7 @@
 from rest_framework import serializers
 from django.contrib.auth import get_user_model
 from core.models import File, Run
+from core.utils import get_user_client
 from custom_authentication.models import Client
 from .models import (
     MassClaimsRun, IntakeForm, EvidenceDocument, PIIRedaction,
@@ -134,6 +135,10 @@ class ExhibitPackageSerializer(serializers.ModelSerializer):
     status_display = serializers.CharField(source='get_status_display', read_only=True)
     file_count = serializers.SerializerMethodField()
     file_names = serializers.SerializerMethodField()
+    package_name = serializers.CharField(required=False, default='Untitled Package')
+    bates_prefix = serializers.CharField(required=False, default='BATES')
+    bates_start = serializers.CharField(required=False, default='000001')
+    bates_end = serializers.CharField(required=False, default='000001')
     
     class Meta:
         model = ExhibitPackage
@@ -168,6 +173,8 @@ class SettlementTrackingSerializer(serializers.ModelSerializer):
     notice_type_display = serializers.CharField(source='get_notice_type_display', read_only=True)
     status_display = serializers.CharField(source='get_status_display', read_only=True)
     case_name = serializers.CharField(source='mass_claims_run.case_name', read_only=True)
+    settlement_type = serializers.CharField(required=False, default='class_wide')
+    total_settlement_amount = serializers.DecimalField(max_digits=15, decimal_places=2, required=False, default=1)
     
     class Meta:
         model = SettlementTracking
@@ -215,6 +222,10 @@ class ClaimantCommunicationSerializer(serializers.ModelSerializer):
 
 class MassClaimsRunCreateSerializer(serializers.ModelSerializer):
     """Serializer for creating a new MassClaimsRun with associated Run"""
+    
+    case_name = serializers.CharField(required=False, default='Untitled Case')
+    case_number = serializers.CharField(required=False, default='CA-001')
+    case_type = serializers.CharField(required=False, default='class_action')
     
     class Meta:
         model = MassClaimsRun
@@ -281,7 +292,8 @@ class IntakeFormCreateSerializer(serializers.ModelSerializer):
     def create(self, validated_data):
         """Create intake form with user assignment"""
         user = self.context['request'].user
-        return IntakeForm.objects.create(user=user, **validated_data)
+        client = get_user_client(user)
+        return IntakeForm.objects.create(user=user, client=client, **validated_data)
 
 
 class EvidenceSummarySerializer(serializers.Serializer):

@@ -17,6 +17,19 @@ from elasticsearch_dsl.connections import connections
 User = get_user_model()
 
 
+class Project(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name="projects")
+    project_name = models.CharField(max_length=255)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+
+    def __str__(self):
+        return f"{self.project_name} ({self.user.username})"
+
+
 class Run(models.Model):
     """
     Represents a processing run for file uploads, translations, or other tasks.
@@ -378,4 +391,13 @@ class BulkJobFileResult(models.Model):
 
     def __str__(self):
         return f"BulkJobFileResult({self.bulk_job_id}, file={self.file_id}) - {self.status}"
+
+
+class UserPreference(models.Model):
+    user = models.OneToOneField(User, on_delete=models.CASCADE, related_name="ui_preferences")
+    sidebar_pinned = models.BooleanField(default=False)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return f"UI prefs for {self.user.username}"
 

@@ -1,8 +1,11 @@
 # system_settings/serializers.py
 
 from rest_framework import serializers
-from .models import SystemSettings
+from .models import SystemSettings, PlatformGlobalSettings
 from custom_authentication.models import Client
+
+SECRET_FIELDS = ("openai_api_key", "azure_storage_key", "oauth_client_secret")
+SECRET_MASK = "********"
 
 class SystemSettingsSerializer(serializers.ModelSerializer):
     client_id = serializers.PrimaryKeyRelatedField(
@@ -60,8 +63,47 @@ class SystemSettingsSerializer(serializers.ModelSerializer):
             # COMPLIANCE
             'enable_iso_logging', 'enable_hipaa_mode', 'enable_audit_log_download',
 
+            # AI / LLM DEFAULTS (per-client)
+            'default_llm_provider', 'default_llm_model',
+            'default_llm_temperature', 'default_llm_max_tokens',
+
             # Metadata
             'updated_at'
         ]
         read_only_fields = ['id', 'updated_at', 'client_name']
 
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        for field in SECRET_FIELDS:
+            if data.get(field):
+                data[field] = SECRET_MASK
+        return data
+
+    def update(self, instance, validated_data):
+        for field in SECRET_FIELDS:
+            incoming = validated_data.get(field)
+            if field in validated_data and (not incoming or incoming == SECRET_MASK):
+                validated_data.pop(field)
+        return super().update(instance, validated_data)
+
+
+class PlatformGlobalSettingsSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = PlatformGlobalSettings
+        fields = [
+            'id',
+            # Platform
+            'site_name', 'default_language', 'default_timezone', 'maintenance_mode',
+            # AI / LLM
+            'default_llm_provider', 'default_llm_model',
+            'default_llm_temperature', 'default_llm_max_tokens',
+            # Security
+            'enforce_2fa', 'session_timeout', 'api_rate_limit',
+            # Files
+            'max_upload_mb',
+            # Compliance
+            'enable_gdpr_mode', 'enable_hipaa_mode',
+            # Metadata
+            'updated_at',
+        ]
+        read_only_fields = ['id', 'updated_at']

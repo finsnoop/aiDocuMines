@@ -6,7 +6,7 @@ import logging
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
-from oauth2_provider.contrib.rest_framework import OAuth2Authentication
+from custom_authentication.authentication import ClientBoundOAuth2Authentication as OAuth2Authentication
 from custom_authentication.rbac import HasPermission
 
 from . import utils

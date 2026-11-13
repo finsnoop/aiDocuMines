@@ -5,6 +5,7 @@ from .models import (
     FileColorTag, FolderColorTag, FileAlias, FolderAlias,
 )
 from core.models import File
+from core.utils import get_logical_path
 from django.contrib.auth import get_user_model
 
 User = get_user_model()
@@ -71,11 +72,9 @@ class FileFolderLinkSerializer(serializers.ModelSerializer):
         ]
 
     def get_download_url(self, obj):
-        """Generate download URL for the file"""
-        if obj.file and obj.file.filepath:
-            # Return the filepath as the download URL
-            # The frontend will use this to construct the full download URL
-            return obj.file.filepath
+        """Return a tenant-safe logical path (never the raw server filesystem path)."""
+        if obj.file:
+            return get_logical_path(obj.file.filepath, obj.file.filename)
         return None
 
     def get_shared_with(self, obj):
@@ -95,6 +94,7 @@ class FileFolderLinkSerializer(serializers.ModelSerializer):
 
 class FileSerializer(serializers.ModelSerializer):
     folder_link = FileFolderLinkSerializer(read_only=True)
+    filepath = serializers.SerializerMethodField()
 
     class Meta:
         model = File
@@ -102,6 +102,9 @@ class FileSerializer(serializers.ModelSerializer):
             'id', 'filename', 'filepath', 'file_size',
             'file_type', 'status', 'folder_link',
         ]
+
+    def get_filepath(self, obj):
+        return get_logical_path(obj.filepath, obj.filename)
 
 
 class EffectiveAccessSerializer(serializers.ModelSerializer):
@@ -114,6 +117,7 @@ class EffectiveAccessSerializer(serializers.ModelSerializer):
 
 class FileVersionSerializer(serializers.ModelSerializer):
     uploaded_by_email = serializers.EmailField(source='uploaded_by.email', read_only=True)
+    file_path = serializers.SerializerMethodField()
 
     class Meta:
         model = FileVersion
@@ -124,18 +128,22 @@ class FileVersionSerializer(serializers.ModelSerializer):
             'uploaded_by_email',
         ]
 
+    def get_file_path(self, obj):
+        return get_logical_path(obj.file_path)
+
 
 
 class RecursiveFolderSerializer(serializers.ModelSerializer):
     subfolders = serializers.SerializerMethodField()
     files      = serializers.SerializerMethodField()
+    project_name = serializers.SerializerMethodField()
 
     color_tag = FolderColorTagSerializer(read_only=True, allow_null=True)
 
     class Meta:
         model  = Folder
         fields = [
-            "id", "name", "project_id", "service_id", "parent",
+            "id", "name", "project_id", "project_name", "service_id", "parent",
             "created_at", "is_trashed", "is_protected", "subfolders", "files",
             "color_tag",
         ]
@@ -188,6 +196,15 @@ class RecursiveFolderSerializer(serializers.ModelSerializer):
             links = links.filter(is_trashed=False)
             return FileFolderLinkSerializer(links, many=True, context=self.context).data
 
+    def get_project_name(self, obj):
+        try:
+            from core.models import Project
+            project = Project.objects.filter(id=obj.project_id).first()
+            if project:
+                return project.project_name
+        except Exception:
+            pass
+        return obj.project_id  # fallback to UUID
 
 
 
@@ -195,12 +212,13 @@ class RecursiveFolderSerializer(serializers.ModelSerializer):
 class RecursiveFolderSerializer(serializers.ModelSerializer):
     subfolders = serializers.SerializerMethodField()
     files = serializers.SerializerMethodField()
+    project_name = serializers.SerializerMethodField()
 
     class Meta:
         model = Folder
         fields = [
-            'id', 'name', 'project_id', 'service_id', 'parent',
-            'created_at', 'subfolders', 'files'
+            'id', 'name', 'project_id', 'project_name', 'service_id', 'parent',
+            'created_at', 'subfolders', 'files', 'is_trashed'
         ]
 
     def get_subfolders(self, obj):
@@ -216,4 +234,14 @@ class RecursiveFolderSerializer(serializers.ModelSerializer):
         # Avoid returning trashed or unrelated files
         links = obj.filefolderlink_set.filter(is_trashed=False).select_related("file")
         return FileFolderLinkSerializer(links, many=True).data
+
+    def get_project_name(self, obj):
+        try:
+            from core.models import Project
+            project = Project.objects.filter(id=obj.project_id).first()
+            if project:
+                return project.project_name
+        except Exception:
+            pass
+        return obj.project_id  # fallback to UUID
 '''

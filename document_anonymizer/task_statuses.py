@@ -3,7 +3,8 @@ from rest_framework.response import Response
 from rest_framework.permissions import AllowAny
 from django.shortcuts import get_object_or_404
 from oauth2_provider.models import Application
-from oauth2_provider.contrib.rest_framework import OAuth2Authentication, TokenHasReadWriteScope
+from oauth2_provider.contrib.rest_framework import TokenHasReadWriteScope
+from custom_authentication.authentication import ClientBoundOAuth2Authentication as OAuth2Authentication
 from drf_yasg.utils import swagger_auto_schema
 from drf_yasg import openapi
 

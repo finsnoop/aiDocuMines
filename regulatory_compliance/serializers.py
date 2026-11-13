@@ -1,6 +1,7 @@
 from rest_framework import serializers
 from django.contrib.auth import get_user_model
 from core.models import Run, File
+from core.utils import get_user_client
 from custom_authentication.models import Client
 from .models import (
     ComplianceRun, RegulatoryRequirement, PolicyMapping, DSARRequest,
@@ -31,6 +32,7 @@ class ComplianceRunCreateSerializer(serializers.ModelSerializer):
     """
     Serializer for creating ComplianceRun.
     Creates the core Run internally and accepts frontend field names.
+    Fields have defaults so file-based services don't 400.
     """
     # Frontend field aliases (write_only)
     framework = serializers.CharField(write_only=True, required=False, allow_blank=True, help_text="Compliance framework - maps to compliance_framework")
@@ -41,6 +43,17 @@ class ComplianceRunCreateSerializer(serializers.ModelSerializer):
     end_date = serializers.DateField(write_only=True, required=False, allow_null=True, help_text="Assessment end date")
     officer = serializers.CharField(write_only=True, required=False, allow_blank=True, help_text="Compliance officer")
     counsel = serializers.CharField(write_only=True, required=False, allow_blank=True, help_text="Legal counsel")
+
+    # Model fields with defaults
+    compliance_framework = serializers.ChoiceField(
+        choices=[('gdpr', 'GDPR'), ('ccpa', 'CCPA'), ('hipaa', 'HIPAA'), ('sox', 'SOX'),
+                 ('pci_dss', 'PCI DSS'), ('iso27001', 'ISO 27001'), ('nist', 'NIST'), ('custom', 'Custom')],
+        required=False, default='gdpr'
+    )
+    organization_name = serializers.CharField(required=False, default='Unknown Organization')
+    assessment_scope = serializers.CharField(required=False, default='General compliance assessment')
+    assessment_start_date = serializers.DateField(required=False, allow_null=True, default=None)
+    assessment_end_date = serializers.DateField(required=False, allow_null=True, default=None)
 
     class Meta:
         model = ComplianceRun
@@ -89,17 +102,7 @@ class ComplianceRunCreateSerializer(serializers.ModelSerializer):
             validated_data.pop(field, None)
 
         # Handle admin users without a client - get or create default client
-        if not user.client:
-            client, _ = Client.objects.get_or_create(
-                name="System Admin",
-                defaults={
-                    "address": "System",
-                    "industry": "Legal Tech",
-                    "use_case": "Administrative Operations"
-                }
-            )
-        else:
-            client = user.client
+        client = get_user_client(user)
 
         # Create the core Run first
         run = Run.objects.create(
@@ -131,7 +134,7 @@ class RegulatoryRequirementSerializer(serializers.ModelSerializer):
     """
     Serializer for RegulatoryRequirement model.
     """
-    compliance_run_id = serializers.IntegerField(write_only=True, help_text="ID of the ComplianceRun")
+    compliance_run_id = serializers.IntegerField(write_only=True, help_text="ID of the ComplianceRun", required=False, default=None)
     
     class Meta:
         model = RegulatoryRequirement
@@ -144,13 +147,18 @@ class RegulatoryRequirementSerializer(serializers.ModelSerializer):
         read_only_fields = ['id', 'created_at', 'updated_at']
     
     def create(self, validated_data):
-        compliance_run_id = validated_data.pop('compliance_run_id')
+        compliance_run_id = validated_data.pop('compliance_run_id', None)
         
         user = self.context['request'].user
-        compliance_run = ComplianceRun.objects.get(id=compliance_run_id, run__user=user)
+        if compliance_run_id:
+            compliance_run = ComplianceRun.objects.get(id=compliance_run_id, run__user=user)
+        else:
+            compliance_run = ComplianceRun.objects.filter(run__user=user).first()
         
+        client = get_user_client(user)
         return RegulatoryRequirement.objects.create(
             user=user,
+            client=client,
             compliance_run=compliance_run,
             **validated_data
         )
@@ -166,9 +174,9 @@ class PolicyMappingSerializer(serializers.ModelSerializer):
     """
     Serializer for PolicyMapping model.
     """
-    compliance_run_id = serializers.IntegerField(write_only=True, help_text="ID of the ComplianceRun")
-    regulatory_requirement_id = serializers.IntegerField(write_only=True, help_text="ID of the RegulatoryRequirement")
-    policy_document_id = serializers.IntegerField(write_only=True, help_text="ID of the policy File")
+    compliance_run_id = serializers.IntegerField(write_only=True, help_text="ID of the ComplianceRun", required=False, default=None)
+    regulatory_requirement_id = serializers.IntegerField(write_only=True, help_text="ID of the RegulatoryRequirement", required=False, default=None)
+    policy_document_id = serializers.IntegerField(write_only=True, help_text="ID of the policy File", required=False, default=None)
     
     class Meta:
         model = PolicyMapping
@@ -181,17 +189,22 @@ class PolicyMappingSerializer(serializers.ModelSerializer):
         read_only_fields = ['id', 'created_at', 'updated_at']
     
     def create(self, validated_data):
-        compliance_run_id = validated_data.pop('compliance_run_id')
-        regulatory_requirement_id = validated_data.pop('regulatory_requirement_id')
-        policy_document_id = validated_data.pop('policy_document_id')
+        compliance_run_id = validated_data.pop('compliance_run_id', None)
+        regulatory_requirement_id = validated_data.pop('regulatory_requirement_id', None)
+        policy_document_id = validated_data.pop('policy_document_id', None)
         
         user = self.context['request'].user
-        compliance_run = ComplianceRun.objects.get(id=compliance_run_id, run__user=user)
-        regulatory_requirement = RegulatoryRequirement.objects.get(id=regulatory_requirement_id, user=user)
-        policy_document = File.objects.get(id=policy_document_id, user=user)
+        if compliance_run_id:
+            compliance_run = ComplianceRun.objects.get(id=compliance_run_id, run__user=user)
+        else:
+            compliance_run = ComplianceRun.objects.filter(run__user=user).first()
+        regulatory_requirement = RegulatoryRequirement.objects.get(id=regulatory_requirement_id, user=user) if regulatory_requirement_id else None
+        policy_document = File.objects.get(id=policy_document_id, user=user) if policy_document_id else None
         
+        client = get_user_client(user)
         return PolicyMapping.objects.create(
             user=user,
+            client=client,
             compliance_run=compliance_run,
             regulatory_requirement=regulatory_requirement,
             policy_document=policy_document,
@@ -209,7 +222,7 @@ class DSARRequestSerializer(serializers.ModelSerializer):
     """
     Serializer for DSARRequest model.
     """
-    compliance_run_id = serializers.IntegerField(write_only=True, help_text="ID of the ComplianceRun")
+    compliance_run_id = serializers.IntegerField(write_only=True, help_text="ID of the ComplianceRun", required=False, default=None)
     
     class Meta:
         model = DSARRequest
@@ -224,13 +237,18 @@ class DSARRequestSerializer(serializers.ModelSerializer):
         read_only_fields = ['id', 'created_at', 'updated_at']
     
     def create(self, validated_data):
-        compliance_run_id = validated_data.pop('compliance_run_id')
+        compliance_run_id = validated_data.pop('compliance_run_id', None)
         
         user = self.context['request'].user
-        compliance_run = ComplianceRun.objects.get(id=compliance_run_id, run__user=user)
+        if compliance_run_id:
+            compliance_run = ComplianceRun.objects.get(id=compliance_run_id, run__user=user)
+        else:
+            compliance_run = ComplianceRun.objects.filter(run__user=user).first()
         
+        client = get_user_client(user)
         return DSARRequest.objects.create(
             user=user,
+            client=client,
             compliance_run=compliance_run,
             **validated_data
         )
@@ -273,8 +291,10 @@ class DataInventorySerializer(serializers.ModelSerializer):
         if dpia_document_id:
             dpia_document = File.objects.get(id=dpia_document_id, user=user)
         
+        client = get_user_client(user)
         return DataInventory.objects.create(
             user=user,
+            client=client,
             compliance_run=compliance_run,
             dpia_document=dpia_document,
             **validated_data
@@ -285,8 +305,8 @@ class RedactionTaskSerializer(serializers.ModelSerializer):
     """
     Serializer for RedactionTask model.
     """
-    compliance_run_id = serializers.IntegerField(write_only=True, help_text="ID of the ComplianceRun")
-    source_document_id = serializers.IntegerField(write_only=True, help_text="ID of the source File")
+    compliance_run_id = serializers.IntegerField(write_only=True, help_text="ID of the ComplianceRun", required=False, default=None)
+    source_document_id = serializers.IntegerField(write_only=True, help_text="ID of the source File", required=False, default=None)
     redacted_document_id = serializers.IntegerField(write_only=True, required=False, help_text="ID of the redacted File")
     
     class Meta:
@@ -300,20 +320,28 @@ class RedactionTaskSerializer(serializers.ModelSerializer):
         read_only_fields = ['id', 'created_at', 'updated_at']
     
     def create(self, validated_data):
-        compliance_run_id = validated_data.pop('compliance_run_id')
-        source_document_id = validated_data.pop('source_document_id')
+        compliance_run_id = validated_data.pop('compliance_run_id', None)
+        source_document_id = validated_data.pop('source_document_id', None)
         redacted_document_id = validated_data.pop('redacted_document_id', None)
         
         user = self.context['request'].user
-        compliance_run = ComplianceRun.objects.get(id=compliance_run_id, run__user=user)
-        source_document = File.objects.get(id=source_document_id, user=user)
+        if compliance_run_id:
+            compliance_run = ComplianceRun.objects.get(id=compliance_run_id, run__user=user)
+        else:
+            compliance_run = ComplianceRun.objects.filter(run__user=user).first()
+        
+        source_document = None
+        if source_document_id:
+            source_document = File.objects.get(id=source_document_id, user=user)
         
         redacted_document = None
         if redacted_document_id:
             redacted_document = File.objects.get(id=redacted_document_id, user=user)
         
+        client = get_user_client(user)
         return RedactionTask.objects.create(
             user=user,
+            client=client,
             compliance_run=compliance_run,
             source_document=source_document,
             redacted_document=redacted_document,
@@ -325,9 +353,14 @@ class ComplianceAlertSerializer(serializers.ModelSerializer):
     """
     Serializer for ComplianceAlert model.
     """
-    compliance_run_id = serializers.IntegerField(write_only=True, help_text="ID of the ComplianceRun")
+    compliance_run_id = serializers.IntegerField(write_only=True, help_text="ID of the ComplianceRun", required=False, default=None)
     related_requirement_id = serializers.IntegerField(write_only=True, required=False, help_text="ID of related RegulatoryRequirement")
     related_dsar_id = serializers.IntegerField(write_only=True, required=False, help_text="ID of related DSARRequest")
+    alert_title = serializers.CharField(required=False, default='Compliance Alert')
+    alert_description = serializers.CharField(required=False, default='', allow_blank=True)
+    alert_type = serializers.CharField(required=False, default='general')
+    severity = serializers.CharField(required=False, default='medium')
+    priority = serializers.CharField(required=False, default='medium')
     related_document_ids = serializers.ListField(
         child=serializers.IntegerField(),
         write_only=True,
@@ -346,13 +379,16 @@ class ComplianceAlertSerializer(serializers.ModelSerializer):
         read_only_fields = ['id', 'created_at', 'updated_at']
     
     def create(self, validated_data):
-        compliance_run_id = validated_data.pop('compliance_run_id')
+        compliance_run_id = validated_data.pop('compliance_run_id', None)
         related_requirement_id = validated_data.pop('related_requirement_id', None)
         related_dsar_id = validated_data.pop('related_dsar_id', None)
         related_document_ids = validated_data.pop('related_document_ids', [])
         
         user = self.context['request'].user
-        compliance_run = ComplianceRun.objects.get(id=compliance_run_id, run__user=user)
+        if compliance_run_id:
+            compliance_run = ComplianceRun.objects.get(id=compliance_run_id, run__user=user)
+        else:
+            compliance_run = ComplianceRun.objects.filter(run__user=user).first()
         
         related_requirement = None
         if related_requirement_id:
@@ -362,8 +398,11 @@ class ComplianceAlertSerializer(serializers.ModelSerializer):
         if related_dsar_id:
             related_dsar = DSARRequest.objects.get(id=related_dsar_id, user=user)
         
+        client = get_user_client(user)
+        
         alert = ComplianceAlert.objects.create(
             user=user,
+            client=client,
             compliance_run=compliance_run,
             related_requirement=related_requirement,
             related_dsar=related_dsar,

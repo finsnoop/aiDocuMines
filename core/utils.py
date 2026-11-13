@@ -31,6 +31,40 @@ from document_operations.utils import register_file_folder_link
 
 logger = logging.getLogger(__name__)
 
+
+def get_logical_path(raw_path, filename=None):
+    """
+    Return a tenant-safe, logical path for a raw server filesystem path.
+
+    Internal filepaths look like:
+        /app/media/uploads/{client}/{user}/{project}/{service}/{date}/{...}/{filename}
+    Clients must never see the server prefix, so it is stripped and only
+        {project}/{service}/{date}/{subfolders}/{filename}
+    is returned. If the path cannot be parsed, only the filename is returned.
+    """
+    if not raw_path:
+        return None
+    parts = [p for p in str(raw_path).split("/") if p]
+    try:
+        uploads_idx = parts.index("uploads")
+    except ValueError:
+        return filename or None
+    logical = parts[uploads_idx + 3:]
+    if not logical:
+        return filename or None
+    return "/".join(logical)
+
+
+def get_logical_file_path(file_obj):
+    """Return the tenant-safe logical path for a File model instance."""
+    if not file_obj:
+        return None
+    return get_logical_path(
+        getattr(file_obj, "filepath", None),
+        getattr(file_obj, "filename", None),
+    )
+
+
 # ✅ Allowed file types (MIME types)
 ALLOWED_FILE_TYPES = {
     "pdf": "application/pdf",
@@ -620,44 +654,151 @@ def register_generated_file(file_path, user, run, project_id, service_id, folder
     return file_instance
 
 
+# =============================================================================
+# MULTI-TENANCY UTILITIES
+# =============================================================================
+
+def get_user_client(user):
+    """
+    Get or create a client for multi-tenant models.
+    Returns the user's client, or creates a default System Admin client.
+    """
+    from custom_authentication.models import Client
+    if hasattr(user, 'client') and user.client:
+        return user.client
+    client, _ = Client.objects.get_or_create(
+        name="System Admin",
+        defaults={"industry": "Legal Tech", "use_case": "Administrative Operations"}
+    )
+    return client
+
+
+# =============================================================================
+# SERVICE REQUEST FIELD CLEANING
+# =============================================================================
+
+# Fields the frontend auto-injects that backend serializers don't expect
+FRONTEND_METADATA_FIELDS = {'project_id', 'service_id', 'datetime_folder', 'user_id'}
+
+
+def clean_request_data_for_serializer(data, serializer_class=None):
+    """
+    Strip frontend auto-injected metadata fields and unknown fields before
+    passing request.data to a DRF serializer.
+
+    This prevents 400 errors caused by DRF rejecting unexpected fields like
+    project_id, service_id, datetime_folder, user_id that the frontend
+    auto-injects from sidebar context.
+
+    Args:
+        data: The request.data dict (mutable copy)
+        serializer_class: Optional serializer class to validate against its Meta.fields
+
+    Returns:
+        dict with only fields the serializer expects
+    """
+    data_dict = dict(data)
+
+    # Always strip frontend metadata fields
+    for field in FRONTEND_METADATA_FIELDS:
+        data_dict.pop(field, None)
+
+    # If serializer_class provided, only keep fields it declares
+    if serializer_class and hasattr(serializer_class, 'Meta') and hasattr(serializer_class.Meta, 'fields'):
+        allowed = set(serializer_class.Meta.fields)
+        # Also include write_only fields not in Meta.fields
+        if hasattr(serializer_class, 'Meta') and hasattr(serializer_class.Meta, 'extra_kwargs'):
+            pass  # extra_kwargs doesn't add fields
+        cleaned = {k: v for k, v in data_dict.items() if k in allowed}
+        return cleaned
+
+    return data_dict
+
+
+def _sanitize_extracted_text(text) -> str:
+    """
+    Make extracted text safe to store in Postgres and to embed:
+    strips NUL bytes (Postgres rejects them — a common cause of
+    "Failed" statuses on PDF/OCR-derived text) and control junk.
+    """
+    if not text:
+        return ""
+    return str(text).replace("\x00", "").strip()
+
+
+def _extract_docx_full(path) -> str:
+    """DOCX text including tables (redline/comparison docs keep most
+    of their content in tables, which doc.paragraphs misses)."""
+    doc = Document(path)
+    parts = [p.text for p in doc.paragraphs if p.text]
+    for table in doc.tables:
+        for row in table.rows:
+            cells = [c.text.strip() for c in row.cells if c.text and c.text.strip()]
+            if cells:
+                parts.append(" | ".join(cells))
+    return "\n".join(parts)
+
+
 def extract_document_text(path, mime_type=None) -> str:
     """
     Extract text from various file types.
+
+    Guaranteed never to raise and never to return an error string as
+    content — returns best-effort text or "" so callers can rely on it.
     """
-    if not os.path.exists(path):
-        return ""
-
-    ext = os.path.splitext(path)[-1].lower()
     try:
+        if not path or not os.path.exists(str(path)):
+            logger.warning("extract_document_text: file not found at %r", path)
+            return ""
+
+        ext = os.path.splitext(str(path))[-1].lower()
+        text = ""
+
         if ext == ".pdf":
-            text = ""
-            doc = fitz.open(path)
-            for page in doc:
-                text += page.get_text()
-            return text
+            doc = fitz.open(str(path))
+            with doc:
+                chunks = []
+                for page in doc:
+                    try:
+                        chunks.append(page.get_text())
+                    except Exception:
+                        continue
+                text = "\n".join(chunks)
 
-        if ext == ".docx":
-            doc = Document(path)
-            return "\n".join(p.text for p in doc.paragraphs)
+        elif ext == ".docx":
+            text = _extract_docx_full(path)
 
-        if ext == ".txt":
-            with open(path, "r", encoding="utf-8", errors="ignore") as f:
-                return f.read()
+        elif ext in (".txt", ".md", ".log"):
+            with open(str(path), "r", encoding="utf-8", errors="ignore") as f:
+                text = f.read()
 
-        if ext == ".csv":
-            df = pd.read_csv(path, nrows=1000)
-            return df.to_string(index=False)
+        elif ext == ".csv":
+            df = pd.read_csv(str(path), nrows=1000)
+            text = df.to_string(index=False)
 
-        if ext == ".xlsx":
-            df = pd.read_excel(path, nrows=1000)
-            return df.to_string(index=False)
+        elif ext == ".xlsx":
+            df = pd.read_excel(str(path), nrows=1000)
+            text = df.to_string(index=False)
 
-        # Fallback for other formats
-        parsed = tika_parser.from_file(path)
-        return (parsed.get("content") or "").strip()
+        elif ext == ".json":
+            with open(str(path), "r", encoding="utf-8", errors="ignore") as f:
+                text = json.dumps(json.load(f), indent=2, default=str)
+
+        else:
+            # Rich fallback chain (unstructured → extractors → tika → OCR
+            # for images) shared with the search/classification pipeline.
+            try:
+                from document_search.utils import extract_text as ds_extract_text
+                text = ds_extract_text(path)
+            except Exception:
+                parsed = tika_parser.from_file(str(path))
+                text = (parsed.get("content") or "").strip()
+
+        return _sanitize_extracted_text(text)
 
     except Exception as e:
-        return f"Error extracting text: {e}"
+        logger.exception("extract_document_text failed for %r: %s", path, e)
+        return ""
 
 
 # =============================================================================

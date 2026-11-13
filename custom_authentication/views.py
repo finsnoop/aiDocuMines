@@ -9,7 +9,8 @@ from django.utils.timezone import now
 from datetime import timedelta
 from drf_yasg.utils import swagger_auto_schema
 from drf_yasg import openapi
-from oauth2_provider.contrib.rest_framework import OAuth2Authentication, TokenHasReadWriteScope
+from oauth2_provider.contrib.rest_framework import TokenHasReadWriteScope
+from custom_authentication.authentication import ClientBoundOAuth2Authentication as OAuth2Authentication
 from .models import PasswordResetToken, CustomUser, Client, TwoFactorCode
 from .serializers import PasswordResetRequestSerializer, PasswordResetSerializer, CreateAdminUserSerializer, UserActivityLogSerializer
 from .tasks import send_signup_email_task, send_password_reset_email_task, send_admin_password_reset_email_task # ✅ Celery tasks
@@ -687,10 +688,13 @@ class ListUsersView(APIView):
         tags=["Admin"],
     )
     def get(self, request):
-        if not request.user.is_staff:
+        if not request.user.is_staff and not request.user.is_superuser:
             return Response({"error": "Admin access required"}, status=status.HTTP_403_FORBIDDEN)
 
-        users = User.objects.filter(client=request.user.client)
+        if request.user.is_superuser:
+            users = User.objects.all()
+        else:
+            users = User.objects.filter(client=request.user.client)
 
         user_data = []
         for user in users:
@@ -698,8 +702,17 @@ class ListUsersView(APIView):
                 "id": user.id,
                 "email": user.email,
                 "organisation": user.client.name if user.client else None,
+                "client_id": user.client_id,
                 "is_active": user.is_active,
-                "roles": [group.name for group in user.groups.all()]  # ✅ Add roles
+                "is_superuser": user.is_superuser,
+                "is_staff": user.is_staff,
+                "roles": [group.name for group in user.groups.all()],
+                "account_status": user.account_status,
+                "subscription_plan": user.subscription_plan,
+                "last_login": user.last_login.isoformat() if user.last_login else None,
+                "date_joined": user.date_joined.isoformat(),
+                "contact_name": user.contact_name or "",
+                "contact_phone": user.contact_phone or "",
             })
 
         return Response(user_data, status=status.HTTP_200_OK)
@@ -949,8 +962,41 @@ class PromoteUserToAdminView(APIView):
             return Response({"error": "User not found"}, status=status.HTTP_404_NOT_FOUND)
 
 
+class UserOwnActivityLogView(APIView):
+    """
+    Returns paginated activity logs for the currently authenticated user.
+    Supports ?page=1&page_size=20 query parameters.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        page = int(request.query_params.get("page", 1))
+        page_size = int(request.query_params.get("page_size", 20))
+        page_size = min(page_size, 100)  # cap at 100
+
+        logs = UserActivityLog.objects.filter(user=request.user).order_by('-timestamp')
+        total = logs.count()
+
+        start = (page - 1) * page_size
+        end = start + page_size
+        page_logs = logs[start:end]
+
+        serializer = UserActivityLogSerializer(page_logs, many=True)
+        return Response({
+            "results": serializer.data,
+            "total": total,
+            "page": page,
+            "page_size": page_size,
+            "total_pages": max(1, (total + page_size - 1) // page_size),
+        }, status=status.HTTP_200_OK)
+
+
 class UserActivityLogView(APIView):
-    permission_classes = [IsAdminOrSuperUser]
+    """
+    Admin-only: fetch activity logs for a specific user.
+    Respects RBAC via IsAdminOrSuperUser which checks x-role header and group membership.
+    """
+    permission_classes = [IsAuthenticated, IsAdminOrSuperUser]
 
     def get(self, request, user_id):
         """Fetch activity logs for a specific user."""
@@ -985,20 +1031,19 @@ class CreateAdminUserView(APIView):
                         "client_id": superuser_data.get("client_id"),
                         "client_secret": superuser_data.get("client_secret")
                     }, status=status.HTTP_403_FORBIDDEN)
-        # ✅ Get the user model
-
+# ✅ Get the user model
         user_model = get_user_model()
 
         existing_admins = user_model.objects.filter(is_superuser=True)
-
-        # 🔁 Get or create the Client instance
-        client, _ = Client.objects.get_or_create(name=data["organisation"])
 
         # ✅ If no admin exists, allow open creation (initial bootstrap)
         if not existing_admins.exists():
             serializer = CreateAdminUserSerializer(data=request.data)
             if serializer.is_valid():
                 data = serializer.validated_data
+
+                # 🔁 Get or create the Client instance
+                client, _ = Client.objects.get_or_create(name=data["organisation"])
 
                 # ✅ Create first superuser
                 user = user_model.objects.create_superuser(
@@ -1065,11 +1110,11 @@ class CreateAdminUserView(APIView):
         # ✅ Authenticated superuser: proceed to create new admin
         serializer = CreateAdminUserSerializer(data=request.data)
 
-        # 🔁 Get or create the Client instance
-        client, _ = Client.objects.get_or_create(name=data["organisation"])
-
         if serializer.is_valid():
             data = serializer.validated_data
+
+            # 🔁 Get or create the Client instance
+            client, _ = Client.objects.get_or_create(name=data["organisation"])
 
             user = user_model.objects.create_superuser(
                 email=data["email"],
@@ -1147,7 +1192,7 @@ class CreateUserView(APIView):
         tags=["User Management"],
     )
     def post(self, request):
-        if not request.user.is_superuser:
+        if not request.user.is_superuser and not request.user.is_staff:
             return Response({"error": "Only admins can create new users."}, status=status.HTTP_403_FORBIDDEN)
 
         data = request.data
@@ -1172,7 +1217,12 @@ class CreateUserView(APIView):
         if User.objects.filter(email=email).exists():
             return Response({"error": "Email is already registered"}, status=status.HTTP_400_BAD_REQUEST)
 
-        # ✅ Get or create the client object
+        # ✅ Multi-tenancy: Admin can only create users within their own client organization
+        if not request.user.is_superuser:
+            admin_client = request.user.client
+            if organisation.lower() != admin_client.name.lower():
+                return Response({"error": "You can only create users within your own organisation."}, status=status.HTTP_403_FORBIDDEN)
+
         client, _ = Client.objects.get_or_create(name=organisation)
 
         try:
@@ -1433,6 +1483,7 @@ class WhoAmIView(APIView):
             "roles": [group.name for group in user.groups.all()],
             "client": user.client.name if user.client else None,
             "is_superuser": user.is_superuser,
+            "is_staff": user.is_staff,
             "2fa_enabled": user.is_2fa_enabled
         })
 
@@ -1666,3 +1717,223 @@ class SupersuperuserCleanDatabaseView(APIView):
         except Exception as e:
             logger.error(f"❌ Cleanup failed: {e}")
             return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+class DeleteUserView(APIView):
+    """Superadmin-only: permanently delete a user account."""
+    authentication_classes = [OAuth2Authentication]
+    permission_classes = [IsSuperUser]
+
+    def delete(self, request, user_id):
+        try:
+            user = CustomUser.objects.get(id=user_id)
+            if user.is_superuser:
+                return Response({"error": "Cannot delete a superuser"}, status=status.HTTP_400_BAD_REQUEST)
+            email = user.email
+            user.delete()
+            return Response({"message": f"User {email} permanently deleted"}, status=status.HTTP_200_OK)
+        except CustomUser.DoesNotExist:
+            return Response({"error": "User not found"}, status=status.HTTP_404_NOT_FOUND)
+
+
+class AdminAuditLogView(APIView):
+    """Admin-only: list all admin action logs with pagination."""
+    authentication_classes = [OAuth2Authentication]
+    permission_classes = [IsAdminOrSuperUser]
+
+    def get(self, request):
+        from .models import AdminActionLog
+        page = int(request.query_params.get("page", 1))
+        page_size = int(request.query_params.get("page_size", 50))
+        page_size = min(page_size, 100)
+
+        logs = AdminActionLog.objects.select_related("admin_user", "target_user").order_by("-timestamp")
+        total = logs.count()
+
+        start = (page - 1) * page_size
+        page_logs = logs[start:start + page_size]
+
+        data = []
+        for log in page_logs:
+            data.append({
+                "id": log.id,
+                "admin_email": log.admin_user.email,
+                "target_email": log.target_user.email,
+                "action": log.action,
+                "details": log.details,
+                "timestamp": log.timestamp.isoformat(),
+            })
+
+        return Response({
+            "results": data,
+            "total": total,
+            "page": page,
+            "page_size": page_size,
+            "total_pages": max(1, (total + page_size - 1) // page_size),
+        }, status=status.HTTP_200_OK)
+
+
+class ListClientsView(APIView):
+    """Admin-only: list all client organizations with user counts."""
+    authentication_classes = [OAuth2Authentication]
+    permission_classes = [IsAdminOrSuperUser]
+
+    def get(self, request):
+        clients = Client.objects.all().order_by("name")
+        data = []
+        for c in clients:
+            user_count = c.users.count()
+            active_count = c.users.filter(is_active=True).count()
+            data.append({
+                "id": c.id,
+                "name": c.name,
+                "address": c.address or "",
+                "industry": c.industry or "",
+                "use_case": c.use_case or "",
+                "created_at": c.created_at.isoformat(),
+                "user_count": user_count,
+                "active_user_count": active_count,
+            })
+        return Response(data, status=status.HTTP_200_OK)
+
+
+class CreateClientView(APIView):
+    """Admin-only: create a new client/tenant organization."""
+    authentication_classes = [OAuth2Authentication]
+    permission_classes = [IsAdminOrSuperUser]
+
+    def post(self, request):
+        name = request.data.get("name", "").strip()
+        address = request.data.get("address", "")
+        industry = request.data.get("industry", "")
+        use_case = request.data.get("use_case", "")
+
+        if not name:
+            return Response({"error": "Client name is required"}, status=status.HTTP_400_BAD_REQUEST)
+
+        if Client.objects.filter(name__iexact=name).exists():
+            return Response({"error": "Client with this name already exists"}, status=status.HTTP_400_BAD_REQUEST)
+
+        client = Client.objects.create(name=name, address=address, industry=industry, use_case=use_case)
+        return Response({
+            "id": client.id,
+            "name": client.name,
+            "address": client.address,
+            "industry": client.industry,
+            "use_case": client.use_case,
+            "created_at": client.created_at.isoformat(),
+        }, status=status.HTTP_201_CREATED)
+
+
+class UpdateClientView(APIView):
+    """Admin-only: update client/tenant details."""
+    authentication_classes = [OAuth2Authentication]
+    permission_classes = [IsAdminOrSuperUser]
+
+    def put(self, request, client_id):
+        try:
+            client = Client.objects.get(id=client_id)
+        except Client.DoesNotExist:
+            return Response({"error": "Client not found"}, status=status.HTTP_404_NOT_FOUND)
+
+        client.name = request.data.get("name", client.name)
+        client.address = request.data.get("address", client.address)
+        client.industry = request.data.get("industry", client.industry)
+        client.use_case = request.data.get("use_case", client.use_case)
+        client.save()
+
+        return Response({
+            "id": client.id,
+            "name": client.name,
+            "address": client.address,
+            "industry": client.industry,
+            "use_case": client.use_case,
+            "created_at": client.created_at.isoformat(),
+        }, status=status.HTTP_200_OK)
+
+
+class ListRolesView(APIView):
+    """Admin-only: list all roles (groups) with their permissions."""
+    authentication_classes = [OAuth2Authentication]
+    permission_classes = [IsAdminOrSuperUser]
+
+    def get(self, request):
+        groups = Group.objects.prefetch_related("permissions").all().order_by("name")
+        data = []
+        for g in groups:
+            perms = list(g.permissions.values_list("codename", flat=True))
+            user_count = g.custom_auth_users.count()
+            data.append({
+                "id": g.id,
+                "name": g.name,
+                "permissions": perms,
+                "permission_count": len(perms),
+                "user_count": user_count,
+            })
+        return Response(data, status=status.HTTP_200_OK)
+
+
+class AssignUserRoleView(APIView):
+    """Admin-only: assign a role (group) to a user."""
+    authentication_classes = [OAuth2Authentication]
+    permission_classes = [IsAdminOrSuperUser]
+
+    def post(self, request, user_id):
+        role_name = request.data.get("role")
+        if not role_name:
+            return Response({"error": "Role name is required"}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            user = CustomUser.objects.get(id=user_id)
+        except CustomUser.DoesNotExist:
+            return Response({"error": "User not found"}, status=status.HTTP_404_NOT_FOUND)
+
+        try:
+            group = Group.objects.get(name=role_name)
+        except Group.DoesNotExist:
+            return Response({"error": f"Role '{role_name}' does not exist"}, status=status.HTTP_404_NOT_FOUND)
+
+        user.groups.add(group)
+
+        if role_name == "Admin":
+            user.is_staff = True
+            user.is_superuser = True
+            user.save()
+
+        return Response({
+            "message": f"Role '{role_name}' assigned to {user.email}",
+            "roles": [g.name for g in user.groups.all()],
+        }, status=status.HTTP_200_OK)
+
+
+class RemoveUserRoleView(APIView):
+    """Admin-only: remove a role (group) from a user."""
+    authentication_classes = [OAuth2Authentication]
+    permission_classes = [IsAdminOrSuperUser]
+
+    def post(self, request, user_id):
+        role_name = request.data.get("role")
+        if not role_name:
+            return Response({"error": "Role name is required"}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            user = CustomUser.objects.get(id=user_id)
+        except CustomUser.DoesNotExist:
+            return Response({"error": "User not found"}, status=status.HTTP_404_NOT_FOUND)
+
+        try:
+            group = Group.objects.get(name=role_name)
+        except Group.DoesNotExist:
+            return Response({"error": f"Role '{role_name}' does not exist"}, status=status.HTTP_404_NOT_FOUND)
+
+        user.groups.remove(group)
+
+        if role_name == "Admin":
+            user.is_staff = False
+            user.is_superuser = False
+            user.save()
+
+        return Response({
+            "message": f"Role '{role_name}' removed from {user.email}",
+            "roles": [g.name for g in user.groups.all()],
+        }, status=status.HTTP_200_OK)

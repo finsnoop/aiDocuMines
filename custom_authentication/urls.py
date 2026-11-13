@@ -4,8 +4,13 @@ from .views import (
     RefreshTokenView, UserProfileView, UpdateUserProfileView, ChangePasswordView,
     DeactivateAccountView, DeleteAccountView, ListUsersView, DisableUserView,
     EnableUserView, ListUserAPIKeysView, RevokeAPIKeyView, AdminResetUserPasswordView,
-    PromoteUserToAdminView, DemoteUserFromAdminView, UserActivityLogView, CreateAdminUserView, CreateUserView,
-    WhoAmIView, LogoutAllView, RetrieveUserView, RetrieveClientSecretsView, RetrieveClientView, SupersuperuserResetView, SupersuperuserCleanDatabaseView, TwoFASetupView, TwoFAVerifyView, TwoFADisableView, TwoFAStatusView, TwoFARotateSecretView
+    PromoteUserToAdminView, DemoteUserFromAdminView, UserActivityLogView, UserOwnActivityLogView,
+    CreateAdminUserView, CreateUserView,
+    WhoAmIView, LogoutAllView, RetrieveUserView, RetrieveClientSecretsView, RetrieveClientView,
+    SupersuperuserResetView, SupersuperuserCleanDatabaseView,
+    TwoFASetupView, TwoFAVerifyView, TwoFADisableView, TwoFAStatusView, TwoFARotateSecretView,
+    DeleteUserView, AdminAuditLogView, ListClientsView, CreateClientView, UpdateClientView,
+    ListRolesView, AssignUserRoleView, RemoveUserRoleView
 )
 
 urlpatterns = [
@@ -25,6 +30,7 @@ urlpatterns = [
     path("user/profile/update/", UpdateUserProfileView.as_view(), name="user_profile_update"),
     path("user/account/deactivate/", DeactivateAccountView.as_view(), name="user_account_deactivate"),
     path("user/account/delete/", DeleteAccountView.as_view(), name="user_account_delete"),
+    path("user/activity/", UserOwnActivityLogView.as_view(), name="user_activity"),
 
     # 🛠️ API KEY MANAGEMENT
     path("user/api-keys/", ListUserAPIKeysView.as_view(), name="user_api_keys_list"),
@@ -46,7 +52,21 @@ urlpatterns = [
     path("admin/users/<int:user_id>/demote/", DemoteUserFromAdminView.as_view(), name="admin_users_demote"),
 
     # 🏢 CLIENT (TENANT) MANAGEMENT
+    path("admin/clients/", ListClientsView.as_view(), name="admin_clients_list"),
+    path("admin/clients/create/", CreateClientView.as_view(), name="admin_clients_create"),
     path("admin/clients/<int:client_id>/", RetrieveClientView.as_view(), name="admin_clients_retrieve"),
+    path("admin/clients/<int:client_id>/update/", UpdateClientView.as_view(), name="admin_clients_update"),
+
+    # 🗑️ DELETE USER
+    path("admin/users/<int:user_id>/delete/", DeleteUserView.as_view(), name="admin_users_delete"),
+
+    # 🎭 ROLE MANAGEMENT
+    path("admin/roles/", ListRolesView.as_view(), name="admin_roles_list"),
+    path("admin/users/<int:user_id>/assign-role/", AssignUserRoleView.as_view(), name="admin_users_assign_role"),
+    path("admin/users/<int:user_id>/remove-role/", RemoveUserRoleView.as_view(), name="admin_users_remove_role"),
+
+    # 📋 AUDIT LOGS
+    path("admin/audit-log/", AdminAuditLogView.as_view(), name="admin_audit_log"),
 
     # 👑 SUPERUSER / ADMIN BOOTSTRAP
     path("admin/initialize/", CreateAdminUserView.as_view(), name="admin_initialize_first_user"),

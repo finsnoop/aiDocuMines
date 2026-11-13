@@ -91,35 +91,35 @@ client, _ = Client.objects.get_or_create(
     defaults={"industry": "AI", "use_case": "Bootstrap"}
 )
 
-    if not User.objects.filter(email=email).exists():
-        user = User.objects.create_superuser(
-            email=email,
-            password=password,
-            client=client
-        )
-        superadmin_group, _ = Group.objects.get_or_create(name="SuperAdmin")
-        user.groups.add(superadmin_group)
-    else:
-        user = User.objects.get(email=email)
-    user.is_2fa_enabled = True
-    user.two_factor_enabled = True
-    user.save()
-    secret = generate_client_secret()
-    app = Application.objects.create(
-        user=user,
-        client_type=Application.CLIENT_CONFIDENTIAL,
-        authorization_grant_type=Application.GRANT_PASSWORD,
-        name="System Admin",
-        client_secret=secret
+if not User.objects.filter(email=email).exists():
+    user = User.objects.create_superuser(
+        email=email,
+        password=password,
+        client=client
     )
-    with open(outfile, "w") as f:
-        json.dump({
-            "email": email,
-            "password": password,
-            "client_id": app.client_id,
-            "client_secret": secret
-        }, f, indent=2)
-    print("✅ Superuser created")
+    superadmin_group, _ = Group.objects.get_or_create(name="SuperAdmin")
+    user.groups.add(superadmin_group)
+else:
+    user = User.objects.get(email=email)
+user.is_2fa_enabled = True
+user.two_factor_enabled = True
+user.save()
+secret = generate_client_secret()
+app = Application.objects.create(
+    user=user,
+    client_type=Application.CLIENT_CONFIDENTIAL,
+    authorization_grant_type=Application.GRANT_PASSWORD,
+    name="System Admin",
+    client_secret=secret
+)
+with open(outfile, "w") as f:
+    json.dump({
+        "email": email,
+        "password": password,
+        "client_id": app.client_id,
+        "client_secret": secret
+    }, f, indent=2)
+print("✅ Superuser created")
 EOF
 
     touch /app/logs/migrations_complete

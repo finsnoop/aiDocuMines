@@ -68,23 +68,15 @@ class HasAnyRole(BasePermission):
         if not request.user or not request.user.is_authenticated:
             return False
 
-        # Also check x-role header (passed by frontend auth interceptor)
-        header_role = request.META.get("HTTP_X_ROLE", "") or getattr(request, "role", "")
-        if header_role:
-            for role in self.roles:
-                if role == 'admin' and header_role in ('Admin',):
-                    return True
-                if role.startswith('group:') and role.split(':', 1)[1] == header_role:
-                    return True
-
+        roles = get_user_roles(request.user)
         for role in self.roles:
             if role == 'superuser' and request.user.is_superuser:
                 return True
-            elif role == 'admin' and (request.user.is_staff or request.user.groups.filter(name='Admin').exists()):
+            elif role == 'admin' and ('Admin' in roles or 'SuperAdmin' in roles):
                 return True
             elif role.startswith('group:'):
                 group_name = role.split(':', 1)[1]
-                if request.user.groups.filter(name=group_name).exists():
+                if group_name in roles:
                     return True
 
         return False
@@ -102,16 +94,16 @@ class IsAdminOrSuperUser(HasAnyRole):
     roles = ['admin', 'superuser']
 
 class IsClientOrAdminOrManager(HasAnyRole):
-    roles = ['group:Client', 'admin', 'group:Manager']
+    roles = ['group:Client', 'admin', 'group:Manager', 'group:SuperAdmin']
     
 class IsClientOrAdminOrManagerOrSuperUser(HasAnyRole):
-    roles = ['group:Client', 'admin', 'group:Manager', 'superuser']
+    roles = ['group:Client', 'admin', 'group:Manager', 'group:SuperAdmin', 'superuser']
     
 class IsClientOrAdminOrDeveloper(HasAnyRole):
-    roles = ['group:Client', 'admin', 'group:Developer']
+    roles = ['group:Client', 'admin', 'group:Developer', 'group:SuperAdmin']
     
 class IsClientOrAdminOrManagerOrDeveloper(HasAnyRole):
-    roles = ['group:Client', 'admin', 'group:Manager', 'group:Developer']
+    roles = ['group:Client', 'admin', 'group:Manager', 'group:Developer', 'group:SuperAdmin']
 
 class IsClientOrSuperUser(HasAnyRole):
     roles = ['group:Client', 'superuser']
@@ -126,19 +118,19 @@ class IsClientOrDeveloper(HasAnyRole):
 
 
 class IsClientOrAdminOrManager(HasAnyRole):
-    roles = ['group:Client', 'admin', 'group:Manager']
+    roles = ['group:Client', 'admin', 'group:Manager', 'group:SuperAdmin']
 
 
 class IsClientOrAdminOrDeveloper(HasAnyRole):
-    roles = ['group:Client', 'admin', 'group:Developer']
+    roles = ['group:Client', 'admin', 'group:Developer', 'group:SuperAdmin']
 
 
 class IsClientOrAdminOrManagerOrDeveloper(HasAnyRole):
-    roles = ['group:Client', 'admin', 'group:Manager', 'group:Developer']
+    roles = ['group:Client', 'admin', 'group:Manager', 'group:Developer', 'group:SuperAdmin']
 
 
 class IsClientOrAdminOrManagerOrDeveloperOrSuperUser(HasAnyRole):
-    roles = ['group:Client', 'admin', 'group:Manager', 'group:Developer', 'superuser']
+    roles = ['group:Client', 'admin', 'group:Manager', 'group:Developer', 'group:SuperAdmin', 'superuser']
 
 
 # --- 1. Guest Role ---
@@ -318,5 +310,7 @@ from .rbac import (
     ROLE_DEFINITIONS,
     get_role_permissions,
     get_permission_codenames,
+    get_user_roles,
+    get_user_role_permissions,
 )
 

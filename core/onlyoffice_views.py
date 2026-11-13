@@ -18,7 +18,8 @@ from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.permissions import AllowAny
 
-from oauth2_provider.contrib.rest_framework import OAuth2Authentication, TokenHasReadWriteScope
+from oauth2_provider.contrib.rest_framework import TokenHasReadWriteScope
+from custom_authentication.authentication import ClientBoundOAuth2Authentication as OAuth2Authentication
 from drf_yasg.utils import swagger_auto_schema
 from drf_yasg import openapi
 
@@ -569,7 +570,9 @@ class OnlyOfficeEditorConfigView(APIView):
         doc_api_js = ds_public + "/web-apps/apps/api/documents/api.js"
 
         ext = ext_from_filename(f.filename, fallback="docx")
-        document_type = "word"  # could map by ext if desired
+        # Map extension to OnlyOffice document type
+        _ext_doctype_map = {"pptx": "slide", "ppt": "slide", "xlsx": "spreadsheet", "xls": "spreadsheet"}
+        document_type = _ext_doctype_map.get(ext, "word")
 
         # Inject current user; fall back to file owner
         u = getattr(request, "user", None) or f.user

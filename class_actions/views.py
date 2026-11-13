@@ -7,11 +7,12 @@ from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status, permissions
 from rest_framework.parsers import MultiPartParser, FormParser
-from oauth2_provider.contrib.rest_framework import OAuth2Authentication, TokenHasReadWriteScope
+from oauth2_provider.contrib.rest_framework import TokenHasReadWriteScope
+from custom_authentication.authentication import ClientBoundOAuth2Authentication as OAuth2Authentication
 from drf_yasg.utils import swagger_auto_schema
 from drf_yasg import openapi
 
-from core.utils import generate_and_register_service_report
+from core.utils import generate_and_register_service_report, clean_request_data_for_serializer, get_user_client
 
 from custom_authentication.permissions import IsClientOrAdmin, IsClientOrAdminOrSuperUser
 from core.models import File
@@ -63,7 +64,7 @@ class MassClaimsRunListCreateView(APIView):
     )
     def post(self, request):
         """Create a new mass claims run"""
-        serializer = MassClaimsRunCreateSerializer(data=request.data, context={'request': request})
+        serializer = MassClaimsRunCreateSerializer(data=clean_request_data_for_serializer(request.data, MassClaimsRunCreateSerializer), context={'request': request})
         if serializer.is_valid():
             mass_claims_run = serializer.save()
             response_serializer = MassClaimsRunSerializer(mass_claims_run)
@@ -167,7 +168,7 @@ class IntakeFormView(APIView):
     )
     def post(self, request):
         """Submit a new intake form"""
-        serializer = IntakeFormCreateSerializer(data=request.data, context={'request': request})
+        serializer = IntakeFormCreateSerializer(data=clean_request_data_for_serializer(request.data, IntakeFormCreateSerializer), context={'request': request})
         if serializer.is_valid():
             intake_form = serializer.save()
             
@@ -393,7 +394,7 @@ class ExhibitPackageView(APIView):
     )
     def post(self, request):
         """Create a new exhibit package"""
-        serializer = ExhibitPackageSerializer(data=request.data)
+        serializer = ExhibitPackageSerializer(data=clean_request_data_for_serializer(request.data, ExhibitPackageSerializer))
         if serializer.is_valid():
             # Ensure user owns the mass claims run
             mc_run = get_object_or_404(MassClaimsRun, pk=request.data.get('mass_claims_run'), run__user=request.user)
@@ -448,7 +449,7 @@ class SettlementTrackingView(APIView):
     )
     def post(self, request):
         """Create or update settlement tracking"""
-        serializer = SettlementTrackingSerializer(data=request.data)
+        serializer = SettlementTrackingSerializer(data=clean_request_data_for_serializer(request.data, SettlementTrackingSerializer))
         if serializer.is_valid():
             # Ensure user owns the mass claims run
             mc_run = get_object_or_404(MassClaimsRun, pk=request.data.get('mass_claims_run'), run__user=request.user)
@@ -798,6 +799,7 @@ class ServiceExecutionListCreateView(APIView):
             # Create service execution
             execution = ServiceExecution.objects.create(
                 user=request.user,
+                client=get_user_client(request.user),
                 mass_claims_run=mass_claims_run,
                 service_type=data['service_type'],
                 service_name=data['service_name'],
@@ -916,6 +918,8 @@ class ServiceOutputListCreateView(APIView):
 
             # Create service output
             output = ServiceOutput.objects.create(
+                user=request.user,
+                client=get_user_client(request.user),
                 service_execution=service_execution,
                 output_name=data['output_name'],
                 output_type=data['output_type'],

@@ -4,11 +4,12 @@ from .views import (
     HomeDashAllView,
     HomeDashSectionView,
     HomeDashSnapshotView,
-    # Optional extras – include only if you implemented them in views.py
+    # Optional extras – only include if you implemented them in views.py
     HomeDashCardsView,
     HomeDashTimeSeriesView,
     HomeDashTopFilesView,
     HomeDashTopSearchesView,
+    DashboardLayoutView,
 )
 
 urlpatterns = [
@@ -29,5 +30,6 @@ urlpatterns = [
     path("timeseries/", HomeDashTimeSeriesView.as_view(), name="home-dash-timeseries"),
     path("top/files/", HomeDashTopFilesView.as_view(), name="home-dash-top-files"),
     path("top/searches/", HomeDashTopSearchesView.as_view(), name="home-dash-top-searches"),
+    path("dashboard-layout/", DashboardLayoutView.as_view(), name="home-dash-layout"),
 ]
 

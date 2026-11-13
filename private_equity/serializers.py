@@ -178,6 +178,9 @@ class DataRoomConnectorSerializer(serializers.ModelSerializer):
 class DueDiligenceRunCreateSerializer(serializers.ModelSerializer):
     """Serializer for creating a new DueDiligenceRun with associated Run"""
     
+    deal_name = serializers.CharField(required=False, default='Untitled Deal')
+    target_company = serializers.CharField(required=False, default='Unknown Company')
+    
     class Meta:
         model = DueDiligenceRun
         fields = [
@@ -270,6 +273,11 @@ class ClosingChecklistSerializer(serializers.ModelSerializer):
 class ClosingChecklistCreateSerializer(serializers.ModelSerializer):
     """Serializer for creating ClosingChecklist items"""
 
+    item_name = serializers.CharField(required=False, default='New checklist item')
+    category = serializers.CharField(required=False, default='legal')
+    priority = serializers.CharField(required=False, default='medium')
+    status = serializers.CharField(required=False, default='not_started')
+
     class Meta:
         model = ClosingChecklist
         fields = [
@@ -315,7 +323,28 @@ class PostCloseObligationSerializer(serializers.ModelSerializer):
 
 
 class PostCloseObligationCreateSerializer(serializers.ModelSerializer):
-    """Serializer for creating PostCloseObligation items"""
+    """Serializer for creating PostCloseObligation items.
+    Fields are optional with defaults so the services page can send file-based
+    payloads without 400 errors. AI extraction can populate later."""
+
+    obligation_name = serializers.CharField(required=False, default='Auto-extracted obligation')
+    obligation_type = serializers.ChoiceField(
+        choices=PostCloseObligation.OBLIGATION_TYPES,
+        required=False, default='other'
+    )
+    description = serializers.CharField(required=False, default='', allow_blank=True)
+    status = serializers.ChoiceField(
+        choices=PostCloseObligation.OBLIGATION_STATUS,
+        required=False, default='pending'
+    )
+    risk_level = serializers.ChoiceField(
+        choices=[('low', 'Low'), ('medium', 'Medium'), ('high', 'High'), ('critical', 'Critical')],
+        required=False, default='medium'
+    )
+    frequency = serializers.ChoiceField(
+        choices=PostCloseObligation.FREQUENCY,
+        required=False, default='ongoing'
+    )
 
     class Meta:
         model = PostCloseObligation
@@ -381,6 +410,10 @@ class ClauseLibrarySerializer(serializers.ModelSerializer):
 
 class ClauseLibraryCreateSerializer(serializers.ModelSerializer):
     """Serializer for creating ClauseLibrary items"""
+
+    clause_name = serializers.CharField(required=False, default='Auto-extracted clause')
+    clause_category = serializers.CharField(required=False, default='general')
+    clause_text = serializers.CharField(required=False, default='')
 
     class Meta:
         model = ClauseLibrary
@@ -450,6 +483,8 @@ class PostCloseObligationSummarySerializer(serializers.Serializer):
 class PanelFirmSerializer(serializers.ModelSerializer):
     """Serializer for PanelFirm model"""
 
+    name = serializers.CharField(required=False, default='Unknown Firm')
+
     class Meta:
         model = PanelFirm
         fields = [
@@ -477,6 +512,7 @@ class RFPSerializer(serializers.ModelSerializer):
     winning_firm_name = serializers.CharField(source='winning_firm.name', read_only=True, allow_null=True)
     created_by_email = serializers.EmailField(source='created_by.email', read_only=True)
     bids_count = serializers.SerializerMethodField()
+    title = serializers.CharField(required=False, default='Untitled RFP')
 
     class Meta:
         model = RFP
@@ -536,6 +572,7 @@ class EngagementLetterSerializer(serializers.ModelSerializer):
     fee_arrangement_display = serializers.CharField(source='get_fee_arrangement_display', read_only=True)
     status_display = serializers.CharField(source='get_status_display', read_only=True)
     created_by_email = serializers.EmailField(source='created_by.email', read_only=True)
+    scope_description = serializers.CharField(required=False, default='General engagement scope')
 
     class Meta:
         model = EngagementLetter
@@ -566,6 +603,8 @@ class SignatureTrackerSerializer(serializers.ModelSerializer):
     status_display = serializers.CharField(source='get_status_display', read_only=True)
     esign_provider_display = serializers.CharField(source='get_esign_provider_display', read_only=True)
     deal_name = serializers.CharField(source='due_diligence_run.deal_name', read_only=True)
+    document_name = serializers.CharField(required=False, default='Untitled Document')
+    signatory_name = serializers.CharField(required=False, default='Unknown Signatory')
 
     class Meta:
         model = SignatureTracker
@@ -591,6 +630,16 @@ class ConditionPrecedentSerializer(serializers.ModelSerializer):
     category_display = serializers.CharField(source='get_category_display', read_only=True)
     deal_name = serializers.CharField(source='due_diligence_run.deal_name', read_only=True)
     assigned_to_email = serializers.EmailField(source='assigned_to.email', read_only=True, allow_null=True)
+    name = serializers.CharField(required=False, default='New Condition')
+    category = serializers.ChoiceField(
+        choices=[('legal', 'Legal'), ('financial', 'Financial'), ('regulatory', 'Regulatory'),
+                 ('operational', 'Operational'), ('other', 'Other')],
+        required=False, default='other'
+    )
+    status = serializers.ChoiceField(
+        choices=[('open', 'Open'), ('satisfied', 'Satisfied'), ('waived', 'Waived'), ('expired', 'Expired')],
+        required=False, default='open'
+    )
 
     class Meta:
         model = ConditionPrecedent
@@ -618,6 +667,8 @@ class ClosingBinderSerializer(serializers.ModelSerializer):
     deal_name = serializers.CharField(source='due_diligence_run.deal_name', read_only=True)
     created_by_email = serializers.EmailField(source='created_by.email', read_only=True)
     documents_count = serializers.SerializerMethodField()
+    name = serializers.CharField(required=False, default='Untitled Binder')
+    format = serializers.CharField(required=False, default='pdf')
 
     class Meta:
         model = ClosingBinder
@@ -651,6 +702,8 @@ class CovenantSerializer(serializers.ModelSerializer):
     threshold_type_display = serializers.CharField(source='get_threshold_type_display', read_only=True)
     reporting_frequency_display = serializers.CharField(source='get_reporting_frequency_display', read_only=True)
     deal_name = serializers.CharField(source='due_diligence_run.deal_name', read_only=True)
+    name = serializers.CharField(required=False, default='New Covenant')
+    covenant_type = serializers.CharField(required=False, default='financial')
 
     class Meta:
         model = Covenant
@@ -677,6 +730,8 @@ class ConsentFilingSerializer(serializers.ModelSerializer):
     status_display = serializers.CharField(source='get_status_display', read_only=True)
     deal_name = serializers.CharField(source='due_diligence_run.deal_name', read_only=True)
     assigned_to_email = serializers.EmailField(source='assigned_to.email', read_only=True, allow_null=True)
+    name = serializers.CharField(required=False, default='New Consent Filing')
+    filing_type = serializers.CharField(required=False, default='standard')
 
     class Meta:
         model = ConsentFiling

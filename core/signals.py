@@ -7,8 +7,24 @@ from core.elastic_indexes import FileIndex
 logger = logging.getLogger(__name__)
 
 
+def _log_file_activity(instance, event, metadata=None):
+    """Log file-related activity for the owning user."""
+    try:
+        from custom_authentication.utils import log_activity
+        log_activity(instance.user, event, metadata or {
+            "file_id": instance.id,
+            "filename": instance.filename,
+            "project_id": instance.project_id,
+            "service_id": instance.service_id,
+        })
+    except Exception:
+        pass
+
+
 @receiver(post_save, sender=File)
-def index_file_to_elasticsearch(sender, instance, **kwargs):
+def index_file_to_elasticsearch(sender, instance, created, **kwargs):
+    if created:
+        _log_file_activity(instance, "FILE_UPLOADED")
     from document_search.utils import extract_text
     client_id = None
     if instance.user and instance.user.client:
@@ -38,11 +54,12 @@ def index_file_to_elasticsearch(sender, instance, **kwargs):
 
 @receiver(post_delete, sender=File)
 def delete_file_from_es_index(sender, instance, **kwargs):
+    _log_file_activity(instance, "FILE_DELETED")
     try:
         doc = FileIndex.get(id=str(instance.id))
         doc.delete()
         logger.info("Deleted file %s from Elasticsearch index.", instance.id)
-    except FileIndex.DoesNotExist:
+    except Exception:
         logger.debug("File %s not found in ES index; skipping delete.", instance.id)
 
 

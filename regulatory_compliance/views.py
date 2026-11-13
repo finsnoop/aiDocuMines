@@ -9,9 +9,10 @@ from django.db.models import Avg, Count, Q
 from django.utils import timezone
 from drf_yasg.utils import swagger_auto_schema
 from drf_yasg import openapi
-from oauth2_provider.contrib.rest_framework import OAuth2Authentication, TokenHasReadWriteScope
+from oauth2_provider.contrib.rest_framework import TokenHasReadWriteScope
+from custom_authentication.authentication import ClientBoundOAuth2Authentication as OAuth2Authentication
 
-from core.utils import generate_and_register_service_report
+from core.utils import generate_and_register_service_report, clean_request_data_for_serializer, get_user_client
 
 logger = logging.getLogger(__name__)
 
@@ -61,7 +62,7 @@ class ComplianceRunListCreateView(APIView):
     )
     def post(self, request):
         """Create a new compliance run"""
-        serializer = ComplianceRunCreateSerializer(data=request.data, context={'request': request})
+        serializer = ComplianceRunCreateSerializer(data=clean_request_data_for_serializer(request.data, ComplianceRunCreateSerializer), context={'request': request})
         if serializer.is_valid():
             compliance_run = serializer.save()
             response_serializer = ComplianceRunSerializer(compliance_run)
@@ -166,7 +167,7 @@ class RegulatoryRequirementView(APIView):
     )
     def post(self, request):
         """Add a regulatory requirement"""
-        serializer = RegulatoryRequirementSerializer(data=request.data, context={'request': request})
+        serializer = RegulatoryRequirementSerializer(data=clean_request_data_for_serializer(request.data, RegulatoryRequirementSerializer), context={'request': request})
         if serializer.is_valid():
             requirement = serializer.save()
             return Response(serializer.data, status=status.HTTP_201_CREATED)
@@ -358,7 +359,7 @@ class DSARRequestView(APIView):
     )
     def post(self, request):
         """Create a new DSAR request"""
-        serializer = DSARRequestSerializer(data=request.data, context={'request': request})
+        serializer = DSARRequestSerializer(data=clean_request_data_for_serializer(request.data, DSARRequestSerializer), context={'request': request})
         if serializer.is_valid():
             dsar_request = serializer.save()
             
@@ -455,7 +456,7 @@ class RedactionTaskView(APIView):
     )
     def post(self, request):
         """Create a new redaction task"""
-        serializer = RedactionTaskSerializer(data=request.data, context={'request': request})
+        serializer = RedactionTaskSerializer(data=clean_request_data_for_serializer(request.data, RedactionTaskSerializer), context={'request': request})
         if serializer.is_valid():
             redaction_task = serializer.save()
 
@@ -523,7 +524,7 @@ class ComplianceAlertView(APIView):
     )
     def post(self, request):
         """Create a new compliance alert"""
-        serializer = ComplianceAlertSerializer(data=request.data, context={'request': request})
+        serializer = ComplianceAlertSerializer(data=clean_request_data_for_serializer(request.data, ComplianceAlertSerializer), context={'request': request})
         if serializer.is_valid():
             alert = serializer.save()
             return Response(serializer.data, status=status.HTTP_201_CREATED)
@@ -1125,6 +1126,7 @@ class ServiceExecutionListCreateView(APIView):
             # Create service execution
             execution = ServiceExecution.objects.create(
                 user=request.user,
+                client=get_user_client(request.user),
                 compliance_run=compliance_run,
                 service_type=data['service_type'],
                 service_name=data['service_name'],
@@ -1243,6 +1245,8 @@ class ServiceOutputListCreateView(APIView):
 
             # Create service output
             output = ServiceOutput.objects.create(
+                user=request.user,
+                client=get_user_client(request.user),
                 service_execution=service_execution,
                 output_name=data['output_name'],
                 output_type=data['output_type'],

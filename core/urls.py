@@ -11,6 +11,9 @@ from .views import (
     StorageLocationsView,
     ProjectSummaryView,
     ServiceSummaryView,
+    ProjectListView,
+    ProjectCreateView,
+    UserPreferenceView,
 )
 
 from core.views_bulk import (
@@ -94,6 +97,13 @@ urlpatterns = [
     path("bulk/<str:job_id>/results/", BulkJobResultsView.as_view(), name="bulk-results"),
     path("bulk/<str:job_id>/cancel/", BulkJobCancelView.as_view(), name="bulk-cancel"),
     path("bulk/<str:job_id>/retry/", BulkJobRetryView.as_view(), name="bulk-retry"),
+
+    # Projects
+    path("projects/", ProjectListView.as_view(), name="project-list"),
+    path("projects/create/", ProjectCreateView.as_view(), name="project-create"),
+
+    # User preferences
+    path("preferences/", UserPreferenceView.as_view(), name="user-preferences"),
     
 ]
 

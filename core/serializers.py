@@ -1,5 +1,6 @@
 from rest_framework import serializers
 from .models import Run, File, Storage, Metadata, Webhook
+from core.utils import get_logical_path
 # from django.contrib.auth.models import User
 
 from django.contrib.auth import get_user_model
@@ -44,6 +45,7 @@ class FileSerializer(serializers.ModelSerializer):
     document_type = serializers.SerializerMethodField()
     project_id = serializers.SerializerMethodField()
     service_id = serializers.SerializerMethodField()
+    filepath = serializers.SerializerMethodField()
 
     class Meta:
         model = File
@@ -65,6 +67,10 @@ class FileSerializer(serializers.ModelSerializer):
             "service_id"
             ]
         read_only_fields = ["id", "unique_code", "created_at", "updated_at"]
+
+    def get_filepath(self, obj):
+        """Never expose the raw server filesystem path - return a logical path."""
+        return get_logical_path(obj.filepath, obj.filename)
 
     def get_storage(self, obj):
         """Retrieve related storage details"""
@@ -112,6 +118,8 @@ class StorageSerializer(serializers.ModelSerializer):
     """Serializer for Storage model"""
 
     run_id = serializers.UUIDField(source="run.run_id", read_only=True)  # ✅ Ensures run_id compatibility
+    upload_storage_location = serializers.SerializerMethodField()
+    output_storage_location = serializers.SerializerMethodField()
 
     class Meta:
         model = Storage
@@ -123,6 +131,12 @@ class StorageSerializer(serializers.ModelSerializer):
             "upload_storage_location",
             "output_storage_location",
         ]
+
+    def get_upload_storage_location(self, obj):
+        return get_logical_path(obj.upload_storage_location)
+
+    def get_output_storage_location(self, obj):
+        return get_logical_path(obj.output_storage_location)
 
 class MetadataSerializer(serializers.ModelSerializer):
     """Serializer for Metadata model"""

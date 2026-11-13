@@ -3,6 +3,7 @@ from rest_framework.response import Response
 from django.shortcuts import get_object_or_404
 from oauth2_provider.models import Application
 from core.models import File
+from core.utils import get_logical_path
 from document_ocr.models import OCRRun, OCRFile
 import logging
 import os
@@ -10,7 +11,8 @@ from django.http import FileResponse
 from rest_framework.permissions import AllowAny
 
 # OAuth2 Authentication Imports
-from oauth2_provider.contrib.rest_framework import OAuth2Authentication, TokenHasReadWriteScope
+from oauth2_provider.contrib.rest_framework import TokenHasReadWriteScope
+from custom_authentication.authentication import ClientBoundOAuth2Authentication as OAuth2Authentication
 from rest_framework.permissions import IsAuthenticated  # ✅ Ensures authentication
 
 # Swagger Imports
@@ -99,11 +101,16 @@ class OCRTaskStatusView(APIView):
             return Response({"error": "No OCR file found for the provided details"}, status=404)
 
         # 🆕 Fetch all registered File entries for this run (except original)
-        registered_outputs = list(
-            File.objects.filter(run=ocr_file.original_file.run)
+        registered_outputs = [
+            {
+                "id": f["id"],
+                "filename": f["filename"],
+                "filepath": get_logical_path(f["filepath"], f["filename"]),
+            }
+            for f in File.objects.filter(run=ocr_file.original_file.run)
             .exclude(id=ocr_file.original_file.id)
             .values("id", "filename", "filepath")
-        )
+        ]
 
         # ✅ Ensure that file paths exist and are formatted correctly
         response_data = {
@@ -116,10 +123,10 @@ class OCRTaskStatusView(APIView):
             "project_id": ocr_file.original_file.project_id,
             "service_id": ocr_file.original_file.service_id,
             "client_name": run_instance.client_name,
-            "original_file_path": ocr_file.original_file.filepath,
-            "ocr_file_path": ocr_file.ocr_filepath if ocr_file.ocr_filepath else "N/A",
-            "formatted_docx_path": ocr_file.docx_path if ocr_file.docx_path else "N/A",
-            "raw_docx_path": ocr_file.raw_docx_path if ocr_file.raw_docx_path else "N/A",
+            "original_file_path": get_logical_path(ocr_file.original_file.filepath, ocr_file.original_file.filename),
+            "ocr_file_path": get_logical_path(ocr_file.ocr_filepath) if ocr_file.ocr_filepath else "N/A",
+            "formatted_docx_path": get_logical_path(ocr_file.docx_path) if ocr_file.docx_path else "N/A",
+            "raw_docx_path": get_logical_path(ocr_file.raw_docx_path) if ocr_file.raw_docx_path else "N/A",
             "created_at": ocr_file.created_at,
             "updated_at": ocr_file.updated_at,
             "registered_outputs": registered_outputs  # ✅ Added

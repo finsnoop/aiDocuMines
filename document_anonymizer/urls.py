@@ -20,6 +20,7 @@ from .views import (
     AnonymizationStatsResultView,
     AnonymizationStatsHistoryView,
     AnonymizationInsightsView,
+    RiskBucketDocumentsView,
     SupportedEntitiesView,   # ← add this
     CheckAnonymizationResultsView,
     health_check
@@ -64,6 +65,8 @@ urlpatterns = [
 
     # ✅ NEW: Anonymization Insights
     path("anonymization-insights/", AnonymizationInsightsView.as_view(), name="anonymization-insights"),
+    path("risk-bucket-documents/", RiskBucketDocumentsView.as_view(), name="risk-bucket-documents"),
+
 
     # urlpatterns (add near the insights / stats routes)
     path("supported-entities/", SupportedEntitiesView.as_view(), name="supported-entities"),

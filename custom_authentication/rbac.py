@@ -540,6 +540,33 @@ def get_role_permissions(role_name):
     return role.resolve_permissions(ROLE_DEFINITIONS)
 
 
+def get_user_roles(user):
+    """
+    Return the set of role names a user actually holds, derived from the
+    database only (Django groups + is_staff / is_superuser).
+
+    IMPORTANT: never derive roles from request headers (e.g. X-Role); those are
+    client-controlled and must not grant privileges.
+    """
+    if not user or not getattr(user, "is_authenticated", False):
+        return set()
+
+    roles = set(user.groups.values_list("name", flat=True))
+    if getattr(user, "is_superuser", False):
+        roles.update({"SuperAdmin", "Admin", "Manager", "Developer", "Client"})
+    elif getattr(user, "is_staff", False):
+        roles.update({"Admin"})
+    return roles
+
+
+def get_user_role_permissions(user):
+    """Union of resolved permission codenames across all of the user's roles."""
+    resolved = set()
+    for role_name in get_user_roles(user):
+        resolved |= get_role_permissions(role_name)
+    return resolved
+
+
 # ---------------------------------------------------------------------------
 # 4. SEEDING — Create Django Permission objects + Groups
 # ---------------------------------------------------------------------------
@@ -592,7 +619,7 @@ def seed_permissions_and_roles():
 class HasPermission(BasePermission):
     """
     Check if user has a specific permission by codename.
-    Checks both Django's Permission model AND the x-role header.
+    Checks Django's Permission model and the user's DB-backed roles.
 
     Usage:
         class MyView(APIView):
@@ -619,12 +646,10 @@ class HasPermission(BasePermission):
             if request.user.has_perm(f"custom_authentication.{codename}"):
                 return True
 
-        # Fallback: check x-role header against role definitions
-        header_role = request.META.get("HTTP_X_ROLE", "") or getattr(request, "role", "")
-        if header_role:
-            resolved = get_role_permissions(header_role)
-            if any(c in resolved for c in self.codenames):
-                return True
+        # Fallback: resolve from the user's real (DB-backed) roles.
+        resolved = get_user_role_permissions(request.user)
+        if any(c in resolved for c in self.codenames):
+            return True
 
         return False
 
@@ -660,12 +685,10 @@ class HasAllPermissions(BasePermission):
         else:
             return True
 
-        # Fallback: check x-role header
-        header_role = request.META.get("HTTP_X_ROLE", "") or getattr(request, "role", "")
-        if header_role:
-            resolved = get_role_permissions(header_role)
-            if all(c in resolved for c in self.codenames):
-                return True
+        # Fallback: resolve from the user's real (DB-backed) roles.
+        resolved = get_user_role_permissions(request.user)
+        if all(c in resolved for c in self.codenames):
+            return True
 
         return False
 
@@ -682,14 +705,8 @@ class IsAdminOrManagerMutation(BasePermission):
         if request.method in SAFE_METHODS:
             return True
 
-        header_role = request.META.get("HTTP_X_ROLE", "") or getattr(request, "role", "")
-        if header_role in ("Admin", "SuperAdmin", "Manager"):
-            return True
-        if request.user.groups.filter(name__in=["Admin", "SuperAdmin", "Manager"]).exists():
-            return True
-        if request.user.is_superuser or request.user.is_staff:
-            return True
-        return False
+        roles = get_user_roles(request.user)
+        return bool(roles & {"Admin", "SuperAdmin", "Manager"})
 
 
 class RequireAdminOrManagerMutation(BasePermission):
@@ -698,14 +715,8 @@ class RequireAdminOrManagerMutation(BasePermission):
     def has_permission(self, request, view):
         if not request.user or not request.user.is_authenticated:
             return False
-        header_role = request.META.get("HTTP_X_ROLE", "") or getattr(request, "role", "")
-        if header_role in ("Admin", "SuperAdmin", "Manager"):
-            return True
-        if request.user.groups.filter(name__in=["Admin", "SuperAdmin", "Manager"]).exists():
-            return True
-        if request.user.is_superuser or request.user.is_staff:
-            return True
-        return False
+        roles = get_user_roles(request.user)
+        return bool(roles & {"Admin", "SuperAdmin", "Manager"})
 
 
 # ---------------------------------------------------------------------------

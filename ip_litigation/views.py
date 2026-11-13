@@ -8,9 +8,10 @@ from rest_framework.generics import get_object_or_404
 from django.db.models import Avg, Count, Q
 from drf_yasg.utils import swagger_auto_schema
 from drf_yasg import openapi
-from oauth2_provider.contrib.rest_framework import OAuth2Authentication, TokenHasReadWriteScope
+from oauth2_provider.contrib.rest_framework import TokenHasReadWriteScope
+from custom_authentication.authentication import ClientBoundOAuth2Authentication as OAuth2Authentication
 
-from core.utils import generate_and_register_service_report
+from core.utils import generate_and_register_service_report, clean_request_data_for_serializer, get_user_client
 
 logger = logging.getLogger(__name__)
 
@@ -65,7 +66,7 @@ class PatentAnalysisRunListCreateView(APIView):
     )
     def post(self, request):
         """Create a new patent analysis run"""
-        serializer = PatentAnalysisRunCreateSerializer(data=request.data, context={'request': request})
+        serializer = PatentAnalysisRunCreateSerializer(data=clean_request_data_for_serializer(request.data, PatentAnalysisRunCreateSerializer), context={'request': request})
         if serializer.is_valid():
             analysis_run = serializer.save()
             response_serializer = PatentAnalysisRunSerializer(analysis_run)
@@ -170,7 +171,7 @@ class PatentDocumentView(APIView):
     )
     def post(self, request):
         """Add a patent document to analysis"""
-        serializer = PatentDocumentSerializer(data=request.data, context={'request': request})
+        serializer = PatentDocumentSerializer(data=clean_request_data_for_serializer(request.data, PatentDocumentSerializer), context={'request': request})
         if serializer.is_valid():
             document = serializer.save()
 
@@ -295,7 +296,7 @@ class PriorArtDocumentView(APIView):
     )
     def post(self, request):
         """Add a prior art document"""
-        serializer = PriorArtDocumentSerializer(data=request.data, context={'request': request})
+        serializer = PriorArtDocumentSerializer(data=clean_request_data_for_serializer(request.data, PriorArtDocumentSerializer), context={'request': request})
         if serializer.is_valid():
             document = serializer.save()
 
@@ -352,7 +353,7 @@ class ClaimChartView(APIView):
     )
     def post(self, request):
         """Create a new claim chart"""
-        serializer = ClaimChartSerializer(data=request.data, context={'request': request})
+        serializer = ClaimChartSerializer(data=clean_request_data_for_serializer(request.data, ClaimChartSerializer), context={'request': request})
         if serializer.is_valid():
             chart = serializer.save()
 
@@ -448,7 +449,7 @@ class InfringementAnalysisView(APIView):
     )
     def post(self, request):
         """Create a new infringement analysis"""
-        serializer = InfringementAnalysisSerializer(data=request.data, context={'request': request})
+        serializer = InfringementAnalysisSerializer(data=clean_request_data_for_serializer(request.data, InfringementAnalysisSerializer), context={'request': request})
         if serializer.is_valid():
             analysis = serializer.save()
 
@@ -500,7 +501,7 @@ class ValidityChallengeView(APIView):
     )
     def post(self, request):
         """Create a new validity challenge"""
-        serializer = ValidityChallengeSerializer(data=request.data, context={'request': request})
+        serializer = ValidityChallengeSerializer(data=clean_request_data_for_serializer(request.data, ValidityChallengeSerializer), context={'request': request})
         if serializer.is_valid():
             challenge = serializer.save()
 
@@ -990,6 +991,7 @@ class ServiceExecutionListCreateView(APIView):
             # Create service execution
             execution = ServiceExecution.objects.create(
                 user=request.user,
+                client=get_user_client(request.user),
                 patent_analysis_run=patent_analysis_run,
                 service_type=data['service_type'],
                 service_name=data['service_name'],
@@ -1108,6 +1110,8 @@ class ServiceOutputListCreateView(APIView):
 
             # Create service output
             output = ServiceOutput.objects.create(
+                user=request.user,
+                client=get_user_client(request.user),
                 service_execution=service_execution,
                 output_name=data['output_name'],
                 output_type=data['output_type'],

@@ -73,7 +73,7 @@ def generate_nextcloud_url_async(self, user_id):
         STATE_REGISTRY[user.id] = state
         NONCE_REGISTRY[user.id] = nonce
 
-        url = generate_nextcloud_oidc_url(user, state=state, nonce=nonce)
+        url = generate_nextcloud_oidc_url(user)
 
         IntegrationLog.objects.create(
             user=user,

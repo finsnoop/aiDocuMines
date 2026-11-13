@@ -7,6 +7,7 @@ from django.db import transaction
 from django.shortcuts import get_object_or_404
 from django.utils.timezone import now
 from core.models import File
+from core.utils import get_logical_path
 import shutil
 from docx import Document
 from document_ocr.models import OCRRun, OCRFile
@@ -56,7 +57,7 @@ def process_ocr(run_id, file_id, ocr_option="basic"):
         if not batch_files:
             ocr_file.status = "Failed"
             ocr_file.save()
-            return {"error": "Failed to burst the PDF", "file_path": file_obj.filepath}
+            return {"error": "Failed to burst the PDF", "file_path": get_logical_path(file_obj.filepath, file_obj.filename)}
 
         # Ensure output directories exist
         output_dir = os.path.join(os.path.dirname(file_obj.filepath), "ocr", ocr_option.lower(), "tmp")
@@ -285,7 +286,7 @@ def merge_ocr_batches(results, ocr_file_id, bookmarks_list):
         "registered_outputs": [{
             "file_id": registered.id,
             "filename": registered.filename,
-            "path": registered.filepath
+            "path": get_logical_path(registered.filepath, registered.filename)
         }]
     }
 
@@ -335,7 +336,7 @@ def process_pdf_to_docx(ocr_file_id, final_pdf_path):
         "registered_outputs": [{
             "file_id": registered.id,
             "filename": registered.filename,
-            "path": registered.filepath
+            "path": get_logical_path(registered.filepath, registered.filename)
         }] if registered else []
     }
 
@@ -401,7 +402,7 @@ def generate_raw_docx(ocr_file_id):
         "registered_outputs": [{
             "file_id": registered.id,
             "filename": registered.filename,
-            "path": registered.filepath
+            "path": get_logical_path(registered.filepath, registered.filename)
         }]
     }
 
