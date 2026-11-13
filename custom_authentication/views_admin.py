@@ -229,7 +229,7 @@ class PeopleView(APIView):
         sign_in_ready = _register_sign_in(user, password, app.client_id, secret)
         try:
             from custom_authentication.tasks import send_signup_email_task
-            send_signup_email_task.delay(user.id, password)  # effective task signature
+            send_signup_email_task.delay(user.id, password, app.client_id, secret)
             invited = True
         except Exception:
             invited = False
