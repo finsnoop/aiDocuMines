@@ -40,12 +40,18 @@ from .views_matters import (MatterCreateView, MatterDetailView, MatterDocumentsV
                             MatterUploadView)
 
 from .views_assistant import AssistantAskView, AssistantStatusView
+from .views_backup import BackupDetailView, BackupDownloadView, BackupListView, BackupRestoreView
 urlpatterns = [
     # ✅ File Upload Endpoint
     # Matters (a deal, case or request: documents, workflows, results and team)
     # Context assistant (chat with a file, folder, matter or project)
     path("assistant/ask/", AssistantAskView.as_view(), name="assistant-ask"),
     path("assistant/status/", AssistantStatusView.as_view(), name="assistant-status"),
+    # Platform database backups (platform super-admins)
+    path("backups/", BackupListView.as_view(), name="backup-list"),
+    path("backups/<str:name>/", BackupDetailView.as_view(), name="backup-detail"),
+    path("backups/<str:name>/download/", BackupDownloadView.as_view(), name="backup-download"),
+    path("backups/<str:name>/restore/", BackupRestoreView.as_view(), name="backup-restore"),
     path("projects/", MatterListView.as_view(), name="matter-list"),
     path("projects/create/", MatterCreateView.as_view(), name="matter-create"),
     path("projects/<uuid:matter_id>/", MatterDetailView.as_view(), name="matter-detail"),

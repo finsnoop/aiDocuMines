@@ -504,8 +504,15 @@ class MatterUploadView(APIView):
         run = Run.objects.create(user=user, status="Pending")
         results = []
 
+        from custom_authentication.policies import upload_violation
+
         for uploaded in uploads:
             entry = {"filename": uploaded.name}
+            reason = upload_violation(user, uploaded.name, uploaded.size)
+            if reason:
+                entry.update(status="rejected", message=reason)
+                results.append(entry)
+                continue
             try:
                 meta = save_uploaded_file(uploaded, temp_dir)
             except ValueError as exc:

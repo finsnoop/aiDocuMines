@@ -36,16 +36,26 @@ class AssistantThrottle(UserRateThrottle):
 
 
 def _web_allowed(user):
+    from custom_authentication.policies import assistant_policy
+
     if not user_has_perm(user, "assistant.web"):
         return "not_permitted"
+    if not assistant_policy(user)["web"]:
+        return "disabled"
     return web_status()
+
+
+def _assistant_allowed(user):
+    from custom_authentication.policies import assistant_policy
+
+    return user_has_perm(user, "assistant.ask") and assistant_policy(user)["enabled"]
 
 
 class AssistantStatusView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        return Response({"assistant": user_has_perm(request.user, "assistant.ask"),
+        return Response({"assistant": _assistant_allowed(request.user),
                          "web": _web_allowed(request.user)})
 
 
@@ -57,8 +67,9 @@ class AssistantAskView(APIView):
         from grid_documents_interrogation.utils import dispatch_to_llm
 
         user = request.user
-        if not user_has_perm(user, "assistant.ask"):
-            return Response({"error": "Your role does not include the assistant."}, status=status.HTTP_403_FORBIDDEN)
+        if not _assistant_allowed(user):
+            return Response({"error": "The assistant is not available for your role or organisation."},
+                            status=status.HTTP_403_FORBIDDEN)
         question = str(request.data.get("question") or "").strip()
         if not question:
             return Response({"error": "Ask a question."}, status=status.HTTP_400_BAD_REQUEST)
@@ -81,7 +92,10 @@ class AssistantAskView(APIView):
             if isinstance(m, dict) and m.get("role") in ("user", "assistant")
         ]
         provider = str(request.data.get("provider") or default_provider()).lower()
-        model = request.data.get("model") or os.getenv("ASSISTANT_MODEL") or os.getenv("OPENAI_MODEL") or "gpt-4o-mini"
+        from custom_authentication.policies import assistant_policy
+
+        model = (request.data.get("model") or assistant_policy(user)["model"] or os.getenv("ASSISTANT_MODEL")
+                 or os.getenv("OPENAI_MODEL") or "gpt-4o-mini")
         try:
             answer = dispatch_to_llm(query, context_block, {"provider": provider, "model": model}, history)
         except Exception as exc:

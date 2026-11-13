@@ -12,6 +12,8 @@ from .views import (
 
 from .views_activity import MyActivityView
 
+from . import views_admin
+
 urlpatterns = [
     # 🔐 AUTHENTICATION ENDPOINTS
     path("signup/", SignupView.as_view(), name="auth_signup"),
@@ -39,6 +41,15 @@ urlpatterns = [
     path("admin/initialize/", CreateAdminUserView.as_view(), name="admin_initialize_first_user"),
 
     # 👮‍♂️ ADMIN USER MANAGEMENT
+    # Admin console
+    path("admin/people/", views_admin.PeopleView.as_view(), name="admin_people"),
+    path("admin/people/<int:user_id>/", views_admin.PersonView.as_view(), name="admin_person"),
+    path("admin/people/<int:user_id>/reset-password/", views_admin.ResetPasswordView.as_view(), name="admin_person_reset"),
+    path("admin/organisations/", views_admin.OrganisationsView.as_view(), name="admin_orgs"),
+    path("admin/organisations/<int:org_id>/", views_admin.OrganisationView.as_view(), name="admin_org"),
+    path("admin/role-matrix/", views_admin.RoleMatrixView.as_view(), name="admin_role_matrix"),
+    path("admin/audit/", views_admin.AuditView.as_view(), name="admin_audit"),
+    path("admin/policy/", views_admin.PolicyView.as_view(), name="admin_policy"),
     path("admin/users/", ListUsersView.as_view(), name="admin_users_list"),
     path("admin/users/create/", CreateUserView.as_view(), name="admin_users_create"),
     path("admin/users/<int:user_id>/", RetrieveUserView.as_view(), name="admin_users_retrieve"),

@@ -216,3 +216,6 @@ __pycache__/
 
 # OAuth/superuser secret dumps written by setup scripts
 **/.superuser_*secrets*.json
+
+# Database backups (core/backups.py)
+backups/

@@ -1,3 +1,4 @@
+from custom_authentication.policies import policy_for as _policy_for
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
@@ -1271,6 +1272,10 @@ class RetrieveClientView(APIView):
 
     def get(self, request, client_id):
         try:
+            from core.access import is_platform_superuser, tenant_id
+            # Organisation admins may only read their own organisation (404 otherwise).
+            if not is_platform_superuser(request.user) and tenant_id(request.user) != client_id:
+                raise Client.DoesNotExist
             client = Client.objects.get(id=client_id)
             return Response({
                 "id": client.id,
@@ -1420,6 +1425,7 @@ class WhoAmIView(APIView):
             "is_superuser": user.is_superuser,
             "is_tenant_admin": is_tenant_admin(user),
             "is_platform_superuser": is_platform_superuser(user),
+            "session_timeout_minutes": getattr(_policy_for(user), "session_timeout_minutes", 30),
             "2fa_enabled": user.is_2fa_enabled,
         })
 

@@ -146,7 +146,11 @@ class FileUploadView(APIView):
         file_payload = []
 
         # ── Iterate through each uploaded file ───────────────────────────────
+        from custom_authentication.policies import upload_violation
         for uploaded in files:
+            reason = upload_violation(user, uploaded.name, uploaded.size)
+            if reason:
+                return Response({"error": reason, "filename": uploaded.name}, status=400)
             temp_dir = os.path.join(base_dir, "temp")
             os.makedirs(temp_dir, exist_ok=True)
 

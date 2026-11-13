@@ -287,3 +287,45 @@ class TwoFactorCode(models.Model):
 
     def __str__(self):
         return f"2FA Code for {self.user.email} - {'Used' if self.is_used else 'Pending'}"
+
+
+class OrganisationPolicy(models.Model):
+    """
+    Settings an organisation's administrators control, each enforced by the platform:
+    uploads (allowed types, size), the context assistant (on/off, web results,
+    default model) and session timeout (applied by the web app).
+    """
+    client = models.OneToOneField(Client, on_delete=models.CASCADE, related_name="policy")
+    allowed_file_types = models.CharField(
+        max_length=500, blank=True, default="",
+        help_text="Comma-separated extensions (pdf,docx,...). Empty = platform default list.")
+    max_upload_mb = models.PositiveIntegerField(default=100)
+    assistant_enabled = models.BooleanField(default=True)
+    assistant_web_enabled = models.BooleanField(default=True)
+    default_ai_model = models.CharField(max_length=120, blank=True, default="")
+    session_timeout_minutes = models.PositiveIntegerField(default=30)
+    updated_at = models.DateTimeField(auto_now=True)
+    updated_by = models.ForeignKey(CustomUser, null=True, blank=True, on_delete=models.SET_NULL, related_name="+")
+
+    def __str__(self):
+        return f"Policy for {self.client}"
+
+
+class AdminAuditEvent(models.Model):
+    """Every administrative change: who did what, to which object, in which organisation, from where."""
+    actor = models.ForeignKey(CustomUser, null=True, on_delete=models.SET_NULL, related_name="admin_audit_events")
+    client = models.ForeignKey(Client, null=True, blank=True, on_delete=models.SET_NULL, related_name="audit_events")
+    action = models.CharField(max_length=60, db_index=True)
+    target_type = models.CharField(max_length=40, blank=True, default="")
+    target_id = models.CharField(max_length=64, blank=True, default="")
+    target_label = models.CharField(max_length=255, blank=True, default="")
+    details = models.JSONField(default=dict, blank=True)
+    ip_address = models.GenericIPAddressField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+        indexes = [models.Index(fields=["client", "-created_at"], name="audit_client_recent")]
+
+    def __str__(self):
+        return f"{self.created_at:%Y-%m-%d %H:%M} {self.action} {self.target_label}"
