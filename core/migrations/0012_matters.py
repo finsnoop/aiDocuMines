@@ -9,7 +9,7 @@ from django.db import migrations, models
 class Migration(migrations.Migration):
 
     dependencies = [
-        ('core', '0009_bulkjob_bulkjobfileresult'),
+        ('core', '0011_add_user_preference_model'),
         ('custom_authentication', '0002_twofactorcode'),
         migrations.swappable_dependency(settings.AUTH_USER_MODEL),
     ]

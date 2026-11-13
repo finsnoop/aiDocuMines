@@ -6,10 +6,13 @@ import time
 from io import StringIO
 
 import pandas as pd
+from django.db.models import Max, OuterRef, Q, Subquery
 from django.http import Http404
 from django.shortcuts import get_object_or_404
 from rest_framework import viewsets, status
 from rest_framework.decorators import action
+from rest_framework.pagination import PageNumberPagination
+from rest_framework.exceptions import NotFound
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from custom_authentication.permissions import IsClientOrAdminOrSuperUser
@@ -19,21 +22,80 @@ from .serializers import TopicSerializer, QuerySerializer, DatabaseConnectionSer
 from core.models import File, Run
 from core.utils import generate_and_register_service_report
 
+from document_operations.utils import has_file_access
 from .tasks import process_file_query, process_db_query
-from .db_query_tools import overview_query, test_connection
-from .file_readers import read_pdf_file
+from .utils import fit_messages_to_context
+from .db_query_tools import fetch_column_names, generate_sql_query, execute_sql_query, test_connection, preview_table, scrub_db_error
+from .file_readers import read_file
 from . import safety
 from custom_authentication.policies import assistant_policy
 
-HISTORY_TURNS = 20          # earlier question/answer pairs sent as memory
+logger = logging.getLogger(__name__)
+
+HISTORY_TURNS = 20          # earlier question/answer pairs loaded per chat (then fitted to the model's context)
 MAX_QUERY_CHARS = 8000
 
 
-def _history(topic, user):
-    """The last HISTORY_TURNS exchanges of a topic, oldest first (bounded, whatever the topic's size)."""
+def _assistant_blocked(user):
+    if not assistant_policy(user)["enabled"]:
+        return Response({"error": "The Assistant is turned off for your organisation."}, status=403)
+    return None
+
+
+def _owned_connection_url(request, connection_id=None, topic=None):
+    """Vetted URL of one of the caller's saved connections (by id, else the topic's), or raise UnsafeTarget."""
+    conn_qs = DatabaseConnection.objects.filter(owner=request.user)
+    client_id = getattr(request.user, "client_id", None)
+    if client_id:
+        conn_qs = conn_qs.filter(owner__client_id=client_id)
+    db_conn = None
+    if connection_id:
+        db_conn = conn_qs.filter(pk=connection_id).first()
+    elif topic is not None and topic.db_connection_id:
+        db_conn = conn_qs.filter(pk=topic.db_connection_id).first()
+    if not db_conn:
+        raise safety.UnsafeTarget("Choose one of your saved database connections.")
+    return db_conn, safety.checked_url(db_conn.build_connection_uri())
+
+
+class TopicPagination(PageNumberPagination):
+    page_size = 8
+    page_size_query_param = "page_size"
+    max_page_size = 50
+
+
+def _file_for_chat(user, file_id):
+    file = get_object_or_404(File, id=file_id)
+    if not has_file_access(user, file, "read"):
+        raise NotFound("File not found")
+    return file
+
+
+def _visible_topic_files(topic, user):
+    files = [f for f in topic.files.all() if has_file_access(user, f, "read")]
+    files.sort(key=lambda f: (f.created_at, f.id))
+    return files
+
+
+def _extract_owned_file_text(file):
+    text = (file.content or "").strip()
+    if len(text) >= 40 or not file.filepath:
+        return text
+    try:
+        extracted = read_file(file.filepath)
+        if isinstance(extracted, tuple):
+            extracted = extracted[0]
+        if extracted:
+            return str(extracted).strip()
+    except Exception:
+        return text
+    return text
+
+
+def _messages_for_topic(topic, user):
+    messages = []
     recent = list(Query.objects.filter(topic=topic, user=user).order_by("-created_at")
                   .values_list("query_text", "response_text")[:HISTORY_TURNS])
-    messages = []
     for q, a in reversed(recent):
         if isinstance(q, str) and q.strip():
             messages.append({"role": "user", "content": q})
@@ -42,13 +104,27 @@ def _history(topic, user):
     return messages
 
 
-def _assistant_blocked(user):
-    if not assistant_policy(user)["enabled"]:
-        return Response({"error": "The Assistant is turned off for your organisation."}, status=403)
-    return None
-from core.access import get_file_for_user, get_scoped_or_404, get_run_for_user, scope_by_file, scope_by_owner
-
-logger = logging.getLogger(__name__)
+def _build_previous_messages(topic, user, llm_config, request):
+    """Own chat only, unless this request explicitly opts into other chats."""
+    own = _messages_for_topic(topic, user)
+    extra = []
+    if request.data.get("reference_other_chats") is True:
+        raw_ids = request.data.get("reference_topic_ids") or []
+        ids = []
+        for item in raw_ids:
+            try:
+                tid = int(item)
+            except (TypeError, ValueError):
+                continue
+            if tid != topic.id and tid not in ids:
+                ids.append(tid)
+        if ids:
+            others = Topic.objects.filter(id__in=ids[:20], user=user).exclude(id=topic.id)
+            for other in others:
+                label = other.name or f"Chat {other.id}"
+                extra.append({"role": "user", "content": f"[Referenced chat only, not this document: {label}]"})
+                extra.extend(_messages_for_topic(other, user))
+    return fit_messages_to_context(extra + own, (llm_config or {}).get("model"))
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -59,7 +135,11 @@ class DatabaseConnectionViewSet(viewsets.ModelViewSet):
     permission_classes = [IsAuthenticated, IsClientOrAdminOrSuperUser]
 
     def get_queryset(self):
-        return DatabaseConnection.objects.filter(owner=self.request.user)
+        qs = DatabaseConnection.objects.filter(owner=self.request.user)
+        client_id = getattr(self.request.user, "client_id", None)
+        if client_id:
+            qs = qs.filter(owner__client_id=client_id)
+        return qs
 
     def perform_create(self, serializer):
         # Save and re-fetch to ensure encrypted fields (like password) are readable for URI building
@@ -89,9 +169,24 @@ class DatabaseConnectionViewSet(viewsets.ModelViewSet):
 class TopicViewSet(viewsets.ModelViewSet):
     serializer_class = TopicSerializer
     permission_classes = [IsAuthenticated, IsClientOrAdminOrSuperUser]
+    pagination_class = TopicPagination
 
     def get_queryset(self):
-        return Topic.objects.filter(user=self.request.user)
+        latest = Query.objects.filter(topic=OuterRef("pk"), user=OuterRef("user")).order_by("-created_at")
+        qs = Topic.objects.filter(user=self.request.user).annotate(
+            last_activity=Max("queries__created_at"),
+            latest_query_text=Subquery(latest.values("query_text")[:1]),
+        )
+        q = (self.request.query_params.get("q") or "").strip()
+        if q:
+            qs = qs.filter(
+                Q(name__icontains=q)
+                | Q(project_id__icontains=q)
+                | Q(service_id__icontains=q)
+                | Q(queries__query_text__icontains=q)
+                | Q(queries__response_text__icontains=q)
+            ).distinct()
+        return qs.order_by("-last_activity", "-chat_date", "-id")
 
     def perform_create(self, serializer):
         serializer.save(user=self.request.user)
@@ -99,7 +194,7 @@ class TopicViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=['get'])
     def summary(self, request, pk=None):
         topic = self.get_object()
-        files = topic.files.all()
+        files = _visible_topic_files(topic, request.user)
         summary = {
             "id": topic.id,
             "project_id": topic.project_id,
@@ -121,7 +216,8 @@ class TopicViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=['get'])
     def active_file(self, request, pk=None):
         topic = self.get_object()
-        latest_file = topic.files.order_by('-created_at').first()
+        visible = _visible_topic_files(topic, request.user)
+        latest_file = visible[-1] if visible else None
         if latest_file:
             return Response({"file_id": latest_file.id, "file_name": latest_file.filename})
         return Response({"active_file": None})
@@ -132,7 +228,7 @@ class TopicViewSet(viewsets.ModelViewSet):
         file_id = request.data.get("file_id")
         if not file_id:
             return Response({"error": "file_id is required"}, status=400)
-        file_obj = get_file_for_user(request.user, file_id)
+        file_obj = _file_for_chat(request.user, file_id)
         topic.files.add(file_obj)
         return Response({"message": f"File {file_obj.filename} attached to topic {topic.id}."}, status=200)
 
@@ -156,12 +252,21 @@ class TopicViewSet(viewsets.ModelViewSet):
         if not project_id or not service_id:
             return Response({"error": "project_id and service_id are required"}, status=400)
 
-        topic, created = Topic.objects.get_or_create(
-            user=request.user,
-            project_id=project_id,
-            service_id=service_id,
-            defaults={"name": name}
-        )
+        if request.data.get("force_new"):
+            topic = Topic.objects.create(
+                user=request.user,
+                project_id=project_id,
+                service_id=service_id,
+                name=name,
+            )
+            created = True
+        else:
+            topic, created = Topic.objects.get_or_create(
+                user=request.user,
+                project_id=project_id,
+                service_id=service_id,
+                defaults={"name": name}
+            )
 
         return Response({
             "topic_id": topic.id,
@@ -180,7 +285,7 @@ class TopicViewSet(viewsets.ModelViewSet):
             history.append({
                 "query": q.query_text,
                 "response": q.response_text,
-                "file": q.file.filename if q.file else None,
+                "file": q.file.filename if q.file and has_file_access(request.user, q.file, "read") else None,
                 "timestamp": q.created_at.isoformat()
             })
 
@@ -208,6 +313,12 @@ class QueryViewSet(viewsets.ModelViewSet):
         return Query.objects.filter(user=self.request.user).order_by('-created_at')
 
     def perform_create(self, serializer):
+        topic = serializer.validated_data.get("topic")
+        file = serializer.validated_data.get("file")
+        if topic is None or topic.user_id != self.request.user.id:
+            raise NotFound("Topic not found")
+        if file is not None and not has_file_access(self.request.user, file, "read"):
+            raise NotFound("File not found")
         serializer.save(user=self.request.user)
 
     @action(detail=False, methods=['post'], url_path='ask')
@@ -219,7 +330,7 @@ class QueryViewSet(viewsets.ModelViewSet):
           "query_text": "...",
           "data_source": "file" | "db",
           "file_id": <int>,                # when data_source="file"
-          "connection_string": "...",      # optional; if omitted, uses Topic.db_connection
+          "connection_id": <int>,          # a saved connection; if omitted, uses Topic.db_connection
           "table": "users",                # for DB
           "llm_config": { "provider": "openai", "model": "gpt-4o-mini", ... },
           "project_id": optional (for report registration),
@@ -254,14 +365,14 @@ class QueryViewSet(viewsets.ModelViewSet):
                 "error": "No data source connected to this topic. Attach a file or link a database connection."
             }, status=400)
 
-        previous_messages = _history(topic, request.user)
+        previous_messages = _build_previous_messages(topic, request.user, llm_config, request)
 
         try:
             file = None
             if data_source == "file":
                 if not file_id:
                     return Response({"error": "file_id is required for file-based queries."}, status=400)
-                file = get_file_for_user(request.user, file_id)
+                file = _file_for_chat(request.user, file_id)
 
                 # NEW: fast path (use cached text via file_id)
                 task = process_file_query.delay(
@@ -274,17 +385,16 @@ class QueryViewSet(viewsets.ModelViewSet):
             elif data_source == "db":
                 if not safety.db_features_enabled():
                     return Response({"error": "Database questions are turned off on this platform."}, status=403)
+                if request.data.get("connection_string"):
+                    return Response(
+                        {"error": "Raw connection strings are not accepted. Select a saved connection."},
+                        status=400,
+                    )
                 table_name = request.data.get("table")
                 if not table_name:
                     return Response({"error": "Missing 'table' for DB query."}, status=400)
                 try:
-                    if request.data.get("connection_id") or request.data.get("connection_string"):
-                        url = safety.url_for_request(request, request.data)
-                    elif topic.db_connection and topic.db_connection.owner_id == request.user.id:
-                        url = safety.checked_url(topic.db_connection.build_connection_uri())
-                    else:
-                        return Response({"error": "Choose a saved connection or enter a connection string."},
-                                        status=400)
+                    _conn, url = _owned_connection_url(request, request.data.get("connection_id"), topic)
                 except safety.UnsafeTarget as exc:
                     return Response({"error": str(exc)}, status=400)
                 connection_string = url.render_as_string(hide_password=False)
@@ -352,7 +462,7 @@ class QueryViewSet(viewsets.ModelViewSet):
 
             return Response(response_data, status=201)
 
-        except Http404:
+        except (Http404, NotFound):
             raise
         except Exception:
             logger.exception("DocuChat question failed for topic %s", topic_id)
@@ -385,11 +495,8 @@ class QueryViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=['delete'])
     def delete_chat(self, request, pk=None):
         query = self.get_object()
-        file = query.file
-        file_path = file.filepath if file else None
-
-        # Only the chat message is removed. The document it referred to may be shared with,
-        # or owned by, someone else, and is managed from the documents pages.
+        # Only the chat message is removed. The document it referred to (yours, or shared with
+        # you) is managed from the documents pages and is never deleted from a chat.
         query.delete()
         return Response({"success": "Message deleted."})
 
@@ -429,16 +536,20 @@ class QueryViewSet(viewsets.ModelViewSet):
             return blocked
         new_query_text = str(request.data.get("query_text") or original.query_text)[:MAX_QUERY_CHARS]
         llm_config = safety.clean_llm_config(request.data.get("llm_config"))
-        previous_messages = _history(original.topic, request.user)
 
-        if original.file:
-            # Access may have been withdrawn since the first question.
-            get_file_for_user(request.user, original.file_id)
+        previous_messages = _build_previous_messages(
+            original.topic, request.user, llm_config, request
+        )
+
+        source_file = original.file or original.topic.files.order_by("-created_at").first()
+        if source_file and not has_file_access(request.user, source_file, "read"):
+            return Response({"error": "File not found"}, status=404)
+        if source_file:
             try:
                 # NEW: route via Celery fast path with file_id
                 task = process_file_query.delay(
                     query_text=new_query_text,
-                    file_id=original.file.id,
+                    file_id=source_file.id,
                     llm_config=llm_config,
                     previous_messages=previous_messages
                 )
@@ -454,7 +565,7 @@ class QueryViewSet(viewsets.ModelViewSet):
         new_query = Query.objects.create(
             topic=original.topic,
             user=request.user,
-            file=original.file,
+            file=source_file,
             query_text=new_query_text,
             response_text=result
         )
@@ -477,50 +588,114 @@ class QueryViewSet(viewsets.ModelViewSet):
         if not file_id:
             return Response({"error": "file_id is required"}, status=400)
 
-        file = get_file_for_user(request.user, file_id)
-        try:
-            text = read_pdf_file(file.filepath) if (file.filepath or "").lower().endswith(".pdf") else ""
-            if not (text or "").strip():
-                text = file.content or ""
-            if not text.strip():
-                return Response({"error": "No text could be read from this document."}, status=422)
-            return Response({"ocr_text": text[:5000], "file_name": file.filename})
-        except Exception as e:
-            logger.info("OCR preview failed for file %s: %s", file.pk, type(e).__name__)
-            return Response({"error": "No text could be read from this document."}, status=422)
+        file = _file_for_chat(request.user, file_id)
+        text = _extract_owned_file_text(file)
+        ready = len(text) >= 40
+        excerpt = " ".join(text.split())[:700]
+        return Response({
+            "filename": file.filename,
+            "file_id": file.id,
+            "project_id": file.project_id,
+            "service_id": file.service_id,
+            "ready": ready,
+            "chars": len(text),
+            "excerpt": excerpt,
+            "ocr_text": excerpt,
+            "hint": (
+                "This document has readable text. Ask a question or use a preset."
+                if ready else
+                "No readable text yet. Use Run OCR to extract it."
+            ),
+        })
+
+    @action(detail=False, methods=["post"], url_path="prepare-document")
+    def prepare_document(self, request):
+        file_id = request.data.get("file_id")
+        if not file_id:
+            return Response({"error": "file_id is required"}, status=400)
+        file = _file_for_chat(request.user, file_id)
+        can_write = file.user_id == request.user.id or has_file_access(request.user, file, "write")
+        text = _extract_owned_file_text(file)
+        if len(text) >= 40:
+            if can_write and (file.content or "").strip() != text:
+                file.content = text[:200000]
+                file.save(update_fields=["content"])
+            return Response({
+                "ready": True,
+                "queued": False,
+                "filename": file.filename,
+                "file_id": file.id,
+                "project_id": file.project_id,
+                "service_id": file.service_id,
+                "chars": len(text),
+                "excerpt": " ".join(text.split())[:700],
+            })
+        ext = (file.extension or file.filename.rsplit(".", 1)[-1]).lower()
+        if not can_write:
+            return Response({
+                "ready": False,
+                "queued": False,
+                "filename": file.filename,
+                "file_id": file.id,
+                "hint": "This shared document has no readable text yet.",
+            })
+        if ext not in {"pdf", "png", "jpg", "jpeg", "tif", "tiff", "bmp", "webp"}:
+            return Response({
+                "ready": False,
+                "queued": False,
+                "filename": file.filename,
+                "file_id": file.id,
+                "project_id": file.project_id,
+                "service_id": file.service_id,
+                "hint": "No text could be extracted from this file.",
+            })
+        from document_ocr.models import OCRRun
+        from document_ocr.tasks import process_ocr
+        ocr_run = OCRRun.objects.create(
+            project_id=file.project_id,
+            service_id=file.service_id,
+            client=getattr(request.user, "client", None),
+            client_name=getattr(request.user, "email", "") or "user",
+            status="Pending",
+            ocr_option="Basic-ocr",
+        )
+        process_ocr.delay(ocr_run.id, file.id, "Basic-ocr")
+        return Response({
+            "ready": False,
+            "queued": True,
+            "ocr_run_id": str(ocr_run.id),
+            "filename": file.filename,
+            "file_id": file.id,
+            "project_id": file.project_id,
+            "service_id": file.service_id,
+        }, status=202)
 
     @action(detail=False, methods=['post'], url_path='db-inspect')
     def db_inspect(self, request):
         """
-        Lightweight peek into a table.
-        Body: { "connection_string": "...", "table": "users" }
-        If connection_string omitted, will attempt to use Topic=db_connection if provided via ?topic_id=...
+        Lightweight peek into a table of one of the caller's saved connections.
+        Body: { "connection_id": <id>, "table": "users" }. Sensitive columns are never returned.
         """
         if not safety.db_features_enabled():
             return Response({"error": "Database questions are turned off on this platform."}, status=403)
         blocked = _assistant_blocked(request.user)
         if blocked:
             return blocked
+        if request.data.get("connection_string"):
+            return Response({"error": "Raw connection strings are not accepted. Select a saved connection."}, status=400)
         table_name = request.data.get("table")
-        if not table_name:
-            return Response({"error": "table is required"}, status=400)
+        connection_id = request.data.get("connection_id")
+        if not table_name or not connection_id:
+            return Response({"error": "connection_id and table are required"}, status=400)
         try:
-            topic_id = request.query_params.get("topic_id") or request.data.get("topic_id")
-            if not (request.data.get("connection_id") or request.data.get("connection_string")) and topic_id:
-                topic = get_object_or_404(Topic, id=topic_id, user=request.user)
-                if not topic.db_connection or topic.db_connection.owner_id != request.user.id:
-                    return Response({"error": "This topic has no saved database connection."}, status=400)
-                url = safety.checked_url(topic.db_connection.build_connection_uri())
-            else:
-                url = safety.url_for_request(request, request.data)
-            cols, df = overview_query(url, table_name)
-            return Response({
-                "columns": cols,
-                "sample_data": df.astype(str).to_dict(orient="records"),
-                "database": safety.describe(url),
-            })
+            db_conn, url = _owned_connection_url(request, connection_id)
+            preview = preview_table(url, table_name)
+            preview["connection"] = db_conn.name
+            preview["database"] = safety.describe(url)
+            return Response(preview)
         except safety.UnsafeTarget as e:
             return Response({"error": str(e)}, status=400)
         except Exception as e:
             logger.info("DocuChat db-inspect failed: %s", type(e).__name__)
             return Response({"error": "The database could not be reached with those details."}, status=400)
+

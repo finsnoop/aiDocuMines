@@ -5,7 +5,7 @@ from celery.exceptions import SoftTimeLimitExceeded
 from .utils import execute_file_query, execute_db_query
 
 
-@shared_task(soft_time_limit=300)
+@shared_task(soft_time_limit=600)
 def process_file_query(
     query_text,
     file_path=None,

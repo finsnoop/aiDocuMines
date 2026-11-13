@@ -3,7 +3,8 @@
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
-from oauth2_provider.contrib.rest_framework import OAuth2Authentication, TokenHasReadWriteScope
+from oauth2_provider.contrib.rest_framework import TokenHasReadWriteScope
+from custom_authentication.authentication import ClientBoundOAuth2Authentication as OAuth2Authentication
 from custom_authentication.permissions import IsClientOrAdminOrSuperUser
 
 from drf_yasg.utils import swagger_auto_schema
@@ -13,12 +14,44 @@ from .models import UserInsights
 from .serializers import UserInsightsSerializer, InsightsResponseSerializer
 from .tasks import generate_insights_for_user
 from .utils import calculate_user_insights
-from core.views import get_user_from_client_id
 
 # Swagger parameter
 client_id_param = openapi.Parameter(
-    "X-Client-ID", openapi.IN_HEADER, type=openapi.TYPE_STRING, required=True, description="Client ID provided at signup"
+    "X-Client-ID", openapi.IN_HEADER, type=openapi.TYPE_STRING, required=False, description="(Optional) OAuth2 client_id; if provided it must match the client that issued the access token."
 )
+
+
+def _resolve_token_user(request):
+    """
+    Resolve the caller strictly from the OAuth2 access token.
+
+    The X-Client-ID header is untrusted; if supplied it must match the client
+    that issued the token, otherwise the request is rejected. This prevents a
+    user with any valid token from reading another tenant's data by spoofing
+    the header.
+    """
+    header_client_id = request.headers.get("X-Client-ID")
+    token = getattr(request, "auth", None)
+    token_app = getattr(token, "application", None)
+
+    if header_client_id and token_app is not None:
+        if getattr(token_app, "client_id", None) != header_client_id:
+            return None, Response(
+                {"error": "Client mismatch for this token"},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+    if getattr(request, "user", None) and request.user.is_authenticated:
+        return request.user, None
+
+    # Fallback: client-credentials token has no bound user; use the app owner.
+    if token_app is not None and getattr(token_app, "user", None):
+        return token_app.user, None
+
+    return None, Response(
+        {"error": "User-bound access token required"},
+        status=status.HTTP_403_FORBIDDEN,
+    )
 
 class PlatformInsightsView(APIView):
     authentication_classes = [OAuth2Authentication]
@@ -42,8 +75,9 @@ class PlatformInsightsView(APIView):
         },
     )
     def get(self, request):
-        client_id = request.headers.get("X-Client-ID")
-        user = get_user_from_client_id(client_id)
+        user, err = _resolve_token_user(request)
+        if err is not None:
+            return err
 
         async_flag = request.query_params.get("async", "false").lower() == "true"
 

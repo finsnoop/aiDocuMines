@@ -12,7 +12,7 @@ class Migration(migrations.Migration):
     atomic = False  # required for CONCURRENTLY
 
     dependencies = [
-        ("core", "0011_matter_services"),
+        ("core", "0013_matter_services"),
     ]
 
     operations = [

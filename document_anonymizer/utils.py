@@ -10,6 +10,18 @@ from presidio_analyzer import AnalyzerEngine
 from presidio_anonymizer import AnonymizerEngine
 from unstructured.partition.pdf import partition_pdf
 from document_anonymizer.models import Anonymize
+
+from document_anonymizer.pii_taxonomy import (
+    NON_PII_ENTITY_TYPES,
+    PII_SCORE_THRESHOLD,
+    SPACY_PII_LABELS,
+    canonical_label,
+    collect_pii_entries,
+    is_plausible_pii_value,
+    label_of_mask,
+    score_entries,
+    weight_for_label,
+)
 import sys
 from django.db.models import Avg, Count, Q
 from document_anonymizer.models import AnonymizationRun, Anonymize, DeAnonymize
@@ -43,6 +55,7 @@ class AnonymizationService:
 
         self._spacy_model = os.getenv("SPACY_MODEL", "en_core_web_lg")
         self.nlp = None
+        self._presidio_entities = None
 
         if _skip_heavy_init():
             logger.info(f"⏭️ Skipping spaCy load (SPACY_MODEL={self._spacy_model}) due to build/management command.")
@@ -89,8 +102,10 @@ class AnonymizationService:
             elif file_path.lower().endswith(".docx"):
                 return self.extract_text_from_docx(file_path), [], []
             else:
-                logger.warning(f"⚠️ Unsupported file type: {file_path}")
-                return None, [], []
+                # Fallback: try reading as plain UTF-8 text for any text-based format
+                logger.info(f"📄 Attempting plain-text read for: {file_path}")
+                with open(file_path, "r", encoding="utf-8") as f:
+                    return f.read(), [], []
         except Exception as e:
             logger.error(f"❌ Failed to extract text from {file_path}: {e}")
             return None, [], []
@@ -108,8 +123,11 @@ class AnonymizationService:
                 from unstructured.partition.docx import partition_docx
                 elements = partition_docx(filename=file_path)
             else:
-                logger.warning(f"⚠️ Unsupported file type for structured extraction: {file_path}")
-                return None, [], []
+                # Fallback: treat as plain text for any text-based format
+                logger.info(f"📄 Attempting plain-text structured read for: {file_path}")
+                with open(file_path, "r", encoding="utf-8") as f:
+                    text = f.read()
+                return text, [], [{"element_id": "raw-0", "type": "Text", "text": text}]
 
             structured_text = "\n\n".join(el.text.strip() for el in elements if el.text and el.text.strip())
             return structured_text, elements, [el.to_dict() for el in elements]
@@ -137,46 +155,114 @@ class AnonymizationService:
             logger.error(f"❌ DOCX text extraction failed: {e}")
             return None
     
+    def _get_presidio_pii_entities(self):
+        """
+        Presidio allow-list: every supported entity EXCEPT known non-PII types
+        (dates, quantities, numbering...). Computed once per service instance.
+        """
+        if self._presidio_entities is None:
+            supported = set(self.analyzer.get_supported_entities())
+            self._presidio_entities = sorted(supported - NON_PII_ENTITY_TYPES)
+        return self._presidio_entities
+
     def anonymize_text(self, text):
         """
         Anonymizes the input text using both Presidio and SpaCy engines.
+
+        PII policy (GDPR Art.4 / NIST SP 800-122):
+          - Presidio runs with a PII-only entity allow-list and a confidence
+            floor, so weak regex hits ('R2' as a driver license) are dropped.
+          - spaCy NER runs on the ORIGINAL text restricted to person/org/
+            location labels, so Presidio masks are never re-detected as
+            entities and numbering/dates/percentages are never masked.
+          - ORG is deliberately kept (business-context redaction).
         Reuses shared engine instances for performance and memory efficiency.
         """
         logger.info("🔄 Running Presidio anonymization...")
 
         self._ensure_nlp_loaded()
 
-        presidio_results = self.analyzer.analyze(text=text, entities=[], language="en")
-        presidio_map = {}
-        presidio_counter = {}
-        presidio_masked = text
-    
+        candidates = []
+
+        # ---- Presidio pass on the ORIGINAL text --------------------------
+        try:
+            presidio_results = self.analyzer.analyze(
+                text=text,
+                entities=self._get_presidio_pii_entities(),
+                language="en",
+                score_threshold=PII_SCORE_THRESHOLD,
+            )
+        except TypeError:
+            # Older presidio versions without score_threshold kwarg.
+            presidio_results = [
+                r for r in self.analyzer.analyze(
+                    text=text,
+                    entities=self._get_presidio_pii_entities(),
+                    language="en",
+                )
+                if r.score >= PII_SCORE_THRESHOLD
+            ]
+
         for result in presidio_results:
-            entity_type = result.entity_type
-            presidio_counter[entity_type] = presidio_counter.get(entity_type, 0) + 1
-            mask = f"{entity_type}_MASKED_{presidio_counter[entity_type]}"
             value = text[result.start:result.end].strip()
-            presidio_map[mask] = value
-            presidio_masked = re.sub(r'\b' + re.escape(value) + r'\b', mask, presidio_masked, 1)
-    
-        logger.info("🔄 Running SpaCy anonymization...")
+            if not is_plausible_pii_value(value, result.entity_type):
+                continue
+            candidates.append({
+                "start": result.start,
+                "end": result.end,
+                "label": canonical_label(result.entity_type),
+                "value": value,
+                "engine": "presidio",
+                "rank": 0,
+            })
+
+        # ---- spaCy pass on the ORIGINAL text -----------------------------
+        if self.nlp is not None:
+            logger.info("🔄 Running SpaCy anonymization...")
+            doc = self.nlp(text)
+            for ent in doc.ents:
+                if ent.label_ not in SPACY_PII_LABELS:
+                    continue
+                value = ent.text.strip()
+                if not is_plausible_pii_value(value, ent.label_):
+                    continue
+                candidates.append({
+                    "start": ent.start_char,
+                    "end": ent.end_char,
+                    "label": canonical_label(ent.label_),
+                    "value": value,
+                    "engine": "spacy",
+                    "rank": 1,
+                })
+
+        # ---- resolve overlaps: earliest span wins; engine rank/length break ties
+        candidates.sort(key=lambda c: (c["start"], c["rank"], -(c["end"] - c["start"])))
+        spans = []
+        last_end = -1
+        for c in candidates:
+            if c["start"] >= last_end:
+                spans.append(c)
+                last_end = c["end"]
+
+        # ---- apply masks right-to-left to keep offsets valid --------------
+        counters = {}
+        presidio_map = {}
         spacy_map = {}
-        spacy_counter = {}
-        final_masked = presidio_masked
-        doc = self.nlp(presidio_masked)
-    
-        for ent in doc.ents:
-            entity_type = ent.label_
-            spacy_counter[entity_type] = spacy_counter.get(entity_type, 0) + 1
-            mask = f"{entity_type}_MASKED_{spacy_counter[entity_type]}"
-            spacy_map[mask] = ent.text.strip()
-            final_masked = re.sub(r'\b' + re.escape(ent.text.strip()) + r'\b', mask, final_masked, 1)
-    
+        final_masked = text
+
+        for span in sorted(spans, key=lambda s: s["start"], reverse=True):
+            label = span["label"]
+            counters[label] = counters.get(label, 0) + 1
+            mask = f"{label}_MASKED_{counters[label]}"
+            final_masked = final_masked[:span["start"]] + mask + final_masked[span["end"]:]
+            target = presidio_map if span["engine"] == "presidio" else spacy_map
+            target[mask] = span["value"]
+
         combined_map = {**spacy_map, **presidio_map}
-    
+
         logger.info(f"✅ Presidio map: {json.dumps(presidio_map, indent=2)}")
         logger.info(f"✅ SpaCy map: {json.dumps(spacy_map, indent=2)}")
-    
+
         return final_masked, combined_map, presidio_map, spacy_map
 
 
@@ -209,165 +295,30 @@ class AnonymizationService:
 
     def compute_risk_score(self, original_text: str, presidio_map: dict, spacy_map: dict):
         """
-        Mask-aware, size-fair PII risk scoring.
+        Realistic PII risk scoring.
 
-        Key ideas:
-          - Ignore spaCy hits whose *value* contains Presidio masks (e.g. "..._MASKED_7")
-            to avoid label pollution like ORG=“US_DRIVER_LICENSE_MASKED_2...”.
-          - De-dupe by (normalized value, label) across engines.
-          - Count per-label with diminishing returns (1st hit counts most, repeats count less).
-          - Normalize by document length (per ~1k tokens) with a floor so short docs aren’t over-penalized.
-          - Map to 0..100 via a logistic curve, so typical docs don’t hit 100.
+        Only genuine PII is counted (GDPR Art.4 / NIST SP 800-122):
+          - non-PII labels (dates, numbering, percentages, products, laws...)
+            are excluded entirely;
+          - junk/mask-polluted values are filtered out;
+          - each distinct value counts ONCE even when tagged by both engines
+            or under several ID labels ('237971098' = one identifier, not three).
 
         Returns:
           {
-            "risk_score": float,
+            "risk_score": float,                          # 0..100 logistic
             "risk_level": "Ok" | "Low" | "Medium" | "High",
-            "breakdown": { label: count }
+            "breakdown": { label: count },                # de-duplicated true PII
+            "contributions": { label: raw_contribution }
           }
         """
-        import re
-        import math
-
         text = (original_text or "").strip()
-        # token count (fallback 1 to avoid div-by-zero)
-        doc_tokens = max(1, len(re.findall(r"\w+", text)))
-        # size normalization (per ~1k tokens) but don't penalize tiny docs too much
-        tokens_k = max(0.5, doc_tokens / 1000.0)
-
-        # ---------- helpers -------------------------------------------------------
-        def label_of(mask_key: str) -> str:
-            return (mask_key or "").split("_MASKED_")[0].upper().strip()
-
-        def norm_val(v: str) -> str:
-            v = (v or "").strip()
-            v = re.sub(r"\s+", " ", v)
-            return v
-
-        # unify common spaCy aliases
-        SPACY_ALIASES = {"PER": "PERSON", "MISC": "MISC", "LOC": "LOC", "ORG": "ORG"}
-        def canon_spacy_label(lbl: str) -> str:
-            L = (lbl or "").upper().strip()
-            return SPACY_ALIASES.get(L, L)
-
-        # ---------- severity taxonomy (sync with risk_weight_for_label) -----------
-        HIGH = {
-            "CREDIT_CARD","US_BANK_NUMBER","IBAN_CODE","CRYPTO",
-            "US_SSN","US_ITIN","US_PASSPORT","US_DRIVER_LICENSE",
-            "UK_NINO","UK_NHS",
-            "ES_NIF","ES_NIE",
-            "IT_FISCAL_CODE","IT_DRIVER_LICENSE","IT_VAT_CODE","IT_PASSPORT","IT_IDENTITY_CARD",
-            "PL_PESEL",
-            "SG_NRIC_FIN","SG_UEN",
-            "AU_ABN","AU_ACN","AU_TFN","AU_MEDICARE",
-            "IN_PAN","IN_AADHAAR","IN_VEHICLE_REGISTRATION","IN_VOTER","IN_PASSPORT",
-            "FI_PERSONAL_IDENTITY_CODE","KR_RRN","TH_TNIN",
-        }
-        MED_HIGH = {"MEDICAL_LICENSE","UK_NHS","AU_MEDICARE","SG_UEN","AU_ABN","AU_ACN","IT_VAT_CODE"}
-        MED = {"EMAIL_ADDRESS","PHONE_NUMBER","IP_ADDRESS","URL","NRP","NORP"}
-        LOW = {
-            "PERSON","GPE","LOC","ORG","FAC","PRODUCT","EVENT","WORK_OF_ART","LAW","LANGUAGE",
-            "DATE","TIME","PERCENT","MONEY","QUANTITY","ORDINAL","CARDINAL","MISC","LOCATION","DATE_TIME"
-        }
-
-        def weight_for(label: str) -> float:
-            L = label.upper().strip()
-            if L in HIGH: return 8.0
-            if L in MED_HIGH: return 6.0
-            if L in MED: return 4.5
-            if L in LOW: return 2.5
-            # Fallback heuristics for unknown/custom labels
-            if re.search(r"(SSN|PASSPORT|DRIVER|LICENSE|NINO|NRIC|PESEL|TFN|AADHAAR|RRN|TNIN|IBAN|BANK|ACCOUNT|CREDIT|CARD|CRYPTO)", L):
-                return 7.0
-            if re.search(r"(EMAIL|PHONE|MOBILE|TEL|IP|URL|DOMAIN)", L):
-                return 4.0
-            if re.search(r"(DATE|TIME|MONEY|PERCENT|QUANTITY|ORDINAL|CARDINAL)", L):
-                return 2.0
-            return 3.0
-
-        def group_k_for(label: str) -> float:
-            """
-            Diminishing-returns 'k' per severity group.
-            Smaller k => saturates faster (first hit counts most).
-            """
-            w = weight_for(label)
-            if w >= 8.0:  # HIGH
-                return 1.0
-            if w >= 6.0:  # MED_HIGH
-                return 1.5
-            if w >= 4.5:  # MED
-                return 2.0
-            return 3.0     # LOW/other
-
-        # ---------- mask-aware ingestion -----------------------------------------
-        MASK_TOKEN_RE = re.compile(r"\b([A-Z][A-Z_]+)_MASKED_\d+\b")
-
-        merged = {}  # key=(value_norm, label) -> entry
-
-        def add_entry(v_norm: str, label: str):
-            key = (v_norm, label)
-            e = merged.setdefault(key, {
-                "value": v_norm,
-                "label": label,
-                "count": 0,
-                "weight": weight_for(label),
-            })
-            e["count"] += 1
-
-        # 1) Presidio: always count original values with their own labels
-        for mask, val in (presidio_map or {}).items():
-            L = label_of(mask)
-            v_norm = norm_val(val)
-            if not v_norm:
-                continue
-            add_entry(v_norm, L)
-
-        # 2) spaCy: ignore any hit whose 'value' contains Presidio mask tokens
-        for mask, val in (spacy_map or {}).items():
-            raw_v = norm_val(val)
-            if not raw_v:
-                continue
-            # If spaCy value includes any *_MASKED_* tokens, it's derived from Presidio replacement -> skip
-            if "_MASKED_" in raw_v:
-                continue
-            L = canon_spacy_label(label_of(mask))
-            add_entry(raw_v, L)
-
-        # ---------- aggregate per label with diminishing returns ------------------
-        label_counts = {}
-        for e in merged.values():
-            label_counts[e["label"]] = label_counts.get(e["label"], 0) + e["count"]
-
-        # Diminishing-returns curve per label: f(n) = 1 - exp(-n/k)
-        # Then normalize by tokens_k (≈ per 1k tokens) and weight by severity.
-        raw = 0.0
-        for label, n in label_counts.items():
-            k = group_k_for(label)
-            diminishing = 1.0 - math.exp(-float(n) / k)
-            raw += (weight_for(label) * diminishing) / tokens_k
-
-        # ---------- logistic map to 0..100 (calibrated) --------------------------
-        # Tunables (alpha: steepness, beta: mid-point). Adjust if you want stricter/looser scoring.
-        alpha = 0.85
-        beta = 4.0
-        risk_score = 100.0 / (1.0 + math.exp(-alpha * (raw - beta)))
-        risk_score = round(risk_score, 2)
-
-        if   risk_score >= 70.0: risk_level = "High"
-        elif risk_score >= 35.0: risk_level = "Medium"
-        elif risk_score >  0.0:  risk_level = "Low"
-        else:                    risk_level = "Ok"
-
-        # breakdown = actual counted occurrences per canonical label
-        breakdown = dict(sorted(label_counts.items(), key=lambda kv: (-kv[1], kv[0])))
-
-        return {
-            "risk_score": risk_score,
-            "risk_level": risk_level,
-            "breakdown": breakdown,
-            # (Optional) diagnostics you can log if needed:
-            # "doc_tokens": doc_tokens, "tokens_k": tokens_k, "raw": round(raw, 3)
-        }
+        doc_tokens = len(re.findall(r"\w+", text))
+        entries = collect_pii_entries(
+            presidio_map=presidio_map,
+            spacy_map=spacy_map,
+        )
+        return score_entries(entries, doc_tokens=doc_tokens)
 
 
 def generate_anonymized_html(masked_text, entity_mapping):
@@ -572,16 +523,16 @@ def compute_global_anonymization_stats(
     entity_type_breakdown = {}
 
     for record in queryset:
-        combined_map = {}
-        if record.presidio_masking_map:
-            combined_map.update(record.presidio_masking_map)
-        if record.spacy_masking_map:
-            combined_map.update(record.spacy_masking_map)
+        # De-duplicated, PII-only counting (same policy as the risk scorer)
+        entries = collect_pii_entries(
+            presidio_map=record.presidio_masking_map,
+            spacy_map=record.spacy_masking_map,
+        )
 
         entity_counts = {}
-        for mask, original in combined_map.items():
-            entity_type = mask.split("_MASKED_")[0]
-            entity_counts[entity_type] = entity_counts.get(entity_type, 0) + 1
+        for entry in entries.values():
+            label = entry["label"]
+            entity_counts[label] = entity_counts.get(label, 0) + entry["count"]
 
         file_entity_total = sum(entity_counts.values())
         total_entities_anonymized += file_entity_total
@@ -645,6 +596,47 @@ def calculate_anonymization_insights(user):
     )
     insights["deanonymization_count"] = deanonymize_count
 
+    # Documents bucketed by risk level.
+    # bucket_counts: exact totals computed DB-side (scales to any corpus size).
+    # risk_buckets: small preview list per bucket so the UI can render
+    # immediately; full lists are fetched on demand via the paginated
+    # /anonymizer/risk-bucket-documents/ endpoint.
+    risk_levels = ["High", "Medium", "Low", "Ok"]
+    base_qs = Anonymize.objects.filter(
+        original_file__user=user, is_active=True, status="Completed"
+    )
+    counts_rows = (
+        base_qs.values("risk_level").annotate(count=Count("id"))
+    )
+    raw_counts = {r["risk_level"]: r["count"] for r in counts_rows}
+    insights["bucket_counts"] = {
+        level: int(raw_counts.get(level, 0)) for level in risk_levels
+    }
+
+    risk_buckets = {level: [] for level in risk_levels}
+    for row in (
+        base_qs.values(
+            "id",
+            "original_file_id",
+            "original_file__filename",
+            "risk_score",
+            "risk_level",
+            "updated_at",
+        ).order_by("-risk_score")[:20]
+    ):
+        level = row.get("risk_level") if row.get("risk_level") in risk_buckets else "Ok"
+        if len(risk_buckets[level]) >= 5:
+            continue
+        risk_buckets[level].append({
+            "anonymize_id": str(row["id"]),
+            "file_id": row["original_file_id"],
+            "filename": row["original_file__filename"],
+            "risk_score": row["risk_score"],
+            "risk_level": level,
+            "updated_at": row["updated_at"],
+        })
+    insights["risk_buckets"] = risk_buckets
+
     # Aggregate entity stats across all anonymized files for this user
     anonymize_records = Anonymize.objects.filter(original_file__user=user, is_active=True)
     files_with_entities = 0
@@ -653,16 +645,16 @@ def calculate_anonymization_insights(user):
     entity_type_breakdown = {}
 
     for record in anonymize_records:
-        combined_map = {}
-        if record.presidio_masking_map:
-            combined_map.update(record.presidio_masking_map)
-        if record.spacy_masking_map:
-            combined_map.update(record.spacy_masking_map)
+        # De-duplicated, PII-only counting (same policy as the risk scorer)
+        entries = collect_pii_entries(
+            presidio_map=record.presidio_masking_map,
+            spacy_map=record.spacy_masking_map,
+        )
 
         entity_counts = {}
-        for mask, original in combined_map.items():
-            entity_type = mask.split("_MASKED_")[0]
-            entity_counts[entity_type] = entity_counts.get(entity_type, 0) + 1
+        for entry in entries.values():
+            label = entry["label"]
+            entity_counts[label] = entity_counts.get(label, 0) + entry["count"]
 
         file_entity_total = sum(entity_counts.values())
         total_entities_anonymized += file_entity_total
@@ -720,52 +712,10 @@ def list_supported_entities_runtime():
 # --- Optional: expose the risk weights the scorer uses (handy for docs/UI) ---
 def risk_weight_for_label(label: str) -> float:
     """
-    Keep this logic in sync with AnonymizationService.compute_risk_score().
     Returns the numeric weight used for a given (possibly non-canonical) label.
+    Kept in sync automatically via the shared pii_taxonomy policy module.
     """
-    import re
-    L = (label or "").upper().strip()
-    # quick aliasing
-    ALIASES = {"PER": "PERSON", "MISC": "MISC", "LOC": "LOC", "ORG": "ORG"}
-    L = ALIASES.get(L, L)
-
-    HIGH = {
-        # financial & strong IDs
-        "CREDIT_CARD","US_BANK_NUMBER","IBAN_CODE","CRYPTO",
-        # national IDs / passports / drivers / tax etc. (from your list)
-        "US_SSN","US_ITIN","US_PASSPORT","US_DRIVER_LICENSE",
-        "UK_NINO","UK_NHS",
-        "ES_NIF","ES_NIE",
-        "IT_FISCAL_CODE","IT_DRIVER_LICENSE","IT_VAT_CODE","IT_PASSPORT","IT_IDENTITY_CARD",
-        "PL_PESEL",
-        "SG_NRIC_FIN","SG_UEN",
-        "AU_ABN","AU_ACN","AU_TFN","AU_MEDICARE",
-        "IN_PAN","IN_AADHAAR","IN_VEHICLE_REGISTRATION","IN_VOTER","IN_PASSPORT",
-        "FI_PERSONAL_IDENTITY_CODE",
-        "KR_RRN",
-        "TH_TNIN",
-    }
-    MED_HIGH = {"MEDICAL_LICENSE","UK_NHS","AU_MEDICARE","SG_UEN","AU_ABN","AU_ACN","IT_VAT_CODE"}
-    MED = {"EMAIL_ADDRESS","PHONE_NUMBER","IP_ADDRESS","URL","NRP","NORP"}
-    LOW = {
-        "PERSON","GPE","LOC","ORG","FAC","PRODUCT","EVENT","WORK_OF_ART",
-        "LAW","LANGUAGE","DATE","TIME","PERCENT","MONEY","QUANTITY",
-        "ORDINAL","CARDINAL","MISC","LOCATION","DATE_TIME"
-    }
-
-    if L in HIGH: return 8.0
-    if L in MED_HIGH: return 6.0
-    if L in MED: return 4.5
-    if L in LOW: return 2.5
-
-    # fallbacks for unknown/custom labels
-    if re.search(r"(SSN|PASSPORT|DRIVER|LICENSE|NINO|NRIC|PESEL|TFN|AADHAAR|RRN|TNIN|IBAN|BANK|ACCOUNT|CREDIT|CARD|CRYPTO)", L):
-        return 7.0
-    if re.search(r"(EMAIL|PHONE|MOBILE|TEL|IP|URL|DOMAIN)", L):
-        return 4.0
-    if re.search(r"(DATE|TIME|MONEY|PERCENT|QUANTITY|ORDINAL|CARDINAL)", L):
-        return 2.0
-    return 3.0
+    return weight_for_label(label)
 
 def list_supported_entities_with_weights():
     """

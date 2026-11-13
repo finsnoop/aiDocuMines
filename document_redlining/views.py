@@ -9,7 +9,8 @@ from oauth2_provider.models import Application
 from core.models import File
 from document_redlining.models import RedliningRun, RedliningResult
 from document_redlining.tasks import perform_redlining_task
-from oauth2_provider.contrib.rest_framework import OAuth2Authentication, TokenHasReadWriteScope
+from oauth2_provider.contrib.rest_framework import TokenHasReadWriteScope
+from custom_authentication.authentication import ClientBoundOAuth2Authentication as OAuth2Authentication
 from drf_yasg.utils import swagger_auto_schema
 from drf_yasg import openapi
 import logging
@@ -145,9 +146,7 @@ class CheckRedliningStatusAPIView(APIView):
 
         if results and run.status == "Completed":
             response_data["result_id"] = str(results.id)
-            response_data["diff_output_path"] = results.diff_output_path
-            response_data["redline_docx_path"] = results.redline_docx_path
-            response_data["redline_pdf_path"] = results.redline_pdf_path
+            response_data["diff_html"] = results.diff_html
             response_data["comparison_stats"] = results.comparison_stats
 
         status_code = status.HTTP_200_OK if run.status == "Completed" else status.HTTP_202_ACCEPTED
@@ -205,17 +204,6 @@ class DownloadRedliningResultAPIView(APIView):
                 response["Content-Disposition"] = f'attachment; filename="{os.path.basename(path)}"'
                 return response
             return Response({"error": "PDF redline output not available."}, status=status.HTTP_404_NOT_FOUND)
-
-        if result.diff_output_path and os.path.exists(result.diff_output_path):
-            return Response(
-                {
-                    "file_id": file_id,
-                    "diff_output_path": result.diff_output_path,
-                    "diff_html": result.diff_html,
-                    "status": "Ready for download",
-                },
-                status=status.HTTP_200_OK
-            )
 
         if result.diff_html:
             return Response(

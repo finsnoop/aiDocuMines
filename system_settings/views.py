@@ -5,15 +5,16 @@ from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 from rest_framework import status
 from django.shortcuts import get_object_or_404
-from oauth2_provider.contrib.rest_framework import OAuth2Authentication, TokenHasReadWriteScope
+from oauth2_provider.contrib.rest_framework import TokenHasReadWriteScope
+from custom_authentication.authentication import ClientBoundOAuth2Authentication as OAuth2Authentication
 from custom_authentication.permissions import IsClientOrAdminOrSuperUser
 from oauth2_provider.models import Application
 from drf_yasg.utils import swagger_auto_schema
 from drf_yasg import openapi
 from django.contrib.auth import get_user_model
 
-from .models import SystemSettings, SystemSettingsAuditTrail
-from .serializers import SystemSettingsSerializer
+from .models import SystemSettings, SystemSettingsAuditTrail, PlatformGlobalSettings
+from .serializers import SystemSettingsSerializer, PlatformGlobalSettingsSerializer
 from .utils import get_default_settings_schema, get_default_settings_values
 
 from custom_authentication.models import Client
@@ -162,4 +163,74 @@ class SystemSettingsSchemaView(APIView):
     def get(self, request):
         schema = get_default_settings_schema()
         return Response({"schema": schema})
+
+
+# ============================================================================
+# Platform Global Settings (superadmin only — singleton)
+# ============================================================================
+
+class PlatformGlobalSettingsView(APIView):
+    """
+    GET  → read the singleton row (creates it on first access)
+    POST → update platform-wide defaults (superadmin only)
+    """
+    authentication_classes = [OAuth2Authentication]
+    permission_classes = [TokenHasReadWriteScope]
+
+    def get(self, request):
+        # Only superadmins may read platform-global settings
+        if not self._is_superadmin(request):
+            return Response({"error": "SuperAdmin access required"}, status=status.HTTP_403_FORBIDDEN)
+
+        settings_obj = PlatformGlobalSettings.load()
+        serializer = PlatformGlobalSettingsSerializer(settings_obj)
+        return Response(serializer.data)
+
+    def post(self, request):
+        if not self._is_superadmin(request):
+            return Response({"error": "SuperAdmin access required"}, status=status.HTTP_403_FORBIDDEN)
+
+        settings_obj = PlatformGlobalSettings.load()
+        serializer = PlatformGlobalSettingsSerializer(settings_obj, data=request.data, partial=True)
+        if serializer.is_valid():
+            serializer.save()
+
+            SystemSettingsAuditTrail.objects.create(
+                client=None,
+                run=None,
+                changes={"platform_global": serializer.validated_data}
+            )
+            return Response({"message": "Platform settings saved", "settings": serializer.data})
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+    @staticmethod
+    def _is_superadmin(request) -> bool:
+        user = getattr(request, 'user', None)
+        if not user or not user.is_authenticated:
+            return False
+        if getattr(user, 'is_superuser', False):
+            return True
+        from custom_authentication.rbac import get_user_roles
+        return 'SuperAdmin' in get_user_roles(user)
+
+
+class PlatformGlobalSettingsPublicView(APIView):
+    """
+    Public read-only endpoint — returns the platform-global LLM config
+    so the frontend can bootstrap its default llm_config before the user
+    has made a selection.
+
+    No authentication required (safe: only exposes non-secret defaults).
+    """
+    permission_classes = []
+
+    def get(self, request):
+        settings_obj = PlatformGlobalSettings.load()
+        return Response({
+            "default_llm_provider": settings_obj.default_llm_provider,
+            "default_llm_model": settings_obj.default_llm_model,
+            "default_llm_temperature": settings_obj.default_llm_temperature,
+            "default_llm_max_tokens": settings_obj.default_llm_max_tokens,
+            "site_name": settings_obj.site_name,
+        })
 

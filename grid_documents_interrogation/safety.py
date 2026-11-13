@@ -173,7 +173,7 @@ def checked_url(raw) -> URL:
 
 
 def url_for_request(request, data) -> URL:
-    """The vetted database URL for a request: a saved connection (`connection_id`) or a connection string."""
+    """The vetted database URL for a request's saved connection (`connection_id`, owned by the caller)."""
     from .models import DatabaseConnection
 
     conn_id = data.get("connection_id")
@@ -183,10 +183,9 @@ def url_for_request(request, data) -> URL:
         except (DatabaseConnection.DoesNotExist, TypeError, ValueError):
             raise UnsafeTarget("That saved connection was not found.")
         return checked_url(conn.build_connection_uri())
-    raw = data.get("connection_string")
-    if not raw:
-        raise UnsafeTarget("Choose a saved connection or enter a connection string.")
-    return checked_url(raw)
+    if data.get("connection_string"):
+        raise UnsafeTarget("Raw connection strings are not accepted. Save the connection first, then choose it.")
+    raise UnsafeTarget("Choose a saved connection.")
 
 
 def open_engine(url):

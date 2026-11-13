@@ -77,6 +77,11 @@ class DocuChatTests(TestCase):
         self.assertEqual(self.c.delete(f"{API}/topics/{t.id}/").status_code, 404)
 
     # ── Questions ───────────────────────────────────────────────────────────
+    def test_sensitive_columns_are_never_listed(self):
+        from grid_documents_interrogation.db_query_tools import public_columns
+        self.assertEqual(public_columns(["id", "email", "password_hash", "api_key", "AccessToken", "name"]),
+                         ["id", "email", "name"])
+
     def test_raw_query_create_is_refused(self):
         t = Topic.objects.create(name="t", project_id="P", service_id="S", user=self.alice)
         r = self.c.post(f"{API}/queries/", {"topic": t.id, "file": self.eve_doc.id, "query_text": "q",
@@ -132,24 +137,47 @@ class DocuChatTests(TestCase):
             tables.assert_not_called()
             self.assertNotIn("u:p", r.content.decode())
 
+    def _saved(self, host="db.example.com", owner=None, dns=public_dns):
+        with mock.patch("socket.getaddrinfo", dns):
+            return DatabaseConnection.objects.create(
+                name="db", database_type="postgres", host=host, port=5432, username="u", password="secret",
+                database_name="x", owner=owner or self.alice)
+
+    def test_raw_connection_strings_are_refused(self):
+        with mock.patch("grid_documents_interrogation.db_meta_views.fetch_tables") as tables:
+            r = self._post("db/tables/", {"connection_string": "postgresql://u:p@db.example.com/x"})
+        self.assertEqual(r.status_code, 400)
+        self.assertIn("Save the connection first", r.json()["error"])
+        tables.assert_not_called()
+
     @override_settings(DATABASES={"default": {"ENGINE": "django.db.backends.sqlite3", "NAME": ":memory:",
                                               "HOST": "platform-db"}})
     def test_platform_database_host_is_refused_even_if_public(self):
         with mock.patch("socket.getaddrinfo", public_dns):
-            r = self._post("db/test-connection/", {"connection_string": "postgresql://a:b@platform-db/aidoc"})
+            r = self._post("connections/", {"name": "x", "database_type": "postgres", "host": "platform-db",
+                                            "port": 5432, "username": "a", "password": "b", "database_name": "aidoc"})
         self.assertEqual(r.status_code, 400)
-        self.assertIn("platform", r.json()["error"])
+        self.assertIn("platform", str(r.json()["host"]))
+
+    def test_saved_connection_is_rechecked_when_used(self):
+        conn = self._saved()   # public when saved...
+        with mock.patch("socket.getaddrinfo", return_value=addr("10.0.0.9")), \
+                mock.patch("grid_documents_interrogation.db_meta_views.fetch_tables") as tables:
+            r = self._post("db/tables/", {"connection_id": conn.id})   # ...internal when used
+        self.assertEqual(r.status_code, 400)
+        tables.assert_not_called()
 
     def test_public_database_is_allowed_and_errors_are_generic(self):
+        conn = self._saved()
         with mock.patch("socket.getaddrinfo", public_dns), \
                 mock.patch("grid_documents_interrogation.db_meta_views.fetch_tables", return_value=["users"]):
-            r = self._post("db/tables/", {"connection_string": "postgresql://u:secret@db.example.com/x"})
+            r = self._post("db/tables/", {"connection_id": conn.id})
         self.assertEqual(r.status_code, 200, r.content)
         self.assertEqual(r.json()["tables"], ["users"])
         with mock.patch("socket.getaddrinfo", public_dns), \
                 mock.patch("grid_documents_interrogation.db_meta_views.fetch_tables",
                            side_effect=RuntimeError("FATAL password=secret host 10.1.1.1")):
-            r = self._post("db/tables/", {"connection_string": "postgresql://u:secret@db.example.com/x"})
+            r = self._post("db/tables/", {"connection_id": conn.id})
         self.assertEqual(r.status_code, 400)
         self.assertNotIn("secret", r.content.decode())
 
@@ -179,9 +207,11 @@ class DocuChatTests(TestCase):
 
     @mock.patch.dict("os.environ", {"DB_CONNECT_ALLOWED_NETWORKS": "10.20.0.0/16"})
     def test_operator_can_allow_an_internal_network(self):
-        with mock.patch("socket.getaddrinfo", return_value=addr("10.20.1.9")), \
+        dns = lambda *a, **k: addr("10.20.1.9")
+        conn = self._saved(host="warehouse", dns=dns)
+        with mock.patch("socket.getaddrinfo", dns), \
                 mock.patch("grid_documents_interrogation.db_meta_views.fetch_tables", return_value=[]):
-            self.assertEqual(self._post("db/tables/", {"connection_string": "postgresql://u:p@warehouse/x"}).status_code, 200)
+            self.assertEqual(self._post("db/tables/", {"connection_id": conn.id}).status_code, 200)
 
     @mock.patch.dict("os.environ", {"ASSISTANT_DB_ENABLED": "false"})
     def test_database_tools_can_be_switched_off(self):

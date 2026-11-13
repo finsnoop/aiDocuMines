@@ -5,7 +5,7 @@ from .views import (
     HomeDashAllView,
     HomeDashSectionView,
     HomeDashSnapshotView,
-    # Optional extras – include only if you implemented them in views.py
+    # Optional extras – only include if you implemented them in views.py
     HomeDashCardsView,
     HomeDashTimeSeriesView,
     HomeDashTopFilesView,

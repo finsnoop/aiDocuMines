@@ -101,16 +101,16 @@ class IsAdminOrSuperUser(HasAnyRole):
     roles = ['admin', 'superuser']
 
 class IsClientOrAdminOrManager(HasAnyRole):
-    roles = ['group:Client', 'admin', 'group:Manager']
+    roles = ['group:Client', 'admin', 'group:Manager', 'group:SuperAdmin']
     
 class IsClientOrAdminOrManagerOrSuperUser(HasAnyRole):
-    roles = ['group:Client', 'admin', 'group:Manager', 'superuser']
+    roles = ['group:Client', 'admin', 'group:Manager', 'group:SuperAdmin', 'superuser']
     
 class IsClientOrAdminOrDeveloper(HasAnyRole):
-    roles = ['group:Client', 'admin', 'group:Developer']
+    roles = ['group:Client', 'admin', 'group:Developer', 'group:SuperAdmin']
     
 class IsClientOrAdminOrManagerOrDeveloper(HasAnyRole):
-    roles = ['group:Client', 'admin', 'group:Manager', 'group:Developer']
+    roles = ['group:Client', 'admin', 'group:Manager', 'group:Developer', 'group:SuperAdmin']
 
 class IsClientOrSuperUser(HasAnyRole):
     roles = ['group:Client', 'superuser']
@@ -125,19 +125,19 @@ class IsClientOrDeveloper(HasAnyRole):
 
 
 class IsClientOrAdminOrManager(HasAnyRole):
-    roles = ['group:Client', 'admin', 'group:Manager']
+    roles = ['group:Client', 'admin', 'group:Manager', 'group:SuperAdmin']
 
 
 class IsClientOrAdminOrDeveloper(HasAnyRole):
-    roles = ['group:Client', 'admin', 'group:Developer']
+    roles = ['group:Client', 'admin', 'group:Developer', 'group:SuperAdmin']
 
 
 class IsClientOrAdminOrManagerOrDeveloper(HasAnyRole):
-    roles = ['group:Client', 'admin', 'group:Manager', 'group:Developer']
+    roles = ['group:Client', 'admin', 'group:Manager', 'group:Developer', 'group:SuperAdmin']
 
 
 class IsClientOrAdminOrManagerOrDeveloperOrSuperUser(HasAnyRole):
-    roles = ['group:Client', 'admin', 'group:Manager', 'group:Developer', 'superuser']
+    roles = ['group:Client', 'admin', 'group:Manager', 'group:Developer', 'group:SuperAdmin', 'superuser']
 
 
 # --- 1. Guest Role ---
@@ -317,5 +317,7 @@ from .rbac import (
     ROLE_DEFINITIONS,
     get_role_permissions,
     get_permission_codenames,
+    get_user_roles,
+    get_user_role_permissions,
 )
 

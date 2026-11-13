@@ -5,11 +5,13 @@ from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
 from rest_framework.exceptions import PermissionDenied
+from django.db.models import Q
 from django.shortcuts import get_object_or_404
 from django.contrib.auth import get_user_model
 from django.http import FileResponse
 from oauth2_provider.models import Application
-from oauth2_provider.contrib.rest_framework import OAuth2Authentication, TokenHasReadWriteScope
+from oauth2_provider.contrib.rest_framework import TokenHasReadWriteScope
+from custom_authentication.authentication import ClientBoundOAuth2Authentication as OAuth2Authentication
 from drf_yasg.utils import swagger_auto_schema
 from drf_yasg import openapi
 from core.models import File
@@ -72,6 +74,37 @@ def get_user_from_client_id(client_id):
         return application.user
     except Application.DoesNotExist:
         return None
+
+
+def resolve_token_user(request):
+    """
+    Resolve the caller strictly from the OAuth2 access token.
+
+    The X-Client-ID header is untrusted; if supplied it must match the client
+    that issued the token, otherwise the request is rejected. Prevents reading
+    another tenant's data by spoofing the header with any valid token.
+    """
+    header_client_id = request.headers.get("X-Client-ID")
+    token = getattr(request, "auth", None)
+    token_app = getattr(token, "application", None)
+
+    if header_client_id and token_app is not None:
+        if getattr(token_app, "client_id", None) != header_client_id:
+            return None, Response(
+                {"error": "Client mismatch for this token"},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+    if getattr(request, "user", None) and request.user.is_authenticated:
+        return request.user, None
+
+    if token_app is not None and getattr(token_app, "user", None):
+        return token_app.user, None
+
+    return None, Response(
+        {"error": "User-bound access token required"},
+        status=status.HTTP_403_FORBIDDEN,
+    )
 
 
 
@@ -735,11 +768,9 @@ class AnonymizationInsightsView(APIView):
         }
     )
     def get(self, request):
-        client_id = request.headers.get("X-Client-ID")
-        user = get_user_from_client_id(client_id)
-
-        if not user:
-            return Response({"error": "Invalid client ID"}, status=status.HTTP_403_FORBIDDEN)
+        user, err = resolve_token_user(request)
+        if err is not None:
+            return err
 
         async_flag = request.query_params.get("async", "false").lower() == "true"
 
@@ -758,6 +789,98 @@ class AnonymizationInsightsView(APIView):
         return Response({
             "cached": False,
             "data": insights
+        }, status=status.HTTP_200_OK)
+
+
+class RiskBucketDocumentsView(APIView):
+    """
+    GET /api/v1/anonymizer/risk-bucket-documents/
+      ?level=High|Medium|Low|Ok
+      &page=1&page_size=10
+      &search=<filename substring>
+
+    Paginated, searchable listing of documents for one PII risk bucket.
+    Keeps the insights payload small while still exposing every record.
+    """
+    authentication_classes = [OAuth2Authentication]
+    permission_classes = [TokenHasReadWriteScope]
+
+    VALID_LEVELS = ("High", "Medium", "Low", "Ok")
+
+    @swagger_auto_schema(
+        operation_description="Paginated documents for a given risk bucket.",
+        tags=["Anonymization Insights"],
+        manual_parameters=[
+            client_id_param,
+            openapi.Parameter("level", openapi.IN_QUERY, type=openapi.TYPE_STRING, required=True),
+            openapi.Parameter("page", openapi.IN_QUERY, type=openapi.TYPE_INTEGER, required=False),
+            openapi.Parameter("page_size", openapi.IN_QUERY, type=openapi.TYPE_INTEGER, required=False),
+            openapi.Parameter("search", openapi.IN_QUERY, type=openapi.TYPE_STRING, required=False),
+        ],
+        responses={200: "Success"},
+    )
+    def get(self, request):
+        client_id = request.headers.get("X-Client-ID")
+        user = get_user_from_client_id(client_id)
+        if not user:
+            return Response({"error": "Invalid client ID"}, status=status.HTTP_403_FORBIDDEN)
+
+        level = (request.query_params.get("level") or "").strip()
+        if level not in self.VALID_LEVELS:
+            return Response(
+                {"error": f"level must be one of {list(self.VALID_LEVELS)}"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            page = max(1, int(request.query_params.get("page", 1)))
+        except (TypeError, ValueError):
+            page = 1
+        try:
+            page_size = min(max(1, int(request.query_params.get("page_size", 10))), 50)
+        except (TypeError, ValueError):
+            page_size = 10
+        search = (request.query_params.get("search") or "").strip()
+
+        qs = Anonymize.objects.filter(
+            original_file__user=user,
+            is_active=True,
+            status="Completed",
+        )
+        if level == "Ok":
+            qs = qs.filter(Q(risk_level="Ok") | ~Q(risk_level__in=self.VALID_LEVELS[:3]))
+        else:
+            qs = qs.filter(risk_level=level)
+        if search:
+            qs = qs.filter(original_file__filename__icontains=search)
+
+        total = qs.count()
+        total_pages = max(1, -(-total // page_size))
+        page = min(page, total_pages)
+        rows = (
+            qs.order_by("-risk_score", "-updated_at")
+            .values("id", "original_file_id", "original_file__filename",
+                    "risk_score", "risk_level", "updated_at")
+            [(page - 1) * page_size: page * page_size]
+        )
+
+        return Response({
+            "level": level,
+            "results": [
+                {
+                    "anonymize_id": str(r["id"]),
+                    "file_id": r["original_file_id"],
+                    "filename": r["original_file__filename"],
+                    "risk_score": r["risk_score"],
+                    "risk_level": r["risk_level"] or "Ok",
+                    "updated_at": r["updated_at"],
+                }
+                for r in rows
+            ],
+            "total": total,
+            "page": page,
+            "page_size": page_size,
+            "total_pages": total_pages,
         }, status=status.HTTP_200_OK)
 
 

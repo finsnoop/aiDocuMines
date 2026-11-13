@@ -102,25 +102,17 @@ class CustomUser(AbstractUser):
     two_factor_enabled = models.BooleanField(default=False)
     # roles = models.ManyToManyField('auth.Group', related_name="custom_auth_users", blank=True)  # Assuming you use Groups as roles
     
-    # Fix the conflicting related_name values
-    roles = models.ManyToManyField('auth.Group', related_name='custom_auth_roles', blank=True)  # Changed related_name
-    groups = models.ManyToManyField('auth.Group', related_name='custom_auth_groups', blank=True)  # Changed related_name
-    user_permissions = models.ManyToManyField('auth.Permission', related_name='custom_auth_users_permissions', blank=True)
-    
+    roles = models.ManyToManyField('auth.Group', related_name='custom_auth_roles', blank=True)
+    groups = models.ManyToManyField('auth.Group', related_name='custom_auth_users', blank=True)
+    user_permissions = models.ManyToManyField(
+        'auth.Permission',
+        related_name='custom_auth_users_permissions',
+        blank=True,
+    )
+
     last_document_edited = models.ForeignKey('Document', null=True, blank=True, on_delete=models.SET_NULL)
     user_preferences = models.JSONField(blank=True, null=True)
     notifications_enabled = models.BooleanField(default=True)
-
-    groups = models.ManyToManyField(
-        "auth.Group",
-        related_name="custom_auth_users",  
-        blank=True,
-    )
-    user_permissions = models.ManyToManyField(
-        "auth.Permission",
-        related_name="custom_auth_users_permissions",  
-        blank=True,
-    )
 
     USERNAME_FIELD = "email"
     REQUIRED_FIELDS = ["client"]
@@ -205,9 +197,10 @@ class AccountDeletionRequest(models.Model):
 
 
 class UserActivityLog(models.Model):
-    """Logs user actions such as login, logout, password changes, API key actions."""
-    
+    """Logs all user actions: auth, document ops, chat, sharing, etc."""
+
     EVENT_CHOICES = [
+        # Auth events
         ("LOGIN", "User logged in"),
         ("LOGOUT", "User logged out"),
         ("PASSWORD_RESET", "Password reset"),
@@ -216,6 +209,35 @@ class UserActivityLog(models.Model):
         ("ACCOUNT_DEACTIVATED", "Account deactivated"),
         ("ACCOUNT_REACTIVATED", "Account reactivated"),
         ("ACCOUNT_DELETION_REQUESTED", "Account deletion requested"),
+        # File / folder operations
+        ("FILE_UPLOADED", "File uploaded"),
+        ("FILE_DELETED", "File permanently deleted"),
+        ("FILE_TRASHED", "File moved to trash"),
+        ("FILE_RESTORED", "File restored from trash"),
+        ("FILE_RENAMED", "File renamed"),
+        ("FILE_DOWNLOADED", "File downloaded"),
+        ("FILE_PREVIEWED", "File previewed"),
+        ("FILE_DUPLICATED", "File duplicated"),
+        ("FOLDER_CREATED", "Folder created"),
+        ("FOLDER_DELETED", "Folder permanently deleted"),
+        ("FOLDER_TRASHED", "Folder moved to trash"),
+        ("FOLDER_RESTORED", "Folder restored from trash"),
+        ("FOLDER_RENAMED", "Folder renamed"),
+        # Sharing & access
+        ("FILE_SHARED", "File shared with user"),
+        ("FILE_UNSHARED", "File unshared"),
+        ("PUBLIC_LINK_CREATED", "Public share link created"),
+        ("ACCESS_LEVEL_CHANGED", "Access level changed"),
+        # Chat / AI operations
+        ("CHAT_QUERY", "DocuChat query submitted"),
+        ("CHAT_TOPIC_CREATED", "Chat topic created"),
+        # Project / service operations
+        ("PROJECT_CREATED", "Project created"),
+        ("SERVICE_CREATED", "Service created"),
+        # Bulk operations
+        ("BULK_DELETE", "Bulk delete performed"),
+        ("BULK_TRASH", "Bulk trash performed"),
+        ("BULK_RESTORE", "Bulk restore performed"),
     ]
 
     user = models.ForeignKey(CustomUser, on_delete=models.CASCADE, related_name="activity_logs")

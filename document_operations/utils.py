@@ -7,6 +7,7 @@ from .models import Folder, FileFolderLink, FileVersion, FileAuditLog
 from django.utils import timezone
 from django.contrib.auth import get_user_model
 from django.db import transaction
+from django.db.models import Q
 import uuid
 import secrets
 from .models import FileAccessEntry
@@ -45,16 +46,15 @@ def trash_folder(folder: Folder):
 
 def restore_folder_from_trash(folder_id):
     folder = Folder.objects.get(id=folder_id)
-    folder.is_trashed = False
-    folder.save()
-    for link in folder.files.all():
-        link.is_trashed = False
-        link.save()
-    return {"message": f"Restored folder {folder.name}"}
+    restore_folder_recursive(folder)
+    return {"message": f"Restored folder {folder.name} (recursive)"}
 
 
-def delete_folder(folder: Folder):
+def delete_folder(folder_id):
+    folder = Folder.objects.get(id=folder_id)
+    name = folder.name
     folder.delete()
+    return {"message": f"Deleted folder {name}"}
 
 
 def trash_folder_recursive(folder):
@@ -126,8 +126,9 @@ def restore_file_from_trash(file_link_id, actor=None):
 
 
 def delete_file(file_link_id, actor=None):
-    link = FileFolderLink.objects.get(id=file_link_id)
+    link = FileFolderLink.objects.select_related('file').get(id=file_link_id)
     file = link.file
+    filepath = file.filepath  # capture before deletion
 
     # Log deletion before actual delete
     if actor:
@@ -138,8 +139,16 @@ def delete_file(file_link_id, actor=None):
             extra={"file_link_id": file_link_id}
         )
 
-    file.delete()
+    # Delete the link first, then the file (avoids redundant cascade)
     link.delete()
+    file.delete()
+
+    # Remove the physical file from disk so MD5 de-dup allows re-upload
+    if filepath and os.path.isfile(filepath):
+        try:
+            os.remove(filepath)
+        except OSError:
+            pass
 
     return {"message": f"Deleted file {file_link_id}"}
 
@@ -187,46 +196,74 @@ def protect_file_with_password(file_link_id, password_hint):
     return {"message": f"File {link.file.filename} password protected."}
 
 
+def same_tenant(user_a, user_b) -> bool:
+    if not user_a or not user_b:
+        return False
+    client_a = getattr(user_a, "client_id", None)
+    client_b = getattr(user_b, "client_id", None)
+    return client_a is not None and client_a == client_b
+
+
+def _entry_allows(entry, level, now):
+    if entry.expires_at and entry.expires_at < now:
+        return False
+    if level == "read":
+        return entry.can_read
+    if level == "write":
+        return entry.can_write
+    if level == "delete":
+        return entry.can_delete
+    if level in ("share", "owner"):
+        return entry.can_share
+    return False
+
+
 def get_user_accessible_file_ids(user, min_level="read"):
-    """
-    Returns a list of file IDs the user has access to based on access level.
-    """
-    owned = File.objects.filter(user=user).values_list("id", flat=True)
+    owned = list(File.objects.filter(user=user).values_list("id", flat=True))
+    client_id = getattr(user, "client_id", None)
+    if not client_id:
+        return owned
 
-    access_entries = FileAccessEntry.objects.filter(user=user)
+    now = timezone.now()
+    entries = FileAccessEntry.objects.filter(
+        user=user,
+        file_link__file__user__client_id=client_id,
+    ).filter(Q(expires_at__isnull=True) | Q(expires_at__gt=now))
     if min_level == "write":
-        access_entries = access_entries.filter(access_level__in=["write", "owner"])
-    elif min_level == "owner":
-        access_entries = access_entries.filter(access_level="owner")
-
-    shared = access_entries.select_related("file_link__file").values_list("file_link__file__id", flat=True)
-
+        entries = entries.filter(can_write=True)
+    elif min_level == "delete":
+        entries = entries.filter(can_delete=True)
+    elif min_level in ("owner", "share"):
+        entries = entries.filter(can_share=True)
+    else:
+        entries = entries.filter(can_read=True)
+    shared = list(entries.values_list("file_link__file_id", flat=True))
+    if min_level == "read":
+        shared.extend(
+            FileFolderLink.objects.filter(
+                shared_with=user,
+                file__user__client_id=client_id,
+            ).values_list("file_id", flat=True)
+        )
     return list(set(owned).union(shared))
 
 
 def has_file_access(user, file: File, level="read") -> bool:
-    if file.user == user:
+    if not user or not getattr(user, "is_authenticated", False) or not file:
+        return False
+    if file.user_id == user.id:
+        return True
+    if not same_tenant(user, file.user):
+        return False
+
+    now = timezone.now()
+    if level == "read" and FileFolderLink.objects.filter(file=file, shared_with=user).exists():
         return True
 
-    file_link = getattr(file, "folder_link", None)
-    if not file_link:
-        return False
-
-    try:
-        entry = FileAccessEntry.objects.get(file_link=file_link, user=user)
-        if entry.expires_at and entry.expires_at < timezone.now():
-            return False
-        if level == "read":
-            return entry.can_read
-        if level == "write":
-            return entry.can_write
-        if level == "delete":
-            return entry.can_delete
-        if level == "share":
-            return entry.can_share
-        return False
-    except FileAccessEntry.DoesNotExist:
-        return False
+    entries = FileAccessEntry.objects.filter(file_link__file=file).filter(
+        Q(user=user) | Q(group__in=user.groups.all())
+    )
+    return any(_entry_allows(entry, level, now) for entry in entries)
 
 '''
 def has_file_access(user, file: File, level="read") -> bool:
@@ -273,29 +310,7 @@ def user_has_access(user, file_id, level="read") -> bool:
         file = File.objects.get(id=file_id)
     except File.DoesNotExist:
         return False
-
-    if file.user == user:
-        return True
-
-    file_link = getattr(file, "folder_link", None)
-    if not file_link:
-        return False
-
-    try:
-        entry = FileAccessEntry.objects.get(file_link=file_link, user=user)
-        if entry.expires_at and entry.expires_at < timezone.now():
-            return False
-        if level == "read":
-            return entry.can_read
-        if level == "write":
-            return entry.can_write
-        if level == "delete":
-            return entry.can_delete
-        if level == "share":
-            return entry.can_share
-        return False
-    except FileAccessEntry.DoesNotExist:
-        return False
+    return has_file_access(user, file, level)
 
 
 '''
@@ -445,12 +460,16 @@ def link_file_to_folder(file, folder):
 
 def update_access_level_for_user(file_link, user_id, access_level, granted_by):
     perms = {
-        "read":  {"can_read": True, "can_write": False, "can_share": False, "is_owner": False},
-        "write": {"can_read": True, "can_write": True,  "can_share": False, "is_owner": False},
-        "owner": {"can_read": True, "can_write": True,  "can_share": True,  "is_owner": True},
+        "read":  {"can_read": True, "can_write": False, "can_share": False},
+        "write": {"can_read": True, "can_write": True,  "can_share": False},
+        "owner": {"can_read": True, "can_write": True,  "can_share": True},
     }.get(access_level, {"can_read": True})
 
     user = get_object_or_404(User, pk=user_id)
+    owner = file_link.file.user
+    if not same_tenant(owner, user) or not same_tenant(owner, granted_by):
+        from rest_framework.exceptions import PermissionDenied
+        raise PermissionDenied("Documents can only be shared with users in the same organisation.")
 
     FileAccessEntry.objects.update_or_create(
         file_link=file_link,
@@ -557,13 +576,24 @@ def register_file_folder_link(file_obj):
     if file_obj.folder_links.exists():
         return  # already linked
     try:
+
         folder = get_or_create_folder_tree(
             folder_parts_for(file_obj), user=file_obj.user,
             project_id=file_obj.project_id, service_id=file_obj.service_id,
         )
         FileFolderLink.objects.create(file=file_obj, folder=folder)
-    except Exception as e:
-        raise Exception(f"Failed to register FileFolderLink for file {file_obj.id}: {e}")
+    except Exception:
+        # Fallback: derive folder parts from uploads-relative path
+        # filepath = .../uploads/{client}/{user}/{project}/{service}/{date}/{file}
+        relative_path = file_obj.filepath.split("uploads/", 1)[-1]
+        parts = relative_path.split("/")
+        # Skip client, user, project, service → keep only date-level folders
+        folder_parts = parts[4:-1]
+        if folder_parts:
+            folder = get_or_create_folder_tree(
+                folder_parts, user=file_obj.user, project_id=project_id, service_id=service_id
+            )
+            FileFolderLink.objects.create(file=file_obj, folder=folder)
 
 
 def repair_misplaced_folder_links(batch_size=500):

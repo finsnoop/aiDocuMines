@@ -14,6 +14,7 @@ from rest_framework import generics
 from rest_framework.permissions import AllowAny
 
 from core.models import File
+from core.utils import get_logical_path
 from document_automation.models import AutomationTemplate, AutomationRun, AutomationResult, ClauseCategory, Clause, TemplateField
 from document_automation.serializers import (
     AutomationTemplateSerializer,
@@ -25,7 +26,8 @@ from document_automation.serializers import (
 )
 from document_automation.tasks import process_automation_task
 
-from oauth2_provider.contrib.rest_framework import OAuth2Authentication, TokenHasReadWriteScope
+from oauth2_provider.contrib.rest_framework import TokenHasReadWriteScope
+from custom_authentication.authentication import ClientBoundOAuth2Authentication as OAuth2Authentication
 from drf_yasg.utils import swagger_auto_schema
 from drf_yasg import openapi
 from core.access import get_file_for_user, get_scoped_or_404, get_run_for_user, scope_by_file, scope_by_owner
@@ -229,7 +231,7 @@ class DownloadAutomationResultAPIView(APIView):
             return Response({"error": "Generated file not found."}, status=status.HTTP_404_NOT_FOUND)
 
         return Response(
-            {"file_id": file_id, "filepath": file_instance.filepath, "filename": file_instance.filename, "status": "Ready for download"},
+            {"file_id": file_id, "filepath": get_logical_path(file_instance.filepath, file_instance.filename), "filename": file_instance.filename, "status": "Ready for download"},
             status=status.HTTP_200_OK,
         )
 

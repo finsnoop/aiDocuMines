@@ -542,6 +542,33 @@ def get_role_permissions(role_name):
     return role.resolve_permissions(ROLE_DEFINITIONS)
 
 
+def get_user_roles(user):
+    """
+    Return the set of role names a user actually holds, derived from the
+    database only (Django groups + is_staff / is_superuser).
+
+    IMPORTANT: never derive roles from request headers (e.g. X-Role); those are
+    client-controlled and must not grant privileges.
+    """
+    if not user or not getattr(user, "is_authenticated", False):
+        return set()
+
+    roles = set(user.groups.values_list("name", flat=True))
+    if getattr(user, "is_superuser", False):
+        roles.update({"SuperAdmin", "Admin", "Manager", "Developer", "Client"})
+    elif getattr(user, "is_staff", False):
+        roles.update({"Admin"})
+    return roles
+
+
+def get_user_role_permissions(user):
+    """Union of resolved permission codenames across all of the user's roles."""
+    resolved = set()
+    for role_name in get_user_roles(user):
+        resolved |= get_role_permissions(role_name)
+    return resolved
+
+
 # ---------------------------------------------------------------------------
 # 4. SEEDING — Create Django Permission objects + Groups
 # ---------------------------------------------------------------------------

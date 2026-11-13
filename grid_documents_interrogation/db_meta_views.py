@@ -2,8 +2,8 @@
 """
 DocuChat database helpers: test a connection, list tables, list columns.
 
-Body: {"connection_id": <saved connection>} or {"connection_string": "postgresql://..."},
-plus "table" for columns. Targets are vetted by safety.py (no SQLite, no internal or
+Body: {"connection_id": <saved connection>}, plus "table" for columns. Raw connection
+strings are not accepted: a connection is saved (and its host vetted) first. Targets are vetted by safety.py (no SQLite, no internal or
 platform hosts, read-only sessions, short timeouts). Errors never echo driver output,
 which can contain credentials or internal addresses.
 """
@@ -70,7 +70,8 @@ def list_tables(request):
         return blocked
     try:
         url = safety.url_for_request(request, request.data)
-        return Response({"tables": fetch_tables(url), "database": safety.describe(url)})
+        return Response({"tables": fetch_tables(url), "database": safety.describe(url),
+                         "connection_id": request.data.get("connection_id")})
     except Exception as exc:
         return _failed(exc, "table list")
 
@@ -86,6 +87,6 @@ def list_columns(request):
         return Response({"error": "table is required"}, status=status.HTTP_400_BAD_REQUEST)
     try:
         url = safety.url_for_request(request, request.data)
-        return Response({"columns": fetch_column_names(url, request.data["table"])})
+        return Response({"columns": fetch_column_names(url, request.data["table"]), "redacted": True})
     except Exception as exc:
         return _failed(exc, "column list")

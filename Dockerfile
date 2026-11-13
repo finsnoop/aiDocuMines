@@ -46,6 +46,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libgl1-mesa-glx \
     supervisor \
     openjdk-17-jre-headless \
+    libreoffice-writer \
+    fonts-liberation \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/* /tmp/*
 

@@ -7,7 +7,7 @@ from django.db import migrations, models
 class Migration(migrations.Migration):
 
     dependencies = [
-        ('core', '0010_matters_and_layouts'),
+        ('core', '0012_matters'),
         ('custom_authentication', '0002_twofactorcode'),
         migrations.swappable_dependency(settings.AUTH_USER_MODEL),
     ]

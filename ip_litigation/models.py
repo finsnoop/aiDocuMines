@@ -77,9 +77,9 @@ class PatentDocument(models.Model):
     Multi-tenant: Isolated by client.
     """
     client = models.ForeignKey('custom_authentication.Client', on_delete=models.CASCADE, related_name='ipl_patent_documents')
-    file = models.ForeignKey('core.File', on_delete=models.CASCADE, related_name='ip_patent_documents')
+    file = models.ForeignKey('core.File', on_delete=models.CASCADE, related_name='ip_patent_documents', null=True, blank=True)
     user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='ip_patent_documents')
-    analysis_run = models.ForeignKey(PatentAnalysisRun, on_delete=models.CASCADE, related_name='patent_documents')
+    analysis_run = models.ForeignKey(PatentAnalysisRun, on_delete=models.CASCADE, related_name='patent_documents', null=True, blank=True)
 
     # Patent identification
     patent_number = models.CharField(max_length=100, help_text="Patent number (e.g., US10123456B2)")
@@ -159,9 +159,9 @@ class PatentClaim(models.Model):
     Multi-tenant: Isolated by client.
     """
     client = models.ForeignKey('custom_authentication.Client', on_delete=models.CASCADE, related_name='ipl_patent_claims')
-    patent_document = models.ForeignKey(PatentDocument, on_delete=models.CASCADE, related_name='claims')
+    patent_document = models.ForeignKey(PatentDocument, on_delete=models.CASCADE, related_name='claims', null=True, blank=True)
     user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='ip_patent_claims')
-    analysis_run = models.ForeignKey(PatentAnalysisRun, on_delete=models.CASCADE, related_name='patent_claims')
+    analysis_run = models.ForeignKey(PatentAnalysisRun, on_delete=models.CASCADE, related_name='patent_claims', null=True, blank=True)
 
     claim_number = models.IntegerField(help_text="Claim number within the patent")
     claim_text = models.TextField(help_text="Full text of the patent claim")
@@ -211,9 +211,9 @@ class PriorArtDocument(models.Model):
     Multi-tenant: Isolated by client.
     """
     client = models.ForeignKey('custom_authentication.Client', on_delete=models.CASCADE, related_name='ipl_prior_art_documents')
-    file = models.ForeignKey('core.File', on_delete=models.CASCADE, related_name='ip_prior_art_documents')
+    file = models.ForeignKey('core.File', on_delete=models.CASCADE, related_name='ip_prior_art_documents', null=True, blank=True)
     user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='ip_prior_art_documents')
-    analysis_run = models.ForeignKey(PatentAnalysisRun, on_delete=models.CASCADE, related_name='prior_art_documents')
+    analysis_run = models.ForeignKey(PatentAnalysisRun, on_delete=models.CASCADE, related_name='prior_art_documents', null=True, blank=True)
 
     # Document identification
     document_id = models.CharField(max_length=255, help_text="Document identifier (patent number, publication ID, etc.)")
@@ -269,8 +269,8 @@ class ClaimChart(models.Model):
     """
     client = models.ForeignKey('custom_authentication.Client', on_delete=models.CASCADE, related_name='ipl_claim_charts')
     user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='ip_claim_charts')
-    analysis_run = models.ForeignKey(PatentAnalysisRun, on_delete=models.CASCADE, related_name='claim_charts')
-    patent_claim = models.ForeignKey(PatentClaim, on_delete=models.CASCADE, related_name='claim_charts')
+    analysis_run = models.ForeignKey(PatentAnalysisRun, on_delete=models.CASCADE, related_name='claim_charts', null=True, blank=True)
+    patent_claim = models.ForeignKey(PatentClaim, on_delete=models.CASCADE, related_name='claim_charts', null=True, blank=True)
 
     chart_name = models.CharField(max_length=255, help_text="Name of the claim chart")
     chart_type = models.CharField(
@@ -330,7 +330,7 @@ class PatentLandscape(models.Model):
     """
     client = models.ForeignKey('custom_authentication.Client', on_delete=models.CASCADE, related_name='ipl_patent_landscapes')
     user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='ip_patent_landscapes')
-    analysis_run = models.ForeignKey(PatentAnalysisRun, on_delete=models.CASCADE, related_name='patent_landscapes')
+    analysis_run = models.ForeignKey(PatentAnalysisRun, on_delete=models.CASCADE, related_name='patent_landscapes', null=True, blank=True)
 
     landscape_name = models.CharField(max_length=255, help_text="Name of the patent landscape")
     technology_area = models.CharField(max_length=255, help_text="Technology area being analyzed")
@@ -374,7 +374,7 @@ class InfringementAnalysis(models.Model):
     """
     client = models.ForeignKey('custom_authentication.Client', on_delete=models.CASCADE, related_name='ipl_infringement_analyses')
     user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='ip_infringement_analyses')
-    analysis_run = models.ForeignKey(PatentAnalysisRun, on_delete=models.CASCADE, related_name='infringement_analyses')
+    analysis_run = models.ForeignKey(PatentAnalysisRun, on_delete=models.CASCADE, related_name='infringement_analyses', null=True, blank=True)
 
     analysis_name = models.CharField(max_length=255, help_text="Name of the infringement analysis")
     accused_product = models.CharField(max_length=255, help_text="Product or system accused of infringement")
@@ -457,8 +457,8 @@ class ValidityChallenge(models.Model):
     """
     client = models.ForeignKey('custom_authentication.Client', on_delete=models.CASCADE, related_name='ipl_validity_challenges')
     user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='ip_validity_challenges')
-    analysis_run = models.ForeignKey(PatentAnalysisRun, on_delete=models.CASCADE, related_name='validity_challenges')
-    target_patent = models.ForeignKey(PatentDocument, on_delete=models.CASCADE, related_name='validity_challenges')
+    analysis_run = models.ForeignKey(PatentAnalysisRun, on_delete=models.CASCADE, related_name='validity_challenges', null=True, blank=True)
+    target_patent = models.ForeignKey(PatentDocument, on_delete=models.CASCADE, related_name='validity_challenges', null=True, blank=True)
 
     challenge_name = models.CharField(max_length=255, help_text="Name of the validity challenge")
 
@@ -561,7 +561,7 @@ class ServiceExecution(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     client = models.ForeignKey('custom_authentication.Client', on_delete=models.CASCADE, related_name='ipl_service_executions')
     user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='ip_service_executions')
-    patent_analysis_run = models.ForeignKey(PatentAnalysisRun, on_delete=models.CASCADE, related_name='service_executions')
+    patent_analysis_run = models.ForeignKey(PatentAnalysisRun, on_delete=models.CASCADE, related_name='service_executions', null=True, blank=True)
 
     # Service details
     service_type = models.CharField(max_length=50, choices=SERVICE_TYPES)
@@ -617,7 +617,7 @@ class ServiceOutput(models.Model):
     # Core identification
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     client = models.ForeignKey('custom_authentication.Client', on_delete=models.CASCADE, related_name='ipl_service_outputs')
-    service_execution = models.ForeignKey(ServiceExecution, on_delete=models.CASCADE, related_name='outputs')
+    service_execution = models.ForeignKey(ServiceExecution, on_delete=models.CASCADE, related_name='outputs', null=True, blank=True)
 
     # Output details
     output_name = models.CharField(max_length=255, help_text="Name/title of the output")

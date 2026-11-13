@@ -98,6 +98,196 @@ INDEX_VERSION_KEY = "search:index_version"
 LOCK_TTL = 15 * 60  # seconds; a crashed worker cannot block a file for longer
 
 
+# ───────────────────────────── Classification ─────────────────────────────────
+CLASSIFICATION_LABELS = {
+    # Legal & Compliance
+    "Contract": "Legal contract between parties with terms and signatures.",
+    "Legal Agreement": "Legal obligations, rights, or terms between parties.",
+    "NDA": "Non-disclosure agreement restricting sharing confidential information.",
+    "SLA": "Service level agreement with performance standards and responsibilities.",
+    "Court Order": "Orders or judgments issued by a court.",
+    "Legal Complaint": "Formal legal complaint filed in court.",
+    "Terms and Conditions": "Rules and legal agreements for using products or services.",
+    "Privacy Policy": "Explains how personal data is collected and used.",
+    "Policy Document": "Official rules or guidelines that must be followed.",
+    "Permit": "Legal permission granted for specific activities.",
+    "License": "Authorization document granting legal permission.",
+    "Certificate": "Official document verifying a fact or achievement.",
+    "Will": "Estate distribution instructions after death.",
+    # Finance & Accounting
+    "Financial Report": "Financial results, performance, or analysis.",
+    "Income Statement": "Revenue and expenses over a period.",
+    "Balance Sheet": "Assets, liabilities, and equity snapshot.",
+    "Cash Flow Statement": "Cash inflows and outflows over a period.",
+    "Budget": "Planned income and expenses for a period.",
+    "Invoice": "Bill for payment with items and totals.",
+    "Receipt": "Acknowledgment of payment received.",
+    "Bank Statement": "Account transactions and balances.",
+    "Audit Report": "Independent financial audit opinion.",
+    "Payroll Report": "Employee wages and deductions summary.",
+    "Purchase Order": "Authorization to buy goods or services.",
+    "Bill of Lading": "Receipt of goods for shipment.",
+    "Statement of Work": "Project deliverables, scope, and responsibilities.",
+    # Business & Operations
+    "Business Proposal": "Proposes plans, services, or products to a client.",
+    "Business Plan": "Business strategies, objectives, and forecasts.",
+    "RFP Response": "Response to a request for proposal.",
+    "SOP": "Standard operating procedure with step-by-step instructions.",
+    "Project Report": "Project progress, findings, or results.",
+    "Meeting Minutes": "Discussion points and decisions from meetings.",
+    "Memo": "Formal internal communication message.",
+    "Agenda": "List of topics to be discussed in a meeting.",
+    "Checklist": "Tasks or items to complete or verify.",
+    "Schedule": "Timeline or plan with dates and times.",
+    "Log File": "System, server, or application log entries.",
+    "User Manual": "Instructions for using a product or system.",
+    "Technical Specification": "Detailed technical requirements and designs.",
+    "Runbook": "Operational procedures for incidents or maintenance.",
+    "Architecture Diagram": "System architecture documentation overview.",
+    # Sales & Marketing
+    "Press Release": "Public announcement of news or events.",
+    "Brochure": "Marketing or informational pamphlet.",
+    "Advertisement": "Promotes products, services, or events.",
+    "Price List": "Catalog of products or services with prices.",
+    "Statement of Capabilities": "Company capabilities and differentiators.",
+    # HR & Talent
+    "Resume": "Work experience and skills summary.",
+    "Cover Letter": "Letter expressing job interest accompanying a resume.",
+    "Offer Letter": "Employment offer details and terms.",
+    "Job Description": "Role responsibilities and required qualifications.",
+    "Performance Review": "Employee performance evaluation.",
+    # Medical & Insurance
+    "Medical Report": "Medical or health record details and assessments.",
+    "Prescription": "Medication or treatment directive by a clinician.",
+    "Lab Result": "Medical or laboratory test outcomes.",
+    "Patient Summary": "Patient medical history and conditions.",
+    "Insurance Claim": "Request to insurer for reimbursement.",
+    "EOB": "Explanation of benefits document from insurer.",
+    # Research & Education
+    "Research Paper": "Academic research findings and analysis.",
+    "White Paper": "Authoritative information or solution on a topic.",
+    "Case Study": "Detailed analysis of a specific example.",
+    "Thesis": "Lengthy academic dissertation.",
+    "Lecture Notes": "Notes from educational lectures.",
+    "Transcript": "Verbatim record of spoken words or courses.",
+    "Dataset Description": "Metadata and description for datasets.",
+    # IT & Security
+    "Security Policy": "Information security rules and standards.",
+    "Vulnerability Report": "Security weaknesses and remediation.",
+    "Penetration Test Report": "Results of simulated attacks and fixes.",
+    "Incident Report": "Security incident details and timeline.",
+    "Change Request": "Proposed system change and approvals.",
+    "Release Notes": "Software release changes and fixes.",
+    # Government & Public
+    "Notice": "Official information or updates to the public.",
+    "Regulatory Filing": "Submission to a regulator or exchange.",
+    # Misc
+    "FAQ": "Frequently asked questions and answers.",
+    "Summary": "Condensed version of longer content.",
+    "Newsletter": "Periodic news or updates for readers.",
+}
+
+# Filename keyword hints used when no text is extractable (scanned docs etc.)
+FILENAME_TYPE_HINTS = [
+    ("invoice", "Invoice"),
+    ("receipt", "Receipt"),
+    ("purchase order", "Purchase Order"),
+    ("contract", "Contract"),
+    ("agreement", "Legal Agreement"),
+    ("non-disclosure", "NDA"),
+    ("nda", "NDA"),
+    ("sla", "SLA"),
+    ("bank statement", "Bank Statement"),
+    ("statement", "Bank Statement"),
+    ("budget", "Budget"),
+    ("payroll", "Payroll Report"),
+    ("balance sheet", "Balance Sheet"),
+    ("resume", "Resume"),
+    ("cover letter", "Cover Letter"),
+    ("offer letter", "Offer Letter"),
+    ("job description", "Job Description"),
+    ("policy", "Policy Document"),
+    ("privacy", "Privacy Policy"),
+    ("license", "License"),
+    ("licence", "License"),
+    ("certificate", "Certificate"),
+    ("transcript", "Transcript"),
+    ("minutes", "Meeting Minutes"),
+    ("proposal", "Business Proposal"),
+    ("business plan", "Business Plan"),
+    ("manual", "User Manual"),
+    ("specification", "Technical Specification"),
+    ("audit", "Audit Report"),
+    ("insurance claim", "Insurance Claim"),
+    ("prescription", "Prescription"),
+    ("lab result", "Lab Result"),
+    ("white paper", "White Paper"),
+    ("research", "Research Paper"),
+    ("thesis", "Thesis"),
+    ("newsletter", "Newsletter"),
+    ("press release", "Press Release"),
+]
+
+
+def classify_document_content(embed_model, all_text: str) -> str:
+    """Embed whole-doc text and return the closest label from CLASSIFICATION_LABELS."""
+    label_texts = list(CLASSIFICATION_LABELS.values())
+    label_names = list(CLASSIFICATION_LABELS.keys())
+    label_embeddings = embed_model.encode(label_texts)
+
+    from sklearn.metrics.pairwise import cosine_similarity
+    scores = cosine_similarity([embed_model.encode([all_text])[0]], label_embeddings)
+    best_idx = int(scores.argmax())
+    return label_names[best_idx]
+
+
+def guess_type_from_filename(filename: str):
+    """Best-effort document-type guess from filename keywords. Returns None if no hint."""
+    name = (filename or "").lower()
+    for keyword, label in FILENAME_TYPE_HINTS:
+        if keyword in name:
+            return label
+    return None
+
+
+def _ocr_pdf_pages(filepath: str, max_pages: int = 10) -> str:
+    """
+    Rasterize pages of an image-only PDF and OCR them so scanned
+    documents can still be classified. Retries at higher DPI when the
+    first pass yields nothing.
+    """
+    try:
+        import fitz  # PyMuPDF
+        import pytesseract
+        from PIL import Image
+    except Exception:
+        return ""
+    try:
+        pytesseract.get_tesseract_version()
+    except Exception as exc:
+        LOGGER.error("OCR unavailable for %s: tesseract binary missing/broken (%s)", filepath, exc)
+        return ""
+    try:
+        for dpi in (150, 300):
+            texts = []
+            with fitz.open(str(filepath)) as doc:
+                for page in list(doc)[:max_pages]:
+                    try:
+                        pix = page.get_pixmap(dpi=dpi)
+                        img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
+                        texts.append(pytesseract.image_to_string(img))
+                    except Exception:
+                        continue
+            combined = "\n".join(t for t in texts if t)
+            if combined.strip():
+                return combined
+        return ""
+    except Exception as exc:
+        LOGGER.warning("PDF OCR fallback failed for %s: %s", filepath, exc)
+        return ""
+
+
+
 def _bump_index_version() -> None:
     try:
         cache.incr(INDEX_VERSION_KEY)
@@ -190,105 +380,71 @@ def _classify_document(file, chunks) -> None:
     """Lightweight whole-document type label from one embedding (no File.save: avoids re-index signals)."""
     all_text = " ".join(chunks) if chunks else ""
     if not all_text.strip():
-        File.objects.filter(pk=file.pk).update(document_type="Unknown")
+        label = guess_type_from_filename(file.filename) or "Unknown"
+        File.objects.filter(pk=file.pk).update(document_type=label)
         return
-    embed_model = _get_model()
-    doc_embedding = embed_model.encode([all_text[:20000]])[0]
-    labels = {
-        # Legal & Compliance
-        "Contract": "Legal contract between parties with terms and signatures.",
-        "Legal Agreement": "Legal obligations, rights, or terms between parties.",
-        "NDA": "Non-disclosure agreement restricting sharing confidential information.",
-        "SLA": "Service level agreement with performance standards and responsibilities.",
-        "Court Order": "Orders or judgments issued by a court.",
-        "Legal Complaint": "Formal legal complaint filed in court.",
-        "Terms and Conditions": "Rules and legal agreements for using products or services.",
-        "Privacy Policy": "Explains how personal data is collected and used.",
-        "Policy Document": "Official rules or guidelines that must be followed.",
-        "Permit": "Legal permission granted for specific activities.",
-        "License": "Authorization document granting legal permission.",
-        "Certificate": "Official document verifying a fact or achievement.",
-        "Will": "Estate distribution instructions after death.",
-        # Finance & Accounting
-        "Financial Report": "Financial results, performance, or analysis.",
-        "Income Statement": "Revenue and expenses over a period.",
-        "Balance Sheet": "Assets, liabilities, and equity snapshot.",
-        "Cash Flow Statement": "Cash inflows and outflows over a period.",
-        "Budget": "Planned income and expenses for a period.",
-        "Invoice": "Bill for payment with items and totals.",
-        "Receipt": "Acknowledgment of payment received.",
-        "Bank Statement": "Account transactions and balances.",
-        "Audit Report": "Independent financial audit opinion.",
-        "Payroll Report": "Employee wages and deductions summary.",
-        "Purchase Order": "Authorization to buy goods or services.",
-        "Bill of Lading": "Receipt of goods for shipment.",
-        "Statement of Work": "Project deliverables, scope, and responsibilities.",
-        # Business & Operations
-        "Business Proposal": "Proposes plans, services, or products to a client.",
-        "Business Plan": "Business strategies, objectives, and forecasts.",
-        "RFP Response": "Response to a request for proposal.",
-        "SOP": "Standard operating procedure with step-by-step instructions.",
-        "Project Report": "Project progress, findings, or results.",
-        "Meeting Minutes": "Discussion points and decisions from meetings.",
-        "Memo": "Formal internal communication message.",
-        "Agenda": "List of topics to be discussed in a meeting.",
-        "Checklist": "Tasks or items to complete or verify.",
-        "Schedule": "Timeline or plan with dates and times.",
-        "Log File": "System, server, or application log entries.",
-        "User Manual": "Instructions for using a product or system.",
-        "Technical Specification": "Detailed technical requirements and designs.",
-        "Runbook": "Operational procedures for incidents or maintenance.",
-        "Architecture Diagram": "System architecture documentation overview.",
-        # Sales & Marketing
-        "Press Release": "Public announcement of news or events.",
-        "Brochure": "Marketing or informational pamphlet.",
-        "Advertisement": "Promotes products, services, or events.",
-        "Price List": "Catalog of products or services with prices.",
-        "Statement of Capabilities": "Company capabilities and differentiators.",
-        # HR & Talent
-        "Resume": "Work experience and skills summary.",
-        "Cover Letter": "Letter expressing job interest accompanying a resume.",
-        "Offer Letter": "Employment offer details and terms.",
-        "Job Description": "Role responsibilities and required qualifications.",
-        "Performance Review": "Employee performance evaluation.",
-        # Medical & Insurance
-        "Medical Report": "Medical or health record details and assessments.",
-        "Prescription": "Medication or treatment directive by a clinician.",
-        "Lab Result": "Medical or laboratory test outcomes.",
-        "Patient Summary": "Patient medical history and conditions.",
-        "Insurance Claim": "Request to insurer for reimbursement.",
-        "EOB": "Explanation of benefits document from insurer.",
-        # Research & Education
-        "Research Paper": "Academic research findings and analysis.",
-        "White Paper": "Authoritative information or solution on a topic.",
-        "Case Study": "Detailed analysis of a specific example.",
-        "Thesis": "Lengthy academic dissertation.",
-        "Lecture Notes": "Notes from educational lectures.",
-        "Transcript": "Verbatim record of spoken words or courses.",
-        "Dataset Description": "Metadata and description for datasets.",
-        # IT & Security
-        "Security Policy": "Information security rules and standards.",
-        "Vulnerability Report": "Security weaknesses and remediation.",
-        "Penetration Test Report": "Results of simulated attacks and fixes.",
-        "Incident Report": "Security incident details and timeline.",
-        "Change Request": "Proposed system change and approvals.",
-        "Release Notes": "Software release changes and fixes.",
-        # Government & Public
-        "Notice": "Official information or updates to the public.",
-        "Regulatory Filing": "Submission to a regulator or exchange.",
-        # Misc
-        "FAQ": "Frequently asked questions and answers.",
-        "Summary": "Condensed version of longer content.",
-        "Newsletter": "Periodic news or updates for readers.",
-        "Unclassified": "Document type cannot be determined.",
-    }
+    try:
+        label = classify_document_content(_get_model(), all_text[:20000])
+    except Exception as exc:
+        LOGGER.warning("Classification failed for file %s: %s", file.pk, exc)
+        label = guess_type_from_filename(file.filename) or "Unknown"
+    File.objects.filter(pk=file.pk).update(document_type=label)
 
-    label_texts = list(labels.values())
-    label_names = list(labels.keys())
-    label_embeddings = embed_model.encode(label_texts)
-    from sklearn.metrics.pairwise import cosine_similarity
-    best = label_names[int(cosine_similarity([doc_embedding], label_embeddings).argmax())]
-    File.objects.filter(pk=file.pk).update(document_type=best)
+
+@shared_task(name="document_search.classify_file")
+def classify_file(file_id: int, force: bool = False) -> dict:
+    """
+    Standalone document-type classification, decoupled from indexing.
+
+    Runs for EVERY uploaded file regardless of file type, auto-index
+    settings or duplicate-MD5 skips — those conditions previously left
+    document_type NULL ("Unknown Type" on the dashboard).
+
+    Order of attempts:
+      1. Text extraction + embedding similarity (same model as index_file)
+      2. OCR rasterization for image-only PDFs
+      3. Filename keyword hints
+      4. Literal "Unknown"
+    """
+    from document_search.utils import extract_text
+
+    try:
+        file = File.objects.select_related("user").get(pk=file_id)
+    except File.DoesNotExist:
+        LOGGER.error("classify_file: File %s does not exist.", file_id)
+        return {"status": "error", "detail": "file-not-found"}
+
+    if file.document_type and not force:
+        return {"status": "skipped", "document_type": file.document_type}
+
+    # 1️⃣ Direct text extraction
+    try:
+        text = extract_text(file.filepath)
+    except Exception as exc:
+        LOGGER.warning("classify_file: extraction error for %s: %s", file_id, exc)
+        text = ""
+
+    # 2️⃣ OCR fallback for scanned/image-only PDFs
+    if not text.strip() and str(file.filepath).lower().endswith(".pdf"):
+        text = _ocr_pdf_pages(file.filepath)
+
+    if text.strip():
+        try:
+            embed_model = _get_model()
+            label = classify_document_content(embed_model, text[:50000])
+        except Exception as exc:
+            LOGGER.error("classify_file: embedding failed for %s: %s", file_id, exc)
+            label = guess_type_from_filename(file.filename) or "Unknown"
+    else:
+        # 3️⃣ Filename hints as last resort
+        label = guess_type_from_filename(file.filename) or "Unknown"
+        if label == "Unknown":
+            LOGGER.info("classify_file: no extractable text or hints for file %s", file_id)
+
+    # update(), not save(): a label change must not re-trigger indexing signals.
+    File.objects.filter(pk=file.pk).update(document_type=label)
+    LOGGER.info("→ classify_file: File %s classified as: %s", file_id, label)
+    return {"status": "ok", "document_type": label}
 
 
 @shared_task(name="document_search.bulk_reindex")

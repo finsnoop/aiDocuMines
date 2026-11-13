@@ -336,7 +336,6 @@ def deanonymize_document_task(file_id):
     return {"file_id": file_id, "deanonymized_txt": txt_path, "status": "Completed"}
 
 
-'''
 @shared_task
 def compute_risk_score_task(file_id):
     logger.info(f"📊 Computing risk score for file_id={file_id}")
@@ -377,60 +376,15 @@ def compute_risk_score_task(file_id):
     instance.risk_score = risk_result["risk_score"]
     instance.risk_level = risk_result["risk_level"]
     instance.risk_breakdown = risk_result["breakdown"]
-    instance.save(update_fields=["risk_score", "risk_level", "risk_breakdown", "updated_at"])
-
-    return {
-        "file_id": file_id,
-        "risk_score": risk_result["risk_score"],
-        "risk_level": risk_result["risk_level"],
-        "breakdown": risk_result["breakdown"]
-    }
-'''
-
-@shared_task
-def compute_risk_score_task(file_id):
-    logger.info(f"📊 Computing risk score for file_id={file_id}")
-    file_entry = get_object_or_404(File, id=file_id)
-    instance = Anonymize.objects.filter(original_file=file_entry, is_active=True).first()
-    if not instance:
-        return {"error": "No active anonymized file found."}
-
-    presidio_map = instance.presidio_masking_map or {}
-    spacy_map    = instance.spacy_masking_map or {}
-
-    # Prefer DB text; else extract with service; else fail over to masked
-    original_for_risk = file_entry.content
-    if not original_for_risk:
-        try:
-            extracted_text, _, _ = service.extract_text_from_file(file_entry.filepath)
-            original_for_risk = extracted_text or ""
-        except Exception:
-            original_for_risk = ""
-
-    if not original_for_risk.strip():
-        # still nothing; fallback to masked text on disk if available
-        if instance.anonymized_filepath and os.path.exists(instance.anonymized_filepath):
-            try:
-                with open(instance.anonymized_filepath, "r", encoding="utf-8") as f:
-                    original_for_risk = f.read()
-            except Exception:
-                original_for_risk = ""
-
-    if not original_for_risk.strip():
-        return {"error": "No source text available for risk scoring"}
-
-    risk_result = service.compute_risk_score(original_for_risk, presidio_map, spacy_map)
-
-    instance.risk_score     = risk_result["risk_score"]
-    instance.risk_level     = risk_result["risk_level"]
-    instance.risk_breakdown = risk_result["breakdown"]
-    instance.save(update_fields=["risk_score", "risk_level", "risk_breakdown", "updated_at"])
+    instance.risk_contributions = risk_result.get("contributions")
+    instance.save(update_fields=["risk_score", "risk_level", "risk_breakdown", "risk_contributions", "updated_at"])
 
     return {
         "file_id": file_id,
         "risk_score": risk_result["risk_score"],
         "risk_level": risk_result["risk_level"],
         "breakdown": risk_result["breakdown"],
+        "contributions": risk_result.get("contributions"),
     }
 
 

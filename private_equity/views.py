@@ -7,11 +7,12 @@ from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status, permissions
 from rest_framework.parsers import MultiPartParser, FormParser
-from oauth2_provider.contrib.rest_framework import OAuth2Authentication, TokenHasReadWriteScope
+from oauth2_provider.contrib.rest_framework import TokenHasReadWriteScope
+from custom_authentication.authentication import ClientBoundOAuth2Authentication as OAuth2Authentication
 from drf_yasg.utils import swagger_auto_schema
 from drf_yasg import openapi
 
-from core.utils import generate_and_register_service_report, get_datetime_folder_from_dd_run
+from core.utils import generate_and_register_service_report, get_datetime_folder_from_dd_run, clean_request_data_for_serializer, get_logical_path
 
 from custom_authentication.permissions import IsClientOrAdmin, IsClientOrAdminOrSuperUser
 from core.vertical_permissions import IsClientMember, IsClientAdmin, IsOwnerOrClientAdmin
@@ -87,7 +88,8 @@ class DueDiligenceRunListCreateView(APIView):
     )
     def post(self, request):
         """Create a new due diligence run"""
-        serializer = DueDiligenceRunCreateSerializer(data=request.data, context={'request': request})
+        from core.utils import clean_request_data_for_serializer
+        serializer = DueDiligenceRunCreateSerializer(data=clean_request_data_for_serializer(request.data, DueDiligenceRunCreateSerializer), context={'request': request})
         if serializer.is_valid():
             due_diligence_run = serializer.save()
             response_serializer = DueDiligenceRunSerializer(due_diligence_run)
@@ -196,7 +198,7 @@ class DocumentClassificationView(APIView):
     )
     def post(self, request):
         """Trigger document classification for uploaded files"""
-        dd_run_id = request.data.get('dd_run_id')
+        dd_run_id = request.data.get('due_diligence_run') or request.data.get('dd_run_id')
         file_ids = request.data.get('file_ids', [])
         # ✅ Accept project_id, service_id, and datetime_folder from frontend to preserve tree location
         project_id = request.data.get('project_id')
@@ -314,7 +316,7 @@ class RiskClauseExtractionView(APIView):
     )
     def post(self, request):
         """Trigger risk clause extraction for documents"""
-        dd_run_id = request.data.get('dd_run_id')
+        dd_run_id = request.data.get('due_diligence_run') or request.data.get('dd_run_id')
         file_ids = request.data.get('file_ids', [])
         # ✅ Accept project_id, service_id, and datetime_folder from frontend to preserve tree location
         project_id = request.data.get('project_id')
@@ -401,7 +403,7 @@ class IssueSpottingView(APIView):
     )
     def post(self, request):
         """Trigger AI issue spotting for deal documents"""
-        deal_workspace_id = request.data.get('deal_workspace_id')
+        deal_workspace_id = request.data.get('due_diligence_run') or request.data.get('deal_workspace_id')
         file_ids = request.data.get('file_ids', [])
         # ✅ Accept project_id, service_id, and datetime_folder from frontend to preserve tree location
         project_id = request.data.get('project_id')
@@ -630,7 +632,7 @@ class FindingsReportView(APIView):
     )
     def post(self, request):
         """Generate a new findings report"""
-        dd_run_id = request.data.get('dd_run_id')
+        dd_run_id = request.data.get('due_diligence_run') or request.data.get('dd_run_id')
         report_name = request.data.get('report_name', 'Due Diligence Findings Report')
         project_id = request.data.get('project_id')
         service_id = request.data.get('service_id')
@@ -721,7 +723,7 @@ class SyncDataRoomView(APIView):
     )
     def post(self, request):
         """Create a data room connector and trigger sync"""
-        deal_workspace_id = request.data.get('deal_workspace_id')
+        deal_workspace_id = request.data.get('due_diligence_run') or request.data.get('deal_workspace_id')
         connector_type = request.data.get('connector_type', 'google_drive')
         connector_name = request.data.get('connector_name', f'{connector_type.replace("_", " ").title()} Sync')
         connection_config = request.data.get('connection_config', {})
@@ -1206,7 +1208,7 @@ class ClosingChecklistListCreateView(APIView):
         responses={201: ClosingChecklistSerializer}
     )
     def post(self, request):
-        serializer = ClosingChecklistCreateSerializer(data=request.data, context={'request': request})
+        serializer = ClosingChecklistCreateSerializer(data=clean_request_data_for_serializer(request.data, ClosingChecklistCreateSerializer), context={'request': request})
         if serializer.is_valid():
             checklist_item = serializer.save()
             return Response(
@@ -1302,7 +1304,7 @@ class PostCloseObligationListCreateView(APIView):
         responses={201: PostCloseObligationSerializer}
     )
     def post(self, request):
-        serializer = PostCloseObligationCreateSerializer(data=request.data, context={'request': request})
+        serializer = PostCloseObligationCreateSerializer(data=clean_request_data_for_serializer(request.data, PostCloseObligationCreateSerializer), context={'request': request})
         if serializer.is_valid():
             obligation = serializer.save()
             return Response(
@@ -1417,7 +1419,7 @@ class ClauseLibraryListCreateView(APIView):
         responses={201: ClauseLibrarySerializer}
     )
     def post(self, request):
-        serializer = ClauseLibraryCreateSerializer(data=request.data, context={'request': request})
+        serializer = ClauseLibraryCreateSerializer(data=clean_request_data_for_serializer(request.data, ClauseLibraryCreateSerializer), context={'request': request})
         if serializer.is_valid():
             clause = serializer.save()
             return Response(
@@ -1615,7 +1617,7 @@ class PanelFirmListCreateView(APIView):
         responses={201: PanelFirmSerializer}
     )
     def post(self, request):
-        serializer = PanelFirmSerializer(data=request.data, context={'request': request})
+        serializer = PanelFirmSerializer(data=clean_request_data_for_serializer(request.data, PanelFirmSerializer), context={'request': request})
         if serializer.is_valid():
             firm = serializer.save()
             return Response(PanelFirmSerializer(firm).data, status=status.HTTP_201_CREATED)
@@ -1657,7 +1659,7 @@ class RFPListCreateView(APIView):
         responses={201: RFPSerializer}
     )
     def post(self, request):
-        serializer = RFPSerializer(data=request.data, context={'request': request})
+        serializer = RFPSerializer(data=clean_request_data_for_serializer(request.data, RFPSerializer), context={'request': request})
         if serializer.is_valid():
             rfp = serializer.save()
             return Response(RFPSerializer(rfp).data, status=status.HTTP_201_CREATED)
@@ -1758,7 +1760,7 @@ class EngagementLetterListCreateView(APIView):
         responses={201: EngagementLetterSerializer}
     )
     def post(self, request):
-        serializer = EngagementLetterSerializer(data=request.data, context={'request': request})
+        serializer = EngagementLetterSerializer(data=clean_request_data_for_serializer(request.data, EngagementLetterSerializer), context={'request': request})
         if serializer.is_valid():
             letter = serializer.save()
             return Response(EngagementLetterSerializer(letter).data, status=status.HTTP_201_CREATED)
@@ -1804,7 +1806,7 @@ class SignatureTrackerListCreateView(APIView):
         responses={201: SignatureTrackerSerializer}
     )
     def post(self, request):
-        serializer = SignatureTrackerSerializer(data=request.data, context={'request': request})
+        serializer = SignatureTrackerSerializer(data=clean_request_data_for_serializer(request.data, SignatureTrackerSerializer), context={'request': request})
         if serializer.is_valid():
             tracker = serializer.save()
             return Response(SignatureTrackerSerializer(tracker).data, status=status.HTTP_201_CREATED)
@@ -1853,7 +1855,7 @@ class ConditionPrecedentListCreateView(APIView):
         responses={201: ConditionPrecedentSerializer}
     )
     def post(self, request):
-        serializer = ConditionPrecedentSerializer(data=request.data, context={'request': request})
+        serializer = ConditionPrecedentSerializer(data=clean_request_data_for_serializer(request.data, ConditionPrecedentSerializer), context={'request': request})
         if serializer.is_valid():
             cp = serializer.save()
             return Response(ConditionPrecedentSerializer(cp).data, status=status.HTTP_201_CREATED)
@@ -1893,7 +1895,7 @@ class ClosingBinderListCreateView(APIView):
         responses={201: ClosingBinderSerializer}
     )
     def post(self, request):
-        serializer = ClosingBinderSerializer(data=request.data, context={'request': request})
+        serializer = ClosingBinderSerializer(data=clean_request_data_for_serializer(request.data, ClosingBinderSerializer), context={'request': request})
         if serializer.is_valid():
             binder = serializer.save()
             return Response(ClosingBinderSerializer(binder).data, status=status.HTTP_201_CREATED)
@@ -1942,7 +1944,7 @@ class CovenantListCreateView(APIView):
         responses={201: CovenantSerializer}
     )
     def post(self, request):
-        serializer = CovenantSerializer(data=request.data, context={'request': request})
+        serializer = CovenantSerializer(data=clean_request_data_for_serializer(request.data, CovenantSerializer), context={'request': request})
         if serializer.is_valid():
             covenant = serializer.save()
             return Response(CovenantSerializer(covenant).data, status=status.HTTP_201_CREATED)
@@ -1987,7 +1989,7 @@ class ConsentFilingListCreateView(APIView):
         responses={201: ConsentFilingSerializer}
     )
     def post(self, request):
-        serializer = ConsentFilingSerializer(data=request.data, context={'request': request})
+        serializer = ConsentFilingSerializer(data=clean_request_data_for_serializer(request.data, ConsentFilingSerializer), context={'request': request})
         if serializer.is_valid():
             filing = serializer.save()
             return Response(ConsentFilingSerializer(filing).data, status=status.HTTP_201_CREATED)
@@ -2024,7 +2026,7 @@ class PortfolioComplianceView(APIView):
         # Get all consent filings
         filings = ConsentFiling.objects.filter(client=client)
         total_filings = filings.count()
-        completed_filings = filings.filter(status='completed').count()
+        completed_filings = filings.filter(status='approved').count()
         pending_filings = filings.filter(status='pending').count()
 
         # Get overdue items
@@ -2035,18 +2037,30 @@ class PortfolioComplianceView(APIView):
 
         overdue_filings = filings.filter(
             due_date__lt=timezone.now().date()
-        ).exclude(status='completed').count()
+        ).exclude(status__in=['approved', 'withdrawn']).count()
 
         compliance_data = {
+            'total_deals': DueDiligenceRun.objects.filter(client=client).count(),
+            'total_obligations': total_covenants + total_filings,
+            'pending_obligations': pending_filings + at_risk_covenants,
+            'overdue_obligations': overdue_covenants + overdue_filings,
+            'upcoming_deadlines': [],
+            'risk_distribution': {
+                'compliant': compliant_covenants,
+                'at_risk': at_risk_covenants,
+                'breached': breached_covenants,
+            },
+            'compliance_by_deal': [],
+            # Covenant / filing detail (kept for existing consumers and reports)
             'total_covenants': total_covenants,
             'compliant_covenants': compliant_covenants,
             'breached_covenants': breached_covenants,
             'at_risk_covenants': at_risk_covenants,
-            'covenant_compliance_rate': (compliant_covenants / total_covenants * 100) if total_covenants > 0 else 0,
+            'covenant_compliance_rate': round(compliant_covenants / total_covenants * 100, 1) if total_covenants else 0.0,
             'total_filings': total_filings,
             'completed_filings': completed_filings,
             'pending_filings': pending_filings,
-            'filing_completion_rate': (completed_filings / total_filings * 100) if total_filings > 0 else 0,
+            'filing_completion_rate': round(completed_filings / total_filings * 100, 1) if total_filings else 0.0,
             'overdue_covenants': overdue_covenants,
             'overdue_filings': overdue_filings,
         }
@@ -2137,6 +2151,14 @@ class RiskHeatmapView(APIView):
         heatmap_data.sort(key=lambda x: x['risk_score'], reverse=True)
 
         response_data = {
+            'heatmap_type': 'portfolio_risk',
+            'categories': [d['deal_name'] for d in heatmap_data],
+            'data': heatmap_data,
+            'summary': {
+                'total_deals': len(heatmap_data),
+                'high_risk_deals': len([d for d in heatmap_data if d['risk_level'] in ['high', 'critical']]),
+            },
+            # Flat fields (kept for existing consumers and reports)
             'deals': heatmap_data,
             'total_deals': len(heatmap_data),
             'high_risk_deals': len([d for d in heatmap_data if d['risk_level'] in ['high', 'critical']]),
@@ -2167,7 +2189,7 @@ class RiskHeatmapView(APIView):
                     service_id_folder=service_id,
                     folder_name="risk-heatmap-results",
                     execution_time_seconds=execution_time,
-                    additional_metadata={"total_deals": len(heatmap_data), "high_risk_deals": response_data['high_risk_deals']},
+                    additional_metadata={"total_deals": response_data['summary']['total_deals'], "high_risk_deals": response_data['summary']['high_risk_deals']},
                     datetime_folder=datetime_folder
                 )
                 final_response['report_file'] = report_info
@@ -2240,7 +2262,16 @@ class PETaskStatusView(APIView):
         try:
             result = AsyncResult(task_id)
             task_status = result.status
+
+            # Ensure status is a plain string (Celery may return exception objects)
+            if not isinstance(task_status, str):
+                task_status = str(task_status)
+
             task_result = result.result if result.ready() else None
+
+            # Ensure result is JSON-serializable
+            if task_result is not None and not isinstance(task_result, (dict, list, str, int, float, bool, type(None))):
+                task_result = str(task_result)
 
             response_data = {
                 'task_id': task_id,
@@ -2264,7 +2295,7 @@ class PETaskStatusView(APIView):
                         response_data['registered_outputs'] = [{
                             'filename': report.report_file.filename,
                             'file_id': report.report_file.id,
-                            'path': report.report_file.filepath
+                            'path': get_logical_path(report.report_file.filepath, report.report_file.filename)
                         }]
                 # For classification tasks, get the classification record
                 elif isinstance(task_result, dict) and 'file_id' in task_result:

@@ -37,6 +37,29 @@ from .views import (
     # Task Status View
     PETaskStatusView,
 )
+from .solutions_views import (
+    PortfolioCompanyListCreateView, PortfolioCompanyDetailView,
+    FundListCreateView, FundDetailView,
+    FinancialRecordListCreateView,
+    DealTargetListCreateView, DealTargetScoreView,
+    InvestmentMemoListCreateView, InvestmentMemoDetailView,
+    CommercialDDListCreateView,
+    EarningsAnalysisListCreateView,
+    DisruptionAssessmentListCreateView,
+    LBOScenarioListCreateView, LBOScenarioDetailView,
+    PortfolioMetricListCreateView,
+    EarlyWarningAlertListView, EarlyWarningScanView,
+    ValueCreationPlanListCreateView, ValueCreationPlanDetailView,
+    ValueCreationInitiativeUpdateView,
+    SpendClassificationListCreateView, SpendAnalysisView,
+    PricingRecommendationListCreateView,
+    LPReportListCreateView,
+    DDQResponseListView, DDQResponseUpdateView,
+    CashFlowForecastListCreateView, CashFlowForecastDetailView,
+    ExitReadinessListCreateView,
+    DataQualityRunListCreateView, DataQualityRunDetailView,
+    DataQualityIssueUpdateView,
+)
 
 app_name = 'private_equity'
 
@@ -153,4 +176,74 @@ urlpatterns = [
 
     # Task Status (similar to TranslationTaskStatusView)
     path('task-status/', PETaskStatusView.as_view(), name='task-status'),
+
+    # ═══════════════════════════════════════════════════════════════
+    # 🚀 PE AI-POWERED SOLUTIONS (15 Solutions)
+    # ═══════════════════════════════════════════════════════════════
+
+    # Foundation: Portfolio Companies
+    path('portfolio-companies/', PortfolioCompanyListCreateView.as_view(), name='portfolio-companies'),
+    path('portfolio-companies/<int:pk>/', PortfolioCompanyDetailView.as_view(), name='portfolio-company-detail'),
+
+    # Foundation: Funds
+    path('funds/', FundListCreateView.as_view(), name='funds'),
+    path('funds/<int:pk>/', FundDetailView.as_view(), name='fund-detail'),
+
+    # Foundation: Financial Records
+    path('financial-records/', FinancialRecordListCreateView.as_view(), name='financial-records'),
+
+    # Solution 1: Deal-Sourcing Intelligence
+    path('deal-targets/', DealTargetListCreateView.as_view(), name='deal-targets'),
+    path('deal-targets/<int:pk>/score/', DealTargetScoreView.as_view(), name='deal-target-score'),
+
+    # Solution 2: IC Copilot
+    path('investment-memos/', InvestmentMemoListCreateView.as_view(), name='investment-memos'),
+    path('investment-memos/<int:pk>/', InvestmentMemoDetailView.as_view(), name='investment-memo-detail'),
+
+    # Solution 3: Commercial DD Platform
+    path('commercial-dd/', CommercialDDListCreateView.as_view(), name='commercial-dd'),
+
+    # Solution 4: Quality-of-Earnings
+    path('earnings-analyses/', EarningsAnalysisListCreateView.as_view(), name='earnings-analyses'),
+
+    # Solution 5: AI Disruption Scanner
+    path('disruption-assessments/', DisruptionAssessmentListCreateView.as_view(), name='disruption-assessments'),
+
+    # Solution 7: LBO & Valuation
+    path('lbo-scenarios/', LBOScenarioListCreateView.as_view(), name='lbo-scenarios'),
+    path('lbo-scenarios/<int:pk>/', LBOScenarioDetailView.as_view(), name='lbo-scenario-detail'),
+
+    # Solution 8: Portfolio Early-Warning
+    path('portfolio-metrics/', PortfolioMetricListCreateView.as_view(), name='portfolio-metrics'),
+    path('early-warning-alerts/', EarlyWarningAlertListView.as_view(), name='early-warning-alerts'),
+    path('early-warning-scan/', EarlyWarningScanView.as_view(), name='early-warning-scan'),
+
+    # Solution 9: Value-Creation OS
+    path('value-creation-plans/', ValueCreationPlanListCreateView.as_view(), name='value-creation-plans'),
+    path('value-creation-plans/<int:pk>/', ValueCreationPlanDetailView.as_view(), name='value-creation-plan-detail'),
+    path('value-creation-initiatives/<int:pk>/', ValueCreationInitiativeUpdateView.as_view(), name='value-creation-initiative-update'),
+
+    # Solution 10: Cross-Portfolio Procurement
+    path('spend-classifications/', SpendClassificationListCreateView.as_view(), name='spend-classifications'),
+    path('spend-analysis/', SpendAnalysisView.as_view(), name='spend-analysis'),
+
+    # Solution 11: Revenue & Pricing Optimizer
+    path('pricing-recommendations/', PricingRecommendationListCreateView.as_view(), name='pricing-recommendations'),
+
+    # Solution 12: LP Reporting & DDQ
+    path('lp-reports/', LPReportListCreateView.as_view(), name='lp-reports'),
+    path('ddq-responses/', DDQResponseListView.as_view(), name='ddq-responses'),
+    path('ddq-responses/<int:pk>/', DDQResponseUpdateView.as_view(), name='ddq-response-update'),
+
+    # Solution 13: Fund Cash-Flow Forecaster
+    path('cashflow-forecasts/', CashFlowForecastListCreateView.as_view(), name='cashflow-forecasts'),
+    path('cashflow-forecasts/<int:pk>/', CashFlowForecastDetailView.as_view(), name='cashflow-forecast-detail'),
+
+    # Solution 14: Exit-Readiness Platform
+    path('exit-readiness-assessments/', ExitReadinessListCreateView.as_view(), name='exit-readiness'),
+
+    # Solution 15: Data Quality Platform
+    path('data-quality-runs/', DataQualityRunListCreateView.as_view(), name='data-quality-runs'),
+    path('data-quality-runs/<int:pk>/', DataQualityRunDetailView.as_view(), name='data-quality-run-detail'),
+    path('data-quality-issues/<int:pk>/', DataQualityIssueUpdateView.as_view(), name='data-quality-issue-update'),
 ]

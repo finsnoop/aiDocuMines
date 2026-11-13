@@ -61,10 +61,10 @@ def get_or_create_nextcloud_oidc_user(user):
     return app
 
 
-def generate_nextcloud_oidc_url(user, state: str, nonce: str) -> str:
+def generate_nextcloud_oidc_url(user) -> str:
     """
-    Construct the full Nextcloud OIDC login URL using externally generated state and nonce.
-    These values must be tracked server-side and validated on return.
+    Construct the full Nextcloud OIDC login URL.
+    Nextcloud handles state/nonce internally via its stored provider config.
     """
     secrets = load_superuser_secrets()
 
@@ -72,24 +72,13 @@ def generate_nextcloud_oidc_url(user, state: str, nonce: str) -> str:
     if not client_id:
         raise ImproperlyConfigured("Missing 'client_id' in superuser secrets.")
 
-    nextcloud_oidc_login_url = os.getenv(
+    nextcloud_base = os.getenv(
         "NEXTCLOUD_URL",
         "https://nextcloud.apps.datasqan.com"
-    ) + "/apps/user_oidc/oidc"
-
-    redirect_uri = os.getenv(
-        "OIDC_REDIRECT_URI",
-        "https://nextcloud.apps.datasqan.com/apps/user_oidc/code"
     )
 
-    query_params = {
-        "client_id": client_id,
-        "response_type": "code",
-        "scope": "openid profile email",
-        "redirect_uri": redirect_uri,
-        "state": state,
-        "nonce": nonce,
-    }
-
-    return f"{nextcloud_oidc_login_url}?{urllib.parse.urlencode(query_params)}"
+    # Redirect to Nextcloud's OIDC login route (provider ID 1 = "aiDocuMines").
+    # Nextcloud will use its stored provider config (client_id, secret, discovery URL)
+    # to build the proper authorization request automatically.
+    return f"{nextcloud_base}/apps/user_oidc/login/1"
 

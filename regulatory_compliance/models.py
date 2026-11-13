@@ -37,8 +37,8 @@ class ComplianceRun(models.Model):
     jurisdiction = models.CharField(max_length=100, blank=True, help_text="Legal jurisdiction")
     
     # Assessment period
-    assessment_start_date = models.DateField(help_text="Start date of assessment period")
-    assessment_end_date = models.DateField(help_text="End date of assessment period")
+    assessment_start_date = models.DateField(null=True, blank=True, help_text="Start date of assessment period")
+    assessment_end_date = models.DateField(null=True, blank=True, help_text="End date of assessment period")
     
     # Key stakeholders
     compliance_officer = models.CharField(max_length=255, blank=True, help_text="Primary compliance officer")
@@ -66,7 +66,7 @@ class RegulatoryRequirement(models.Model):
     """
     client = models.ForeignKey('custom_authentication.Client', on_delete=models.CASCADE, related_name='rc_regulatory_requirements')
     user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='regulatory_requirements')
-    compliance_run = models.ForeignKey(ComplianceRun, on_delete=models.CASCADE, related_name='regulatory_requirements')
+    compliance_run = models.ForeignKey(ComplianceRun, on_delete=models.CASCADE, related_name='regulatory_requirements', null=True, blank=True)
     
     requirement_id = models.CharField(max_length=100, help_text="Unique identifier for the requirement")
     requirement_title = models.CharField(max_length=500, help_text="Title of the regulatory requirement")
@@ -149,10 +149,10 @@ class PolicyMapping(models.Model):
     """
     client = models.ForeignKey('custom_authentication.Client', on_delete=models.CASCADE, related_name='rc_policy_mappings')
     user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='policy_mappings')
-    compliance_run = models.ForeignKey(ComplianceRun, on_delete=models.CASCADE, related_name='policy_mappings')
-    regulatory_requirement = models.ForeignKey(RegulatoryRequirement, on_delete=models.CASCADE, related_name='policy_mappings')
+    compliance_run = models.ForeignKey(ComplianceRun, on_delete=models.CASCADE, related_name='policy_mappings', null=True, blank=True)
+    regulatory_requirement = models.ForeignKey(RegulatoryRequirement, on_delete=models.CASCADE, related_name='policy_mappings', null=True, blank=True)
     
-    policy_document = models.ForeignKey('core.File', on_delete=models.CASCADE, related_name='policy_mappings')
+    policy_document = models.ForeignKey('core.File', on_delete=models.CASCADE, related_name='policy_mappings', null=True, blank=True)
     policy_name = models.CharField(max_length=255, help_text="Name of the policy document")
     policy_section = models.CharField(max_length=255, blank=True, help_text="Specific section of the policy")
     
@@ -196,7 +196,7 @@ class DSARRequest(models.Model):
     """
     client = models.ForeignKey('custom_authentication.Client', on_delete=models.CASCADE, related_name='rc_dsar_requests')
     user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='dsar_requests')
-    compliance_run = models.ForeignKey(ComplianceRun, on_delete=models.CASCADE, related_name='dsar_requests')
+    compliance_run = models.ForeignKey(ComplianceRun, on_delete=models.CASCADE, related_name='dsar_requests', null=True, blank=True)
     
     # Request identification
     request_id = models.CharField(max_length=100, unique=True, help_text="Unique DSAR request identifier")
@@ -292,7 +292,7 @@ class DataInventory(models.Model):
     """
     client = models.ForeignKey('custom_authentication.Client', on_delete=models.CASCADE, related_name='rc_data_inventories')
     user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='data_inventories')
-    compliance_run = models.ForeignKey(ComplianceRun, on_delete=models.CASCADE, related_name='data_inventories')
+    compliance_run = models.ForeignKey(ComplianceRun, on_delete=models.CASCADE, related_name='data_inventories', null=True, blank=True)
     
     # Data processing activity
     activity_name = models.CharField(max_length=255, help_text="Name of the data processing activity")
@@ -363,10 +363,10 @@ class RedactionTask(models.Model):
     """
     client = models.ForeignKey('custom_authentication.Client', on_delete=models.CASCADE, related_name='rc_redaction_tasks')
     user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='redaction_tasks')
-    compliance_run = models.ForeignKey(ComplianceRun, on_delete=models.CASCADE, related_name='redaction_tasks')
+    compliance_run = models.ForeignKey(ComplianceRun, on_delete=models.CASCADE, related_name='redaction_tasks', null=True, blank=True)
     
     task_name = models.CharField(max_length=255, help_text="Name of the redaction task")
-    source_document = models.ForeignKey('core.File', on_delete=models.CASCADE, related_name='redaction_tasks')
+    source_document = models.ForeignKey('core.File', on_delete=models.CASCADE, related_name='redaction_tasks', null=True, blank=True)
     
     # Redaction parameters
     redaction_type = models.CharField(
@@ -434,7 +434,7 @@ class ComplianceAlert(models.Model):
     """
     client = models.ForeignKey('custom_authentication.Client', on_delete=models.CASCADE, related_name='rc_compliance_alerts')
     user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='compliance_alerts')
-    compliance_run = models.ForeignKey(ComplianceRun, on_delete=models.CASCADE, related_name='compliance_alerts')
+    compliance_run = models.ForeignKey(ComplianceRun, on_delete=models.CASCADE, related_name='compliance_alerts', null=True, blank=True)
     
     alert_type = models.CharField(
         max_length=100,
@@ -573,7 +573,7 @@ class ServiceExecution(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     client = models.ForeignKey('custom_authentication.Client', on_delete=models.CASCADE, related_name='rc_service_executions')
     user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='rc_service_executions')
-    compliance_run = models.ForeignKey(ComplianceRun, on_delete=models.CASCADE, related_name='service_executions')
+    compliance_run = models.ForeignKey(ComplianceRun, on_delete=models.CASCADE, related_name='service_executions', null=True, blank=True)
 
     # Service details
     service_type = models.CharField(max_length=50, choices=SERVICE_TYPES)
@@ -629,7 +629,7 @@ class ServiceOutput(models.Model):
     # Core identification
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     client = models.ForeignKey('custom_authentication.Client', on_delete=models.CASCADE, related_name='rc_service_outputs')
-    service_execution = models.ForeignKey(ServiceExecution, on_delete=models.CASCADE, related_name='outputs')
+    service_execution = models.ForeignKey(ServiceExecution, on_delete=models.CASCADE, related_name='outputs', null=True, blank=True)
 
     # Output details
     output_name = models.CharField(max_length=255, help_text="Name/title of the output")

@@ -15,7 +15,8 @@ from document_workflows.serializers import (
 )
 from document_workflows.tasks import execute_workflow_run_task
 from document_workflows.utils import advance_workflow, log_audit, calculate_sla_deadline
-from oauth2_provider.contrib.rest_framework import OAuth2Authentication, TokenHasReadWriteScope
+from oauth2_provider.contrib.rest_framework import TokenHasReadWriteScope
+from custom_authentication.authentication import ClientBoundOAuth2Authentication as OAuth2Authentication
 from drf_yasg.utils import swagger_auto_schema
 from drf_yasg import openapi
 import logging
@@ -140,6 +141,19 @@ class WorkflowStepListAPIView(APIView):
         steps = WorkflowStep.objects.filter(workflow__in=_workflows(request))
         serializer = WorkflowStepSerializer(steps, many=True)
         return Response(serializer.data, status=status.HTTP_200_OK)
+
+    @swagger_auto_schema(
+        operation_description="Create a workflow step.",
+        tags=["Workflow Steps"],
+        manual_parameters=[client_id_param, client_secret_param],
+        request_body=WorkflowStepSerializer,
+    )
+    def post(self, request):
+        serializer = WorkflowStepSerializer(data=request.data)
+        if serializer.is_valid():
+            serializer.save()
+            return Response(serializer.data, status=status.HTTP_201_CREATED)
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
 
 class WorkflowAssignmentListAPIView(APIView):

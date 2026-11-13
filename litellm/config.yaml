@@ -1,0 +1,45 @@
+# LiteLLM proxy configuration for aiDocuMines "Multi-Provider" gateway.
+#
+# Uses provider-wildcard routing so EVERY model from an enabled provider is
+# available without hand-listing them. `check_provider_endpoint: true` makes
+# GET /v1/models query each provider's own model catalog, so the app's model
+# dropdown is populated dynamically and stays current automatically.
+#
+# To enable another provider in production, just add its wildcard block below
+# and set the matching API key in the environment (docker-compose.yml / .env).
+# No per-model maintenance required.
+
+model_list:
+  # ---- OpenAI (all models) ----
+  - model_name: "openai/*"
+    litellm_params:
+      model: "openai/*"
+      api_key: os.environ/OPENAI_API_KEY
+
+  # ---- Anthropic (all models) — enable by setting ANTHROPIC_API_KEY ----
+  # - model_name: "anthropic/*"
+  #   litellm_params:
+  #     model: "anthropic/*"
+  #     api_key: os.environ/ANTHROPIC_API_KEY
+
+  # ---- Google Gemini (all models) — enable by setting GEMINI_API_KEY ----
+  # - model_name: "gemini/*"
+  #   litellm_params:
+  #     model: "gemini/*"
+  #     api_key: os.environ/GEMINI_API_KEY
+
+  # ---- Local Ollama (all pulled models) ----
+  # - model_name: "ollama/*"
+  #   litellm_params:
+  #     model: "ollama/*"
+  #     api_base: http://aidocumines_ollama:11434
+
+general_settings:
+  master_key: os.environ/LITELLM_MASTER_KEY
+
+litellm_settings:
+  # Query each provider's /models endpoint so /v1/models returns the full,
+  # live catalog instead of only statically-listed entries.
+  check_provider_endpoint: true
+  drop_params: true
+  telemetry: false

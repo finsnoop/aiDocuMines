@@ -48,7 +48,7 @@ class NextcloudRedirectView(LoginRequiredMixin, View):
             get_or_create_nextcloud_oidc_user(user)
 
             # Construct login URL
-            url = generate_nextcloud_oidc_url(user, state=state, nonce=nonce)
+            url = generate_nextcloud_oidc_url(user)
             return redirect(url)
 
         except Exception as e:
@@ -77,7 +77,7 @@ class NextcloudAutologinView(APIView):
             NONCE_REGISTRY[user.id] = nonce
 
             # Return direct OIDC URL
-            url = generate_nextcloud_oidc_url(user, state=state, nonce=nonce)
+            url = generate_nextcloud_oidc_url(user)
             return Response({"nextcloud_url": url})
 
         except Exception as e:

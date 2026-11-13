@@ -274,16 +274,38 @@ def process_file(file_id):
 
 @shared_task
 def extract_document_text_task(file_id):
+    """
+    Extracts plain-text content for an uploaded file and drives the
+    File.status lifecycle (Pending -> Processing -> Completed/Failed).
+
+    This task is queued for every upload, so it is the single place where
+    the per-file processing status is finalised. Without it, files would
+    stay "Pending" forever.
+    """
     from core.utils import extract_document_text
 
     try:
         file_obj = File.objects.get(id=file_id)
     except File.DoesNotExist:
+        logger.warning("extract_document_text_task: file %s does not exist.", file_id)
         return
 
-    text = extract_document_text(file_obj.filepath, file_obj.file_type)
-    file_obj.content = text
-    file_obj.save(update_fields=["content"])
+    # Mark the file as actively processing as soon as work starts.
+    if file_obj.status in ("Pending", "Processing"):
+        file_obj.status = "Processing"
+        file_obj.save(update_fields=["status", "updated_at"])
+
+    try:
+        text = extract_document_text(file_obj.filepath, file_obj.file_type)
+        file_obj.content = text or ""
+        file_obj.status = "Completed"
+        file_obj.save(update_fields=["content", "status", "updated_at"])
+        logger.info("✅ Text extraction completed for file_id: %s (%s chars)",
+                    file_id, len(file_obj.content))
+    except Exception as exc:
+        logger.exception("❌ Text extraction failed for file_id %s: %s", file_id, exc)
+        File.objects.filter(id=file_id).update(status="Failed")
+        raise
 
 
 

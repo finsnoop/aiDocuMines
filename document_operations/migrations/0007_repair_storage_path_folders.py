@@ -18,6 +18,6 @@ def repair(apps, schema_editor):
 class Migration(migrations.Migration):
     dependencies = [
         ("document_operations", "0006_filecolortag_foldercolortag_filealias_folderalias"),
-        ("core", "0012_scale_indexes"),
+        ("core", "0014_scale_indexes"),
     ]
     operations = [migrations.RunPython(repair, migrations.RunPython.noop)]

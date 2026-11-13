@@ -40,8 +40,8 @@ class WorkplaceCommunicationsRun(models.Model):
     )
     
     # Analysis parameters
-    analysis_start_date = models.DateTimeField(help_text="Start date for communications analysis")
-    analysis_end_date = models.DateTimeField(help_text="End date for communications analysis")
+    analysis_start_date = models.DateTimeField(null=True, blank=True, help_text="Start date for communications analysis")
+    analysis_end_date = models.DateTimeField(null=True, blank=True, help_text="End date for communications analysis")
     
     # Key personnel
     key_personnel = models.JSONField(
@@ -70,9 +70,9 @@ class CommunicationMessage(models.Model):
     Multi-tenant: Isolated by client.
     """
     client = models.ForeignKey('custom_authentication.Client', on_delete=models.CASCADE, related_name='le_communication_messages')
-    file = models.ForeignKey('core.File', on_delete=models.CASCADE, related_name='le_communication_messages')
+    file = models.ForeignKey('core.File', on_delete=models.CASCADE, related_name='le_communication_messages', null=True, blank=True)
     user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='le_communication_messages')
-    communications_run = models.ForeignKey(WorkplaceCommunicationsRun, on_delete=models.CASCADE, related_name='messages')
+    communications_run = models.ForeignKey(WorkplaceCommunicationsRun, on_delete=models.CASCADE, related_name='messages', null=True, blank=True)
     
     # Message metadata
     message_id = models.CharField(max_length=255, help_text="Unique message identifier from source system")
@@ -136,7 +136,7 @@ class WageHourAnalysis(models.Model):
     """
     client = models.ForeignKey('custom_authentication.Client', on_delete=models.CASCADE, related_name='le_wage_hour_analyses')
     user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='le_wage_hour_analyses')
-    communications_run = models.ForeignKey(WorkplaceCommunicationsRun, on_delete=models.CASCADE, related_name='wage_hour_analyses')
+    communications_run = models.ForeignKey(WorkplaceCommunicationsRun, on_delete=models.CASCADE, related_name='wage_hour_analyses', null=True, blank=True)
     
     # Employee information
     employee_name = models.CharField(max_length=255)
@@ -195,7 +195,7 @@ class PolicyComparison(models.Model):
     """
     client = models.ForeignKey('custom_authentication.Client', on_delete=models.CASCADE, related_name='le_policy_comparisons')
     user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='le_policy_comparisons')
-    communications_run = models.ForeignKey(WorkplaceCommunicationsRun, on_delete=models.CASCADE, related_name='policy_comparisons')
+    communications_run = models.ForeignKey(WorkplaceCommunicationsRun, on_delete=models.CASCADE, related_name='policy_comparisons', null=True, blank=True)
     
     policy_name = models.CharField(max_length=255, help_text="Name of the policy being analyzed")
     policy_type = models.CharField(
@@ -213,7 +213,7 @@ class PolicyComparison(models.Model):
     )
     
     # Policy content
-    policy_document = models.ForeignKey('core.File', on_delete=models.CASCADE, related_name='le_policy_comparisons')
+    policy_document = models.ForeignKey('core.File', on_delete=models.CASCADE, related_name='le_policy_comparisons', null=True, blank=True)
     policy_text = models.TextField(help_text="Extracted policy text")
     
     # Comparison results
@@ -251,7 +251,7 @@ class EEOCPacket(models.Model):
     """
     client = models.ForeignKey('custom_authentication.Client', on_delete=models.CASCADE, related_name='le_eeoc_packets')
     user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='le_eeoc_packets')
-    communications_run = models.ForeignKey(WorkplaceCommunicationsRun, on_delete=models.CASCADE, related_name='eeoc_packets')
+    communications_run = models.ForeignKey(WorkplaceCommunicationsRun, on_delete=models.CASCADE, related_name='eeoc_packets', null=True, blank=True)
     
     packet_name = models.CharField(max_length=255, help_text="Name of the EEOC packet")
     
@@ -327,7 +327,7 @@ class CommunicationPattern(models.Model):
     """
     client = models.ForeignKey('custom_authentication.Client', on_delete=models.CASCADE, related_name='le_communication_patterns')
     user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='le_communication_patterns')
-    communications_run = models.ForeignKey(WorkplaceCommunicationsRun, on_delete=models.CASCADE, related_name='communication_patterns')
+    communications_run = models.ForeignKey(WorkplaceCommunicationsRun, on_delete=models.CASCADE, related_name='communication_patterns', null=True, blank=True)
     
     pattern_type = models.CharField(
         max_length=100,
@@ -384,7 +384,7 @@ class ComplianceAlert(models.Model):
     """
     client = models.ForeignKey('custom_authentication.Client', on_delete=models.CASCADE, related_name='le_compliance_alerts')
     user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='le_compliance_alerts')
-    communications_run = models.ForeignKey(WorkplaceCommunicationsRun, on_delete=models.CASCADE, related_name='compliance_alerts')
+    communications_run = models.ForeignKey(WorkplaceCommunicationsRun, on_delete=models.CASCADE, related_name='compliance_alerts', null=True, blank=True)
     
     alert_type = models.CharField(
         max_length=100,
@@ -512,7 +512,7 @@ class ServiceExecution(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     client = models.ForeignKey('custom_authentication.Client', on_delete=models.CASCADE, related_name='le_service_executions')
     user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='le_service_executions')
-    workplace_communications_run = models.ForeignKey(WorkplaceCommunicationsRun, on_delete=models.CASCADE, related_name='service_executions')
+    workplace_communications_run = models.ForeignKey(WorkplaceCommunicationsRun, on_delete=models.CASCADE, related_name='service_executions', null=True, blank=True)
 
     # Service details
     service_type = models.CharField(max_length=50, choices=SERVICE_TYPES)
@@ -570,7 +570,7 @@ class ServiceOutput(models.Model):
     # Core identification
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     client = models.ForeignKey('custom_authentication.Client', on_delete=models.CASCADE, related_name='le_service_outputs')
-    service_execution = models.ForeignKey(ServiceExecution, on_delete=models.CASCADE, related_name='outputs')
+    service_execution = models.ForeignKey(ServiceExecution, on_delete=models.CASCADE, related_name='outputs', null=True, blank=True)
 
     # Output details
     output_name = models.CharField(max_length=255, help_text="Name/title of the output")

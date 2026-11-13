@@ -8,7 +8,7 @@ from django.db import migrations, models
 class Migration(migrations.Migration):
 
     dependencies = [
-        ('custom_authentication', '0002_twofactorcode'),
+        ('custom_authentication', '0003_alter_useractivitylog_event'),
     ]
 
     operations = [

@@ -29,8 +29,24 @@ def _queue(task, *args, label=""):
     transaction.on_commit(send)
 
 
+def _log_file_activity(instance, event, metadata=None):
+    """Log file-related activity for the owning user."""
+    try:
+        from custom_authentication.utils import log_activity
+        log_activity(instance.user, event, metadata or {
+            "file_id": instance.id,
+            "filename": instance.filename,
+            "project_id": instance.project_id,
+            "service_id": instance.service_id,
+        })
+    except Exception:
+        pass
+
+
 @receiver(post_save, sender=File)
 def index_file_to_elasticsearch(sender, instance, created=False, update_fields=None, **kwargs):
+    if created:
+        _log_file_activity(instance, "FILE_UPLOADED")
     if update_fields and set(update_fields) <= NON_SEARCH_FIELDS:
         return
     from file_elasticsearch.tasks import es_index_file
@@ -63,6 +79,7 @@ def _index_file_to_elasticsearch(instance):
 
 @receiver(post_delete, sender=File)
 def delete_file_from_es_index(sender, instance, **kwargs):
+    _log_file_activity(instance, "FILE_DELETED")
     from document_search.tasks import delete_file_vectors_task
     from file_elasticsearch.tasks import es_delete_file
 

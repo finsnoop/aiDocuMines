@@ -11,6 +11,9 @@ from .views import (
     StorageLocationsView,
     ProjectSummaryView,
     ServiceSummaryView,
+    ProjectListView,
+    ProjectCreateView,
+    UserPreferenceView,
 )
 
 from core.views_bulk import (
@@ -122,6 +125,11 @@ urlpatterns = [
     path("bulk/<str:job_id>/cancel/", BulkJobCancelView.as_view(), name="bulk-cancel"),
     path("bulk/<str:job_id>/retry/", BulkJobRetryView.as_view(), name="bulk-retry"),
     path("bulk/<str:job_id>/download/", BulkJobDownloadView.as_view(), name="bulk-download"),
+
+    # Projects: core/projects/ is served by the Matters API above (same paths, richer model).
+
+    # User preferences
+    path("preferences/", UserPreferenceView.as_view(), name="user-preferences"),
     
 ]
 

@@ -12,7 +12,8 @@ import uuid
 from datetime import datetime
 from django.shortcuts import get_object_or_404
 from oauth2_provider.models import Application
-from oauth2_provider.contrib.rest_framework import OAuth2Authentication, TokenHasReadWriteScope
+from oauth2_provider.contrib.rest_framework import TokenHasReadWriteScope
+from custom_authentication.authentication import ClientBoundOAuth2Authentication as OAuth2Authentication
 from custom_authentication.permissions import IsClientOrAdminOrSuperUser
 from django.http import FileResponse
 import logging

@@ -8,6 +8,7 @@ from django.shortcuts import get_object_or_404
 from django.contrib.auth import get_user_model
 from oauth2_provider.models import Application
 from core.models import File
+from core.utils import get_logical_path
 from document_translation.models import TranslationRun, TranslationFile, TranslationLanguage, TranslationStorage
 
 from document_translation.tasks import (
@@ -17,7 +18,8 @@ from document_translation.tasks import (
 )
 from core.tenancy import ClientScopedViewMixin
 from custom_authentication.permissions import IsAdminOrManagerMutation
-from oauth2_provider.contrib.rest_framework import OAuth2Authentication, TokenHasReadWriteScope
+from oauth2_provider.contrib.rest_framework import TokenHasReadWriteScope
+from custom_authentication.authentication import ClientBoundOAuth2Authentication as OAuth2Authentication
 from drf_yasg.utils import swagger_auto_schema
 from drf_yasg import openapi
 import logging
@@ -380,8 +382,8 @@ class TranslationStorageLocationsView(ClientScopedViewMixin):
         storages = TranslationStorage.objects.filter(run=get_run_for_user(request.user, TranslationRun, run_id))
         return Response([
             {
-                "upload_storage_location": s.upload_storage_location,
-                "translated_storage_location": s.translated_storage_location
+                "upload_storage_location": get_logical_path(s.upload_storage_location),
+                "translated_storage_location": get_logical_path(s.translated_storage_location)
             } for s in storages
         ])
 

@@ -1,6 +1,7 @@
 from rest_framework import serializers
 from django.contrib.auth import get_user_model
 from core.models import Run, File
+from core.utils import get_user_client
 from custom_authentication.models import Client
 from .models import (
     PatentAnalysisRun, PatentDocument, PatentClaim, PriorArtDocument,
@@ -45,6 +46,7 @@ class PatentAnalysisRunCreateSerializer(serializers.ModelSerializer):
     priority_date = serializers.DateField(write_only=True, required=False, allow_null=True, help_text="Patent priority date")
     deadline = serializers.DateField(write_only=True, required=False, allow_null=True, help_text="Key deadline")
     notes = serializers.CharField(write_only=True, required=False, allow_blank=True, help_text="Additional notes")
+    case_name = serializers.CharField(required=False, default='Auto-created Patent Analysis')
 
     class Meta:
         model = PatentAnalysisRun
@@ -121,6 +123,10 @@ class PatentAnalysisRunCreateSerializer(serializers.ModelSerializer):
         )
 
         # Create the PatentAnalysisRun with client for multi-tenancy
+        case_name = validated_data.get('case_name', '')
+        if not case_name or case_name == 'Auto-created Patent Analysis':
+            import uuid as _uuid
+            validated_data['case_name'] = f"IP Analysis - {str(_uuid.uuid4())[:8]}"
         analysis_run = PatentAnalysisRun.objects.create(
             run=run,
             client=client,
@@ -147,8 +153,8 @@ class PatentDocumentSerializer(serializers.ModelSerializer):
     """
     Serializer for PatentDocument model.
     """
-    file_id = serializers.IntegerField(write_only=True, help_text="ID of the File containing patent document")
-    analysis_run_id = serializers.UUIDField(write_only=True, help_text="UUID of the PatentAnalysisRun")
+    file_id = serializers.IntegerField(write_only=True, help_text="ID of the File containing patent document", required=False, default=None)
+    analysis_run_id = serializers.UUIDField(write_only=True, help_text="UUID of the PatentAnalysisRun", required=False, default=None)
 
     # Make these fields optional - they can be auto-generated from the file
     patent_number = serializers.CharField(required=False, allow_blank=True, help_text="Patent number")
@@ -182,21 +188,20 @@ class PatentDocumentSerializer(serializers.ModelSerializer):
         read_only_fields = ['id', 'created_at', 'updated_at']
 
     def create(self, validated_data):
-        file_id = validated_data.pop('file_id')
-        analysis_run_uuid = validated_data.pop('analysis_run_id')  # This is now a UUID
+        file_id = validated_data.pop('file_id', None)
+        analysis_run_uuid = validated_data.pop('analysis_run_id', None)
 
         user = self.context['request'].user
-        file_obj = File.objects.get(id=file_id, user=user)
-        analysis_run = PatentAnalysisRun.objects.get(analysis_run_uuid=analysis_run_uuid, run__user=user)
+        file_obj = File.objects.get(id=file_id, user=user) if file_id else None
+        analysis_run = PatentAnalysisRun.objects.get(analysis_run_uuid=analysis_run_uuid, run__user=user) if analysis_run_uuid else None
 
-        # Get client from user or analysis_run for multi-tenancy
-        client = getattr(user, 'client', None) or analysis_run.client
+        client = getattr(user, 'client', None) or (analysis_run.client if analysis_run else None)
 
         # Auto-generate defaults for optional fields if not provided
-        patent_number = validated_data.get('patent_number') or f"PENDING-{file_obj.id}"
+        patent_number = validated_data.get('patent_number') or f"PENDING-{file_obj.id if file_obj else 'UNKNOWN'}"
         validated_data['patent_number'] = patent_number
         if not validated_data.get('title'):
-            validated_data['title'] = file_obj.filename or f"Patent Document {file_obj.id}"
+            validated_data['title'] = file_obj.filename if file_obj else f"Patent Document"
         if not validated_data.get('patent_office'):
             validated_data['patent_office'] = 'USPTO'
 
@@ -232,8 +237,8 @@ class PatentClaimSerializer(serializers.ModelSerializer):
     """
     Serializer for PatentClaim model.
     """
-    patent_document_id = serializers.IntegerField(write_only=True, help_text="ID of the PatentDocument")
-    analysis_run_id = serializers.UUIDField(write_only=True, help_text="UUID of the PatentAnalysisRun")
+    patent_document_id = serializers.IntegerField(write_only=True, help_text="ID of the PatentDocument", required=False, default=None)
+    analysis_run_id = serializers.UUIDField(write_only=True, help_text="UUID of the PatentAnalysisRun", required=False, default=None)
 
     # Make these fields optional with defaults
     claim_number = serializers.IntegerField(required=False, default=1, help_text="Claim number")
@@ -254,15 +259,14 @@ class PatentClaimSerializer(serializers.ModelSerializer):
         read_only_fields = ['id', 'created_at', 'updated_at']
 
     def create(self, validated_data):
-        patent_document_id = validated_data.pop('patent_document_id')
-        analysis_run_uuid = validated_data.pop('analysis_run_id')  # This is now a UUID
+        patent_document_id = validated_data.pop('patent_document_id', None)
+        analysis_run_uuid = validated_data.pop('analysis_run_id', None)
 
         user = self.context['request'].user
-        patent_document = PatentDocument.objects.get(id=patent_document_id, user=user)
-        analysis_run = PatentAnalysisRun.objects.get(analysis_run_uuid=analysis_run_uuid, run__user=user)
+        patent_document = PatentDocument.objects.get(id=patent_document_id, user=user) if patent_document_id else None
+        analysis_run = PatentAnalysisRun.objects.get(analysis_run_uuid=analysis_run_uuid, run__user=user) if analysis_run_uuid else None
 
-        # Get client from user or analysis_run for multi-tenancy
-        client = getattr(user, 'client', None) or analysis_run.client
+        client = getattr(user, 'client', None) or (analysis_run.client if analysis_run else None)
 
         return PatentClaim.objects.create(
             client=client,
@@ -283,8 +287,8 @@ class PriorArtDocumentSerializer(serializers.ModelSerializer):
     """
     Serializer for PriorArtDocument model.
     """
-    file_id = serializers.IntegerField(write_only=True, help_text="ID of the File containing prior art document")
-    analysis_run_id = serializers.UUIDField(write_only=True, help_text="UUID of the PatentAnalysisRun")
+    file_id = serializers.IntegerField(write_only=True, help_text="ID of the File containing prior art document", required=False, default=None)
+    analysis_run_id = serializers.UUIDField(write_only=True, help_text="UUID of the PatentAnalysisRun", required=False, default=None)
 
     # Make these fields optional - they can be auto-generated from the file
     document_id = serializers.CharField(required=False, allow_blank=True, help_text="Unique document identifier")
@@ -310,23 +314,22 @@ class PriorArtDocumentSerializer(serializers.ModelSerializer):
         read_only_fields = ['id', 'created_at', 'updated_at']
 
     def create(self, validated_data):
-        file_id = validated_data.pop('file_id')
-        analysis_run_uuid = validated_data.pop('analysis_run_id')  # This is now a UUID
+        file_id = validated_data.pop('file_id', None)
+        analysis_run_uuid = validated_data.pop('analysis_run_id', None)
 
         user = self.context['request'].user
-        file_obj = File.objects.get(id=file_id, user=user)
-        analysis_run = PatentAnalysisRun.objects.get(analysis_run_uuid=analysis_run_uuid, run__user=user)
+        file_obj = File.objects.get(id=file_id, user=user) if file_id else None
+        analysis_run = PatentAnalysisRun.objects.get(analysis_run_uuid=analysis_run_uuid, run__user=user) if analysis_run_uuid else None
 
-        # Get client from user or analysis_run for multi-tenancy
-        client = getattr(user, 'client', None) or analysis_run.client
+        client = getattr(user, 'client', None) or (analysis_run.client if analysis_run else None)
 
         # Auto-generate defaults for optional fields if not provided
-        document_id = validated_data.get('document_id') or f"PA-{file_obj.id}-{analysis_run.id}"
+        document_id = validated_data.get('document_id') or f"PA-{file_obj.id if file_obj else '0'}-{analysis_run.id if analysis_run else '0'}"
         validated_data['document_id'] = document_id
         if not validated_data.get('document_type'):
             validated_data['document_type'] = 'prior_art'
         if not validated_data.get('title'):
-            validated_data['title'] = file_obj.filename or f"Prior Art Document {file_obj.id}"
+            validated_data['title'] = file_obj.filename if file_obj else "Prior Art Document"
 
         # Use get_or_create to handle duplicates gracefully
         prior_art_doc, created = PriorArtDocument.objects.get_or_create(
@@ -360,8 +363,8 @@ class ClaimChartSerializer(serializers.ModelSerializer):
     """
     Serializer for ClaimChart model.
     """
-    analysis_run_id = serializers.UUIDField(write_only=True, help_text="UUID of the PatentAnalysisRun")
-    patent_claim_id = serializers.IntegerField(write_only=True, help_text="ID of the PatentClaim")
+    analysis_run_id = serializers.UUIDField(write_only=True, help_text="UUID of the PatentAnalysisRun", required=False, default=None)
+    patent_claim_id = serializers.IntegerField(write_only=True, help_text="ID of the PatentClaim", required=False, default=None)
     target_prior_art_id = serializers.IntegerField(write_only=True, required=False, help_text="ID of the PriorArtDocument")
     supporting_document_ids = serializers.ListField(
         child=serializers.IntegerField(),
@@ -390,17 +393,16 @@ class ClaimChartSerializer(serializers.ModelSerializer):
         read_only_fields = ['id', 'created_at', 'updated_at']
 
     def create(self, validated_data):
-        analysis_run_id = validated_data.pop('analysis_run_id')
-        patent_claim_id = validated_data.pop('patent_claim_id')
+        analysis_run_id = validated_data.pop('analysis_run_id', None)
+        patent_claim_id = validated_data.pop('patent_claim_id', None)
         target_prior_art_id = validated_data.pop('target_prior_art_id', None)
         supporting_document_ids = validated_data.pop('supporting_document_ids', [])
 
         user = self.context['request'].user
-        analysis_run = PatentAnalysisRun.objects.get(analysis_run_uuid=analysis_run_id, run__user=user)
-        patent_claim = PatentClaim.objects.get(id=patent_claim_id, user=user)
+        analysis_run = PatentAnalysisRun.objects.get(analysis_run_uuid=analysis_run_id, run__user=user) if analysis_run_id else None
+        patent_claim = PatentClaim.objects.get(id=patent_claim_id, user=user) if patent_claim_id else None
 
-        # Get client from user or analysis_run for multi-tenancy
-        client = getattr(user, 'client', None) or analysis_run.client
+        client = getattr(user, 'client', None) or (analysis_run.client if analysis_run else None)
 
         target_prior_art = None
         if target_prior_art_id:
@@ -459,7 +461,7 @@ class PatentLandscapeSerializer(serializers.ModelSerializer):
         analysis_run_uuid = validated_data.pop('analysis_run_id')  # This is now a UUID
 
         user = self.context['request'].user
-        analysis_run = PatentAnalysisRun.objects.get(analysis_run_uuid=analysis_run_uuid, run__user=user)
+        analysis_run = PatentAnalysisRun.objects.get(analysis_run_uuid=analysis_run_uuid, run__user=user) if analysis_run_uuid else None
 
         # Get client from user or analysis_run for multi-tenancy
         client = getattr(user, 'client', None) or analysis_run.client
@@ -477,7 +479,7 @@ class InfringementAnalysisSerializer(serializers.ModelSerializer):
     """
     Serializer for InfringementAnalysis model.
     """
-    analysis_run_id = serializers.UUIDField(write_only=True, help_text="UUID of the PatentAnalysisRun")
+    analysis_run_id = serializers.UUIDField(write_only=True, help_text="UUID of the PatentAnalysisRun", required=False, default=None)
     asserted_patent_ids = serializers.ListField(
         child=serializers.IntegerField(),
         write_only=True,
@@ -493,7 +495,10 @@ class InfringementAnalysisSerializer(serializers.ModelSerializer):
     literal_infringement = serializers.CharField(required=False, allow_blank=True, default='unclear', help_text="Literal infringement: yes, no, partial, unclear")
     doctrine_of_equivalents = serializers.CharField(required=False, allow_blank=True, default='not_applicable', help_text="DOE: yes, no, possible, not_applicable")
     infringement_conclusion = serializers.CharField(required=False, allow_blank=True, default='inconclusive', help_text="Conclusion: infringes, does_not_infringe, mixed, inconclusive")
-    confidence_level = serializers.FloatField(required=False, allow_null=True, help_text="Confidence level 0-1")
+    confidence_level = serializers.ChoiceField(
+        choices=[('high', 'High'), ('medium', 'Medium'), ('low', 'Low')],
+        required=False, default='medium', help_text="Confidence level: high, medium, low"
+    )
     detailed_findings = serializers.JSONField(required=False, default=dict, help_text="Detailed findings")
     recommendations = serializers.JSONField(required=False, default=list, help_text="Recommendations list")
 
@@ -512,13 +517,13 @@ class InfringementAnalysisSerializer(serializers.ModelSerializer):
         asserted_patent_ids = validated_data.pop('asserted_patent_ids', [])
 
         user = self.context['request'].user
-        analysis_run = PatentAnalysisRun.objects.get(analysis_run_uuid=analysis_run_uuid, run__user=user)
+        analysis_run = PatentAnalysisRun.objects.get(analysis_run_uuid=analysis_run_uuid, run__user=user) if analysis_run_uuid else None
 
         # Get client from user or analysis_run for multi-tenancy
-        client = getattr(user, 'client', None) or analysis_run.client
+        client = getattr(user, 'client', None) or (analysis_run.client if analysis_run else None)
 
         # Auto-generate defaults for optional fields if not provided
-        analysis_name = validated_data.get('analysis_name') or f"Infringement Analysis - {analysis_run.case_name}"
+        analysis_name = validated_data.get('analysis_name') or f"Infringement Analysis - {analysis_run.case_name if analysis_run else 'Unknown'}"
         validated_data['analysis_name'] = analysis_name
         if not validated_data.get('accused_product'):
             validated_data['accused_product'] = 'Not specified'
@@ -552,8 +557,8 @@ class ValidityChallengeSerializer(serializers.ModelSerializer):
     """
     Serializer for ValidityChallenge model.
     """
-    analysis_run_id = serializers.UUIDField(write_only=True, help_text="UUID of the PatentAnalysisRun")
-    target_patent_id = serializers.IntegerField(write_only=True, help_text="ID of the target PatentDocument")
+    analysis_run_id = serializers.UUIDField(write_only=True, help_text="UUID of the PatentAnalysisRun", required=False, default=None)
+    target_patent_id = serializers.IntegerField(write_only=True, help_text="ID of the target PatentDocument", required=False, default=None)
     prior_art_reference_ids = serializers.ListField(
         child=serializers.IntegerField(),
         write_only=True,
@@ -582,19 +587,18 @@ class ValidityChallengeSerializer(serializers.ModelSerializer):
         read_only_fields = ['id', 'created_at', 'updated_at']
 
     def create(self, validated_data):
-        analysis_run_uuid = validated_data.pop('analysis_run_id')  # This is now a UUID
-        target_patent_id = validated_data.pop('target_patent_id')
+        analysis_run_uuid = validated_data.pop('analysis_run_id', None)
+        target_patent_id = validated_data.pop('target_patent_id', None)
         prior_art_reference_ids = validated_data.pop('prior_art_reference_ids', [])
 
         user = self.context['request'].user
-        analysis_run = PatentAnalysisRun.objects.get(analysis_run_uuid=analysis_run_uuid, run__user=user)
-        target_patent = PatentDocument.objects.get(id=target_patent_id, user=user)
+        analysis_run = PatentAnalysisRun.objects.get(analysis_run_uuid=analysis_run_uuid, run__user=user) if analysis_run_uuid else None
+        target_patent = PatentDocument.objects.get(id=target_patent_id, user=user) if target_patent_id else None
 
-        # Get client from user or analysis_run for multi-tenancy
-        client = getattr(user, 'client', None) or analysis_run.client
+        client = getattr(user, 'client', None) or (analysis_run.client if analysis_run else None)
 
         # Auto-generate defaults for optional fields if not provided
-        challenge_name = validated_data.get('challenge_name') or f"Validity Challenge - {target_patent.title}"
+        challenge_name = validated_data.get('challenge_name') or f"Validity Challenge - {target_patent.title if target_patent else 'Unknown'}"
         validated_data['challenge_name'] = challenge_name
 
         # Use get_or_create to handle duplicates gracefully

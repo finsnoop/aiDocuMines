@@ -10,7 +10,8 @@ from document_translation.utils import get_language_name
 import logging
 import os
 import json
-from oauth2_provider.contrib.rest_framework import OAuth2Authentication, TokenHasReadWriteScope
+from oauth2_provider.contrib.rest_framework import TokenHasReadWriteScope
+from custom_authentication.authentication import ClientBoundOAuth2Authentication as OAuth2Authentication
 
 from rest_framework.permissions import AllowAny
 

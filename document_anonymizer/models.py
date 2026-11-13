@@ -68,6 +68,7 @@ class Anonymize(models.Model):
     risk_score = models.FloatField(blank=True, null=True)
     risk_level = models.CharField(max_length=20, blank=True, null=True)
     risk_breakdown = models.JSONField(blank=True, null=True)
+    risk_contributions = models.JSONField(blank=True, null=True)
 
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='Processing', db_index=True)
     created_at = models.DateTimeField(auto_now_add=True)

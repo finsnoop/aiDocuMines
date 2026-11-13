@@ -72,7 +72,7 @@ class IntakeForm(models.Model):
     """
     client = models.ForeignKey('custom_authentication.Client', on_delete=models.CASCADE, related_name='ca_intake_forms')
     user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='ca_intake_forms')
-    mass_claims_run = models.ForeignKey(MassClaimsRun, on_delete=models.CASCADE, related_name='intake_forms')
+    mass_claims_run = models.ForeignKey(MassClaimsRun, on_delete=models.CASCADE, related_name='intake_forms', null=True, blank=True)
     
     # Claimant identification
     claimant_id = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
@@ -124,9 +124,9 @@ class EvidenceDocument(models.Model):
     Multi-tenant: Isolated by client.
     """
     client = models.ForeignKey('custom_authentication.Client', on_delete=models.CASCADE, related_name='ca_evidence_documents')
-    file = models.ForeignKey('core.File', on_delete=models.CASCADE, related_name='ca_evidence')
+    file = models.ForeignKey('core.File', on_delete=models.CASCADE, related_name='ca_evidence', null=True, blank=True)
     user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='ca_evidence_documents')
-    mass_claims_run = models.ForeignKey(MassClaimsRun, on_delete=models.CASCADE, related_name='evidence_documents')
+    mass_claims_run = models.ForeignKey(MassClaimsRun, on_delete=models.CASCADE, related_name='evidence_documents', null=True, blank=True)
     
     evidence_type = models.CharField(
         max_length=100,
@@ -184,9 +184,9 @@ class PIIRedaction(models.Model):
     Multi-tenant: Isolated by client.
     """
     client = models.ForeignKey('custom_authentication.Client', on_delete=models.CASCADE, related_name='ca_pii_redactions')
-    file = models.ForeignKey('core.File', on_delete=models.CASCADE, related_name='ca_pii_redactions')
+    file = models.ForeignKey('core.File', on_delete=models.CASCADE, related_name='ca_pii_redactions', null=True, blank=True)
     user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='ca_pii_redactions')
-    mass_claims_run = models.ForeignKey(MassClaimsRun, on_delete=models.CASCADE, related_name='pii_redactions')
+    mass_claims_run = models.ForeignKey(MassClaimsRun, on_delete=models.CASCADE, related_name='pii_redactions', null=True, blank=True)
     
     pii_type = models.CharField(
         max_length=50,
@@ -238,7 +238,7 @@ class ExhibitPackage(models.Model):
     """
     client = models.ForeignKey('custom_authentication.Client', on_delete=models.CASCADE, related_name='ca_exhibit_packages')
     user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='ca_exhibit_packages')
-    mass_claims_run = models.ForeignKey(MassClaimsRun, on_delete=models.CASCADE, related_name='exhibit_packages')
+    mass_claims_run = models.ForeignKey(MassClaimsRun, on_delete=models.CASCADE, related_name='exhibit_packages', null=True, blank=True)
     
     package_name = models.CharField(max_length=255, help_text="Name of the exhibit package")
     description = models.TextField(blank=True, help_text="Description of the package contents")
@@ -290,7 +290,7 @@ class SettlementTracking(models.Model):
     Multi-tenant: Isolated by client.
     """
     client = models.ForeignKey('custom_authentication.Client', on_delete=models.CASCADE, related_name='ca_settlement_tracking')
-    mass_claims_run = models.ForeignKey(MassClaimsRun, on_delete=models.CASCADE, related_name='settlement_tracking')
+    mass_claims_run = models.ForeignKey(MassClaimsRun, on_delete=models.CASCADE, related_name='settlement_tracking', null=True, blank=True)
     user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='ca_settlement_tracking')
     
     # Settlement details
@@ -367,8 +367,8 @@ class ClaimantCommunication(models.Model):
     """
     client = models.ForeignKey('custom_authentication.Client', on_delete=models.CASCADE, related_name='ca_claimant_communications')
     user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='ca_claimant_communications')
-    mass_claims_run = models.ForeignKey(MassClaimsRun, on_delete=models.CASCADE, related_name='claimant_communications')
-    intake_form = models.ForeignKey(IntakeForm, on_delete=models.CASCADE, related_name='communications')
+    mass_claims_run = models.ForeignKey(MassClaimsRun, on_delete=models.CASCADE, related_name='claimant_communications', null=True, blank=True)
+    intake_form = models.ForeignKey(IntakeForm, on_delete=models.CASCADE, related_name='communications', null=True, blank=True)
     
     communication_type = models.CharField(
         max_length=50,
@@ -462,7 +462,7 @@ class ServiceExecution(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     client = models.ForeignKey('custom_authentication.Client', on_delete=models.CASCADE, related_name='ca_service_executions')
     user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='ca_service_executions')
-    mass_claims_run = models.ForeignKey(MassClaimsRun, on_delete=models.CASCADE, related_name='service_executions')
+    mass_claims_run = models.ForeignKey(MassClaimsRun, on_delete=models.CASCADE, related_name='service_executions', null=True, blank=True)
 
     # Service details
     service_type = models.CharField(max_length=50, choices=SERVICE_TYPES)
@@ -520,7 +520,7 @@ class ServiceOutput(models.Model):
     # Core identification
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     client = models.ForeignKey('custom_authentication.Client', on_delete=models.CASCADE, related_name='ca_service_outputs')
-    service_execution = models.ForeignKey(ServiceExecution, on_delete=models.CASCADE, related_name='outputs')
+    service_execution = models.ForeignKey(ServiceExecution, on_delete=models.CASCADE, related_name='outputs', null=True, blank=True)
 
     # Output details
     output_name = models.CharField(max_length=255, help_text="Name/title of the output")

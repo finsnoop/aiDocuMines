@@ -8,14 +8,17 @@ from django.conf import settings
 from drf_yasg.utils import swagger_auto_schema
 from drf_yasg import openapi
 import os
+import shutil
 import uuid
+import hashlib
 from datetime import datetime
-from .models import Run, File, Storage, EndpointResponseTable, Metadata
+from .models import Run, File, Storage, EndpointResponseTable, Metadata, Project, UserPreference
 from .tasks import process_metadata
 from django.shortcuts import get_object_or_404
 from oauth2_provider.models import Application
-from oauth2_provider.contrib.rest_framework import OAuth2Authentication, TokenHasReadWriteScope
-from .utils import save_uploaded_file, is_safe_path_segment
+from oauth2_provider.contrib.rest_framework import TokenHasReadWriteScope
+from custom_authentication.authentication import ClientBoundOAuth2Authentication as OAuth2Authentication
+from .utils import save_uploaded_file, get_logical_path, is_safe_path_segment
 from django.http import FileResponse
 import logging
 from django.db.utils import IntegrityError
@@ -34,15 +37,13 @@ import mimetypes
 from document_operations.utils import register_file_folder_link
 
 from core.tasks import extract_document_text_task
-from document_search.tasks import index_file  # at the top of views.py
+from document_search.tasks import index_file, classify_file  # at the top of views.py
 from django.db import transaction
 
 from platform_data_insights.tasks import generate_insights_for_user
 from platform_data_insights.models import UserInsights
 
 from core.tasks import process_bulk_metadata
-
-import mimetypes
 
 from document_anonymizer.models import AnonymizationRun
 from document_anonymizer.tasks import anonymize_document_task, compute_risk_score_task
@@ -231,7 +232,7 @@ class FileUploadView(APIView):
                 final_dir = base_dir
             os.makedirs(final_dir, exist_ok=True)
             final_path = os.path.join(final_dir, str(timestamp)[8:]+"_"+meta["filename"])
-            os.rename(meta["file_path"], final_path)
+            shutil.move(meta["file_path"], final_path)
 
             storage = Storage.objects.create(
                 user=user,
@@ -346,6 +347,9 @@ def queue_post_upload_processing(user, run, fresh, project_id, service_id):
     # NEW:
     transaction.on_commit(lambda: extract_document_text_task.delay(fresh.id))
 
+    # Classify EVERY upload (also types that are not indexed, and MD5 duplicates).
+    transaction.on_commit(lambda: classify_file.delay(fresh.id))
+
     # queue after transaction commits (same pattern you use for indexing)
     transaction.on_commit(trigger_anonymization)
 
@@ -381,7 +385,115 @@ def _link_to_folder(file_obj, user, project_id, service_id):
         leaf_folder = get_or_create_folder_tree(folder_parts, user=user, project_id=project_id, service_id=service_id)
         link_file_to_folder(file_obj, leaf_folder)
     except Exception as e:
-        logger.warning(f"Failed to link file {file_obj.id} to folder tree: {e}")
+         logger.warning(f"Failed to link file {file_obj.id} to folder tree: {e}")
+
+
+def finalize_uploaded_file(*, user, run, project_id, service_id, file_path, filename, client_id, folder_name=None, timestamp=None):
+    if timestamp is None:
+        timestamp = datetime.utcnow().strftime("%Y%m%d%H%M%S")
+    date_prefix = timestamp[:8]
+
+    base_dir = os.path.join(
+        settings.MEDIA_ROOT, "uploads", client_id, str(user.id), project_id, service_id, date_prefix
+    )
+    if folder_name:
+        final_dir = os.path.join(base_dir, folder_name)
+    else:
+        final_dir = base_dir
+    os.makedirs(final_dir, exist_ok=True)
+    final_path = os.path.join(final_dir, str(timestamp)[8:] + "_" + filename)
+
+    if os.path.abspath(file_path) != os.path.abspath(final_path):
+        shutil.move(file_path, final_path)
+
+    file_size = os.path.getsize(final_path)
+
+    with open(final_path, "rb") as f:
+        file_md5 = hashlib.md5(f.read()).hexdigest()
+
+    file_type = mimetypes.guess_type(filename)[0] or "application/octet-stream"
+    _, guessed_ext = mimetypes.guess_type(filename)
+    if guessed_ext:
+        extension = guessed_ext.split("/")[-1].lower()
+    else:
+        extension = os.path.splitext(filename)[-1].replace('.', '').lower() or "unknown"
+
+    storage = Storage.objects.create(
+        user=user,
+        content_type=ContentType.objects.get_for_model(run),
+        upload_storage_location=final_path
+    )
+
+    fresh = File.objects.create(
+        run=run,
+        storage=storage,
+        filename=filename,
+        filepath=final_path,
+        file_size=file_size,
+        file_type=file_type,
+        md5_hash=file_md5,
+        user=user,
+        project_id=project_id,
+        service_id=service_id,
+        extension=extension
+    )
+    register_file_folder_link(fresh)
+
+    def trigger_indexing():
+        try:
+            endpoint_response = EndpointResponseTable.objects.create(
+                run=run,
+                client=user,
+                endpoint_name="/api/v1/document-search/index/",
+                response_data={"auto_trigger": True},
+                status="Pending"
+            )
+            logger.info("Created EndpointResponseTable entry with ID: %s for file_id=%s", endpoint_response.id, fresh.id)
+            index_file.apply_async((fresh.id,), {"force": True}, task_id=str(endpoint_response.id))
+        except Exception as e:
+            logger.exception("Failed to trigger indexing for file_id=%s. Error: %s", fresh.id, str(e))
+
+    def trigger_anonymization():
+        try:
+            file_type_anon = "structured" if fresh.file_type.lower() in [
+                "application/pdf",
+                "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+            ] else "plain"
+            anon_run = AnonymizationRun.objects.create(
+                project_id=project_id,
+                service_id=service_id,
+                client_name=user.username or user.email,
+                status="Processing",
+                anonymization_type="Presidio"
+            )
+            anonymize_document_task.apply_async((fresh.id, file_type_anon, str(anon_run.id)))
+            EndpointResponseTable.objects.create(
+                run=run,
+                client=user,
+                endpoint_name="/api/v1/document-anonymizer/submit-anonymization/",
+                response_data={"auto_trigger": True, "file_id": fresh.id, "file_type": file_type_anon},
+                status="Pending"
+            )
+        except Exception:
+            logger.exception("Failed to queue anonymization for file_id=%s", fresh.id)
+
+    supported_types = ["application/pdf", "application/vnd.openxmlformats-officedocument.wordprocessingml.document"]
+    if fresh.file_type.lower() not in supported_types:
+        logger.info("Skipping indexing for unsupported type: %s", fresh.file_type)
+    elif not getattr(getattr(user, "settings", None), "auto_index_enabled", True):
+        logger.info("Auto-indexing disabled for user %s", user.id)
+    elif File.objects.filter(md5_hash=fresh.md5_hash, vector_chunks__isnull=False).exclude(id=fresh.id).exists():
+        logger.info("Skipping indexing - vector chunks already exist for same MD5: %s", fresh.md5_hash)
+    else:
+        logger.info("Queueing indexing via on_commit for file_id=%s", fresh.id)
+        transaction.on_commit(trigger_indexing)
+
+    transaction.on_commit(lambda: extract_document_text_task.delay(fresh.id))
+    transaction.on_commit(lambda: classify_file.delay(fresh.id))
+    transaction.on_commit(trigger_anonymization)
+    transaction.on_commit(lambda: compute_risk_score_task.apply_async((fresh.id,), countdown=0))
+
+    return _resp(fresh, "File uploaded successfully.")
 
 
 def _resp(f, message):
@@ -520,13 +632,13 @@ class FileDownloadView(APIView):
 
         filename = os.path.basename(real_path)
 
-        # Serve inline for renderable types, attachment only when ?download=true
-        is_download = request.query_params.get("download", "").lower() == "true"
+        # Support ?inline=true for rendering (docx-viewer, pptx-renderer) to avoid browser auto-download
+        as_attachment = request.query_params.get("inline", "false").lower() != "true"
 
         try:
             return FileResponse(
                 open(real_path, "rb"),
-                as_attachment=is_download,
+                as_attachment=as_attachment,
                 filename=filename,
                 content_type=content_type
             )
@@ -565,7 +677,7 @@ class FileDownloadView(APIView):
 
         return FileResponse(
             open(real_path, "rb"),
-            as_attachment=False,
+            as_attachment=True,
             filename=os.path.basename(real_path),
             content_type="application/pdf"
         )
@@ -936,8 +1048,8 @@ class StorageLocationsView(APIView):
         storage = file.storage
 
         return Response({
-            "upload_path": storage.upload_storage_location if storage else None,
-            "output_path": storage.output_storage_location if storage else None,
+            "upload_path": get_logical_path(storage.upload_storage_location) if storage else None,
+            "output_path": get_logical_path(storage.output_storage_location) if storage else None,
         })
 
 
@@ -1017,5 +1129,136 @@ class ServiceSummaryView(APIView):
         })
 
 
+class ProjectListView(APIView):
+    authentication_classes = [OAuth2Authentication]
+    permission_classes = [TokenHasReadWriteScope]
+
+    @swagger_auto_schema(
+        operation_description="List all projects for the current user — from Project model + Folder project_ids.",
+        tags=["Projects"],
+        responses={200: "Success"},
+    )
+    def get(self, request):
+        user = get_user_from_client_id(request.headers.get("X-Client-ID"))
+        if not user:
+            return Response({"error": "Invalid client"}, status=400)
+
+        from document_operations.models import Folder, FileFolderLink
+
+        # 1) Projects from the Project model
+        model_projects = {p.id: p for p in Project.objects.filter(user=user)}
+
+        # 2) Project IDs from the folder structure (what the sidebar uses)
+        folder_project_ids = Folder.objects.filter(user=user).values_list('project_id', flat=True).distinct()
+
+        # Merge both sources
+        all_project_ids = set(model_projects.keys()) | set(folder_project_ids)
+
+        project_list = []
+        for pid in all_project_ids:
+            pid_str = str(pid)
+            proj = model_projects.get(pid)
+            name = proj.project_name if proj else pid_str
+
+            # Service names (second level in sidebar hierarchy)
+            services = list(
+                Folder.objects.filter(user=user, project_id=pid_str, parent__isnull=True)
+                .values_list('service_id', flat=True).distinct()
+            )
+
+            file_count = FileFolderLink.objects.filter(file__project_id=pid_str).count()
+            folder_count = Folder.objects.filter(user=user, project_id=pid_str).count()
+
+            # Active = has at least one non-trashed folder or file visible in the sidebar
+            active_folders = Folder.objects.filter(user=user, project_id=pid_str, is_trashed=False).exists()
+            active_files = FileFolderLink.objects.filter(file__project_id=pid_str, is_trashed=False).exists()
+            is_active = active_folders or active_files
+
+            project_list.append({
+                "id": pid_str,
+                "name": name,
+                "client": name,  # same as project name
+                "services": services,
+                "service_count": len(services),
+                "file_count": file_count,
+                "folder_count": folder_count,
+                "is_active": is_active,
+                "status": "Active" if is_active else "Archived",
+                "created_at": proj.created_at.isoformat() if proj else '',
+            })
+
+        return Response({"projects": project_list})
+
+
+class ProjectCreateView(APIView):
+    authentication_classes = [OAuth2Authentication]
+    permission_classes = [TokenHasReadWriteScope]
+
+    @swagger_auto_schema(
+        operation_description="Create a new project.",
+        tags=["Projects"],
+        request_body=openapi.Schema(
+            type=openapi.TYPE_OBJECT,
+            required=["project_name"],
+            properties={"project_name": openapi.Schema(type=openapi.TYPE_STRING, description="Project name")},
+        ),
+        responses={201: "Created"},
+    )
+    def post(self, request):
+        user = get_user_from_client_id(request.headers.get("X-Client-ID"))
+        if not user:
+            return Response({"error": "Invalid client"}, status=400)
+        project_name = request.data.get("project_name")
+        if not project_name:
+            return Response({"error": "project_name is required"}, status=400)
+        project = Project.objects.create(user=user, project_name=project_name)
+        return Response({
+            "id": str(project.id),
+            "name": project.project_name,
+            "created_at": project.created_at.isoformat(),
+        }, status=201)
+
+
+class UserPreferenceView(APIView):
+    authentication_classes = [OAuth2Authentication]
+    permission_classes = [TokenHasReadWriteScope]
+
+    @swagger_auto_schema(
+        operation_description="Get or update user UI preferences.",
+        tags=["User Preferences"],
+        responses={200: "Success"},
+    )
+    def get(self, request):
+        user = get_user_from_client_id(request.headers.get("X-Client-ID"))
+        if not user:
+            return Response({"error": "Invalid client"}, status=400)
+        prefs, _ = UserPreference.objects.get_or_create(user=user)
+        return Response({
+            "sidebar_pinned": prefs.sidebar_pinned,
+            "updated_at": prefs.updated_at.isoformat() if prefs.updated_at else None,
+        })
+
+    @swagger_auto_schema(
+        operation_description="Update user UI preferences.",
+        tags=["User Preferences"],
+        request_body=openapi.Schema(
+            type=openapi.TYPE_OBJECT,
+            properties={"sidebar_pinned": openapi.Schema(type=openapi.TYPE_BOOLEAN, description="Pin sidebar")},
+        ),
+        responses={200: "Updated"},
+    )
+    def patch(self, request):
+        user = get_user_from_client_id(request.headers.get("X-Client-ID"))
+        if not user:
+            return Response({"error": "Invalid client"}, status=400)
+        prefs, _ = UserPreference.objects.get_or_create(user=user)
+        sidebar_pinned = request.data.get("sidebar_pinned")
+        if sidebar_pinned is not None:
+            prefs.sidebar_pinned = bool(sidebar_pinned)
+            prefs.save()
+        return Response({
+            "sidebar_pinned": prefs.sidebar_pinned,
+            "updated_at": prefs.updated_at.isoformat() if prefs.updated_at else None,
+        })
 
 

@@ -75,6 +75,13 @@ def resolve_endpoint(provider: str, requested: Optional[str]) -> str:
 
 
 def resolve_api_key(provider: str, requested: Optional[str]) -> str:
+    """
+    The key to send. The LiteLLM gateway is always called with the platform's own key:
+    a user-typed key belongs to an underlying provider, and LiteLLM would reject it as a
+    virtual key. Other providers use the caller's key when given, else the server's.
+    """
+    if provider == "litellm":
+        return default_api_key("litellm") or (requested or "").strip()
     return (requested or "").strip() or default_api_key(provider)
 
 
@@ -129,6 +136,8 @@ def list_models(provider: str, endpoint: Optional[str] = None, api_key: Optional
     if provider == "ollama":
         return {"models": data.get("models", []) if isinstance(data, dict) else []}
     items = data.get("data", []) if isinstance(data, dict) else []
+    # LiteLLM lists wildcard routes (e.g. "openai/*"); they are not models anyone can pick.
+    items = [m for m in items if not (isinstance(m, dict) and "*" in str(m.get("id", "")))]
     return {"object": "list", "data": items}
 
 
