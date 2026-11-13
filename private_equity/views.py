@@ -49,13 +49,7 @@ from .tasks import (
 logger = logging.getLogger(__name__)
 
 # Import AI services for enhanced document processing
-try:
-    from document_search.tasks import semantic_search_task, index_file
-    from file_elasticsearch.utils import search_files
-    AI_SERVICES_AVAILABLE = True
-except ImportError:
-    AI_SERVICES_AVAILABLE = False
-    logger.warning("AI services not available - falling back to basic processing")
+AI_SERVICES_AVAILABLE = True  # see core.ai_services
 
 
 class DueDiligenceRunListCreateView(APIView):

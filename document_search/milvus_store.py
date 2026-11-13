@@ -17,9 +17,15 @@ from __future__ import annotations
 import hashlib
 import logging
 import threading
+import warnings
 from functools import wraps
 
-from pymilvus import Collection, CollectionSchema, DataType, FieldSchema, connections, utility
+# Newer pymilvus releases flag the ORM API (connections/Collection) as deprecated
+# ahead of its removal in 3.1. It is fully supported by the pinned 2.6.x client and
+# by Milvus 2.6, so the per-call warnings are noise in the logs.
+warnings.filterwarnings("ignore", message=r".*ORM-style PyMilvus API.*")
+
+from pymilvus import Collection, CollectionSchema, DataType, FieldSchema, connections, utility  # noqa: E402
 
 from document_search import config
 

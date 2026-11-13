@@ -17,18 +17,9 @@ import json
 logger = logging.getLogger(__name__)
 User = get_user_model()
 
-# Import AI services (will be available in production)
-try:
-    from document_search.tasks import semantic_search_task, index_file_task
-    from file_elasticsearch.utils import search_files, index_file
-    from grid_documents_interrogation.tasks import ask_question_task
-    from document_anonymizer.tasks import detect_pii_task, anonymize_document_task
-    from document_translation.tasks import translate_document_task
-    AI_SERVICES_AVAILABLE = True
-except ImportError:
-    # For local development - AI services not yet available
-    AI_SERVICES_AVAILABLE = False
-    logger.warning("AI services not available locally - will be available in production")
+# Practice-area AI on the platform's real search, question answering and PII detection.
+from core.ai_services import semantic_search_task, ask_question_task, detect_pii_task  # noqa: E402
+AI_SERVICES_AVAILABLE = True
 
 
 def call_ai_regulatory_analysis(file_obj, user, regulation_type='general'):
