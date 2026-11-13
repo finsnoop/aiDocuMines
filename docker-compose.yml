@@ -97,6 +97,7 @@ services:
 
   db_prepare:
     build: { context: ., dockerfile: Dockerfile }
+    image: aidocumines-app:latest
     container_name: aidocumines_db_prepare
     command: /app/entrypoint.sh
     depends_on:
@@ -108,6 +109,7 @@ services:
 
   web:
     build: { context: ., dockerfile: Dockerfile }
+    image: aidocumines-app:latest
     container_name: aidocumines_web
     restart: unless-stopped
     command: /app/entrypoint.sh
@@ -136,7 +138,7 @@ services:
 
   celery:
     build: { context: ., dockerfile: Dockerfile }
-    image: aidocumines-celery:latest
+    image: aidocumines-app:latest
     container_name: aidocumines_celery
     restart: unless-stopped
     command: /app/entrypoint.sh
@@ -163,7 +165,7 @@ services:
 
   celery_beat:
     build: { context: ., dockerfile: Dockerfile }
-    image: aidocumines-celery:latest
+    image: aidocumines-app:latest
     container_name: aidocumines_celery_beat
     restart: unless-stopped
     command: /app/entrypoint.sh
@@ -190,7 +192,7 @@ services:
 
   file_monitor:
     build: { context: ., dockerfile: Dockerfile }
-    image: aidocumines-celery:latest
+    image: aidocumines-app:latest
     container_name: aidocumines_file_monitor
     restart: unless-stopped
     command: /usr/bin/supervisord -c /etc/supervisor/conf.d/supervisord.conf
