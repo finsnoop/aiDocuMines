@@ -39,9 +39,13 @@ from .views_matters import (MatterCreateView, MatterDetailView, MatterDocumentsV
                             MatterJobsView, MatterListView, MatterMembersView, MatterPeopleView, MatterRunView,
                             MatterUploadView)
 
+from .views_assistant import AssistantAskView, AssistantStatusView
 urlpatterns = [
     # ✅ File Upload Endpoint
     # Matters (a deal, case or request: documents, workflows, results and team)
+    # Context assistant (chat with a file, folder, matter or project)
+    path("assistant/ask/", AssistantAskView.as_view(), name="assistant-ask"),
+    path("assistant/status/", AssistantStatusView.as_view(), name="assistant-status"),
     path("projects/", MatterListView.as_view(), name="matter-list"),
     path("projects/create/", MatterCreateView.as_view(), name="matter-create"),
     path("projects/<uuid:matter_id>/", MatterDetailView.as_view(), name="matter-detail"),

@@ -344,6 +344,8 @@ ROLE_DEFINITIONS = {
             "classification.submit",
             "search.advanced", "search.saved",
             "analytics.view", "analytics.insights",
+            # Context assistant: chat with a file, folder or matter; optionally with web results.
+            "assistant.ask", "assistant.web",
         ),
         inherits_from=["Guest"],
     ),

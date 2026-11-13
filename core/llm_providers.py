@@ -130,3 +130,49 @@ def list_models(provider: str, endpoint: Optional[str] = None, api_key: Optional
         return {"models": data.get("models", []) if isinstance(data, dict) else []}
     items = data.get("data", []) if isinstance(data, dict) else []
     return {"object": "list", "data": items}
+
+
+# ── Choosing a chat model ─────────────────────────────────────────────────────
+NOT_CHAT = ("embed", "tts", "whisper", "audio", "realtime", "image", "dall-e", "moderation", "transcribe",
+            "search", "instruct", "babbage", "davinci", "codex", "computer-use", "sora")
+PREFERRED = ("gpt-4o-mini", "gpt-4.1-mini", "gpt-4o", "gpt-4.1")
+
+
+def pick_chat_model(ids, preferred=None):
+    """A model that answers chat completions: `preferred` if offered, else a sensible current default."""
+    chat = [i for i in ids if i and not any(w in i.lower() for w in NOT_CHAT)]
+    for want in (preferred, *PREFERRED):
+        if want and want in chat:
+            return want
+    return chat[0] if chat else None
+
+
+def available_chat_model(provider: str):
+    """A working chat model for the provider from its live model list (cached for an hour)."""
+    from django.core.cache import cache
+
+    key = f"llm:chat-model:{provider}"
+    try:
+        cached = cache.get(key)
+        if cached:
+            return cached
+    except Exception:
+        cached = None
+    try:
+        data = list_models(provider)
+        ids = [m.get("name") or m.get("model") for m in data.get("models", [])] if provider == "ollama" \
+            else [m.get("id") for m in data.get("data", [])]
+        model = pick_chat_model(ids)
+    except ProviderError:
+        model = None
+    if model:
+        try:
+            cache.set(key, model, 3600)
+        except Exception:
+            pass
+    return model
+
+
+def is_missing_model_error(exc: Exception) -> bool:
+    text = str(exc).lower()
+    return any(k in text for k in ("deprecated", "does not exist", "model_not_found", "not found", "404", "unknown model"))
