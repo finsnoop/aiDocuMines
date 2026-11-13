@@ -46,7 +46,7 @@ services:
     image: ollama/ollama:latest          # pin latest or a specific version
     container_name: aidocumines_ollama
     restart: unless-stopped
-    ports: ["11435:11434"]
+    ports: ["127.0.0.1:11435:11434"]
     environment:
       # bind to localhost unless you *need* LAN/Internet access
       # if you need LAN: use 0.0.0.0:11434 and protect with a reverse proxy / firewall
@@ -66,7 +66,7 @@ services:
         # image: ollama/ollama
         # container_name: aidocumines_ollama
         # restart: unless-stopped
-        # ports: ["11434:11434"]
+        # ports: ["127.0.0.1:11434:11434"]
         # volumes:
         # - ollama-data:/root/.ollama
         # networks: [captain-overlay-network]
@@ -81,7 +81,7 @@ services:
     container_name: aidocumines_litellm
     restart: unless-stopped
     command: ["--config", "/app/config.yaml", "--port", "4000", "--num_workers", "2"]
-    ports: ["4000:4000"]
+    ports: ["127.0.0.1:4000:4000"]
     volumes:
       - ./litellm/config.yaml:/app/config.yaml:ro
     environment:
@@ -118,8 +118,12 @@ services:
     env_file: [".env"]
     environment:
       SERVICE_NAME: web
-      MILVUS_HOST: milvus
+      MILVUS_HOST: aidocumines_milvus
       MILVUS_PORT: 19530
+      # Own Redis by container name: on the shared CapRover network "redis" can be another app's.
+      CELERY_BROKER_URL: redis://aidocumines_redis:6379/0
+      CELERY_RESULT_BACKEND: redis://aidocumines_redis:6379/0
+      REDIS_URL: redis://aidocumines_redis:6379/1
     depends_on:
       db_prepare: { condition: service_completed_successfully }
       redis: { condition: service_healthy }
@@ -139,8 +143,12 @@ services:
     env_file: [".env"]
     environment:
       SERVICE_NAME: celery
-      MILVUS_HOST: milvus
+      MILVUS_HOST: aidocumines_milvus
       MILVUS_PORT: 19530
+      # Own Redis by container name: on the shared CapRover network "redis" can be another app's.
+      CELERY_BROKER_URL: redis://aidocumines_redis:6379/0
+      CELERY_RESULT_BACKEND: redis://aidocumines_redis:6379/0
+      REDIS_URL: redis://aidocumines_redis:6379/1
     depends_on:
       db_prepare: { condition: service_completed_successfully }
       redis: { condition: service_healthy }
@@ -161,8 +169,12 @@ services:
     env_file: [".env"]
     environment:
       SERVICE_NAME: celery_beat
-      MILVUS_HOST: milvus
+      MILVUS_HOST: aidocumines_milvus
       MILVUS_PORT: 19530
+      # Own Redis by container name: on the shared CapRover network "redis" can be another app's.
+      CELERY_BROKER_URL: redis://aidocumines_redis:6379/0
+      CELERY_RESULT_BACKEND: redis://aidocumines_redis:6379/0
+      REDIS_URL: redis://aidocumines_redis:6379/1
     depends_on:
       db_prepare: { condition: service_completed_successfully }
       redis: { condition: service_healthy }
@@ -186,8 +198,12 @@ services:
     env_file: [".env"]
     environment:
       SERVICE_NAME: file_monitor
-      MILVUS_HOST: milvus
+      MILVUS_HOST: aidocumines_milvus
       MILVUS_PORT: 19530
+      # Own Redis by container name: on the shared CapRover network "redis" can be another app's.
+      CELERY_BROKER_URL: redis://aidocumines_redis:6379/0
+      CELERY_RESULT_BACKEND: redis://aidocumines_redis:6379/0
+      REDIS_URL: redis://aidocumines_redis:6379/1
     depends_on:
       db_prepare: { condition: service_completed_successfully }
     networks: [captain-overlay-network]
@@ -199,10 +215,10 @@ services:
     command: >
       etcd --data-dir /etcd-data
            --listen-client-urls http://0.0.0.0:2379
-           --advertise-client-urls http://milvus-etcd:2379
+           --advertise-client-urls http://aidocumines_milvus_etcd:2379
     volumes: [ "milvus-etcd-data:/etcd-data" ]
     healthcheck:
-      test: ["CMD", "etcdctl", "endpoint", "health", "--endpoints=http://milvus-etcd:2379"]
+      test: ["CMD", "etcdctl", "endpoint", "health", "--endpoints=http://aidocumines_milvus_etcd:2379"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -217,10 +233,10 @@ services:
       MINIO_ACCESS_KEY: minioadmin
       MINIO_SECRET_KEY: minioadmin
       MINIO_BUCKET: milvus-bucket
-    ports: ["9002:9001"]
+    ports: ["127.0.0.1:9002:9001"]
     volumes: [ "milvus-minio-data:/data" ]
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://milvus-minio:9000/minio/health/live"]
+      test: ["CMD", "curl", "-f", "http://aidocumines_milvus_minio:9000/minio/health/live"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -232,7 +248,7 @@ services:
       milvus-minio: { condition: service_healthy }
     entrypoint: >
       sh -c "
-        mc alias set local http://milvus-minio:9000 minioadmin minioadmin &&
+        mc alias set local http://aidocumines_milvus_minio:9000 minioadmin minioadmin &&
         mc mb -p local/milvus-bucket || true
       "
     networks: [captain-overlay-network]
@@ -247,15 +263,15 @@ services:
       milvus-minio:  { condition: service_healthy }
       milvus-minio-init: { condition: service_completed_successfully }
     environment:
-      ETCD_ENDPOINTS:  milvus-etcd:2379
-      MINIO_ADDRESS:   milvus-minio:9000
+      ETCD_ENDPOINTS:  aidocumines_milvus_etcd:2379
+      MINIO_ADDRESS:   aidocumines_milvus_minio:9000
       MINIO_ACCESS_KEY: minioadmin
       MINIO_SECRET_KEY: minioadmin
       MILVUS_LOG_LEVEL: info
       MILVUS_STORAGE_BUCKET_NAME: milvus-bucket
     ports:
-      - "19530:19530"
-      - "9091:9091"
+      - "127.0.0.1:19530:19530"
+      - "127.0.0.1:9091:9091"
     volumes: [ "milvus-data:/var/lib/milvus" ]
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:9091/healthz"]
@@ -270,7 +286,7 @@ services:
     environment:
       - discovery.type=single-node
       - ELASTIC_PASSWORD=changeme
-    ports: ["9200:9200", "9300:9300"]
+    ports: ["127.0.0.1:9200:9200", "127.0.0.1:9300:9300"]
     volumes: [ "elasticsearch_data:/usr/share/elasticsearch/data" ]
     networks: [captain-overlay-network]
     healthcheck:
@@ -305,7 +321,7 @@ services:
     container_name: onlyoffice
     restart: unless-stopped
     # Expose if you want public access directly; otherwise omit and reverse-proxy elsewhere.
-    ports: ["8085:80"]
+    ports: ["127.0.0.1:8085:80"]
     environment:
       # JWT – exact same secret as Django via .env
       JWT_ENABLED: "true"

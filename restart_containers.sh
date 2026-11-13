@@ -51,10 +51,10 @@ restart_if_needed() {
 # Always restart app containers (they run our code)
 # ──────────────────────────────────────────────────────────
 echo "── Application containers ──"
-for container in aidocumines_web aidocumines_celery; do
+for container in aidocumines_web aidocumines_celery aidocumines_celery_beat; do
     status=$(docker inspect --format '{{.State.Status}}' "$container" 2>/dev/null | tr -d '[:space:]' || true)
     if [ -z "$status" ]; then
-        echo -e "${RED}✗  $container does not exist${NC}"
+        echo -e "${YELLOW}⚠  $container does not exist — start it with: docker compose up -d --no-deps ${container#aidocumines_}${NC}"
     else
         echo -e "${YELLOW}⟳  Restarting $container${NC}"
         if docker restart "$container" >/dev/null 2>&1; then
@@ -70,7 +70,8 @@ done
 # ──────────────────────────────────────────────────────────
 echo ""
 echo "── Infrastructure containers ──"
-for container in aidocumines_api_layer_db aidocumines_redis_watchdog aidocumines_milvus aidocumines_elasticsearch aidocumines_ollama; do
+# Only aiDocuMines' own containers (never CapRover srv-* ones, which CapRover replaces itself)
+for container in aidocumines_api_layer_db aidocumines_redis aidocumines_milvus_etcd aidocumines_milvus_minio aidocumines_milvus aidocumines_elasticsearch aidocumines_litellm; do
     restart_if_needed "$container"
 done
 

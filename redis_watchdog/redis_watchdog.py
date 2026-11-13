@@ -4,7 +4,8 @@ import logging
 
 logging.basicConfig(level=logging.INFO, format='[%(asctime)s] %(message)s')
 
-REDIS_HOST = "redis"
+import os
+REDIS_HOST = os.getenv("REDIS_HOST", "aidocumines_redis")
 REDIS_PORT = 6379
 CHECK_INTERVAL = 30  # seconds
 
