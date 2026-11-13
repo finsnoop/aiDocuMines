@@ -211,9 +211,13 @@ SWAGGER_SETTINGS = {
 
 # Elasticsearch DSL config (modern elasticsearch-dsl)
 ELASTICSEARCH_DSL = {
-    'default': {
-        'hosts': 'http://aidocumines_elasticsearch:9200',
-        'http_auth': ('elastic', 'changeme'),
+    "default": {
+        "hosts": os.getenv("ELASTICSEARCH_URL", "http://aidocumines_elasticsearch:9200"),
+        "http_auth": (os.getenv("ELASTICSEARCH_USER", "elastic"), os.getenv("ELASTICSEARCH_PASSWORD", "changeme")),
+        # Fail fast and retry instead of hanging requests when Elasticsearch is busy.
+        "timeout": int(os.getenv("ELASTICSEARCH_TIMEOUT", "10")),
+        "retry_on_timeout": True,
+        "max_retries": 3,
     }
 }
 
@@ -323,6 +327,31 @@ CELERY_TASK_SERIALIZER = "json"
 CELERY_RESULT_SERIALIZER = "json"
 CELERY_TIMEZONE = "UTC"
 CELERY_BROKER_CONNECTION_RETRY_ON_STARTUP = True
+
+# Reliability (Redis broker):
+#  * visibility_timeout must exceed the longest task, or Redis re-delivers a running
+#    task to a second worker and it runs twice (bulk OCR/translation can take hours).
+#  * results live for a week so job status survives overnight (default is one day).
+#  * acks_late + prefetch 1: a task lost with a crashed worker is re-run, and long
+#    tasks do not sit reserved behind each other.
+CELERY_BROKER_TRANSPORT_OPTIONS = {
+    "visibility_timeout": int(os.getenv("CELERY_VISIBILITY_TIMEOUT", str(12 * 3600))),
+    "socket_keepalive": True,
+    "retry_on_timeout": True,
+    "health_check_interval": 30,
+}
+CELERY_RESULT_BACKEND_TRANSPORT_OPTIONS = {"retry_on_timeout": True, "health_check_interval": 30}
+CELERY_RESULT_EXPIRES = int(os.getenv("CELERY_RESULT_EXPIRES", str(7 * 24 * 3600)))
+CELERY_TASK_ACKS_LATE = True
+CELERY_TASK_REJECT_ON_WORKER_LOST = True
+CELERY_WORKER_PREFETCH_MULTIPLIER = 1
+CELERY_BROKER_POOL_LIMIT = 20
+
+# Nightly self-healing of the search indexes (picked up by the database beat scheduler).
+from celery.schedules import crontab  # noqa: E402
+CELERY_BEAT_SCHEDULE = {
+    "repair-search-indexes": {"task": "document_search.repair_search_indexes", "schedule": crontab(hour=2, minute=30)},
+}
 
 EMAIL_BACKEND = "django.core.mail.backends.smtp.EmailBackend"
 EMAIL_HOST = "smtp.gmail.com"

@@ -81,301 +81,214 @@ except ImportError:
 
 LOGGER = logging.getLogger(__name__)
 
-# ───────────────────────────── Milvus bootstrap ─────────────────────────────
-from pymilvus import (
-    connections,
-    utility,
-    FieldSchema,
-    CollectionSchema,
-    DataType,
-    Collection,
-)
-
-def _build_index_params():
-    """Return index params based on configured index type."""
-    if MILVUS_INDEX_TYPE == "HNSW":
-        return {
-            "index_type": "HNSW",
-            "metric_type": MILVUS_METRIC_TYPE,
-            "params": {
-                "M": MILVUS_M,
-                "efConstruction": MILVUS_EF_CONSTRUCTION,
-            },
-        }
-    elif MILVUS_INDEX_TYPE == "IVF_SQ8":
-        return {
-            "index_type": "IVF_SQ8",
-            "metric_type": MILVUS_METRIC_TYPE,
-            "params": {"nlist": MILVUS_NLIST},
-        }
-    elif MILVUS_INDEX_TYPE == "DISKANN":
-        return {
-            "index_type": "DISKANN",
-            "metric_type": MILVUS_METRIC_TYPE,
-        }
-    else:
-        return {
-            "index_type": "IVF_FLAT",
-            "metric_type": MILVUS_METRIC_TYPE,
-            "params": {"nlist": MILVUS_NLIST},
-        }
+# ───────────────────────────── Milvus access ────────────────────────────────
+from document_search import milvus_store  # noqa: E402
 
 
-def _ensure_collection() -> Collection:
-    """Connect and create the single global collection if absent."""
-    if not connections.has_connection("default"):
-        connections.connect(alias="default", host=MILVUS_HOST, port=MILVUS_PORT)
-
-    if not utility.has_collection(COLLECTION_NAME):
-        LOGGER.info("Creating Milvus collection '%s' with index '%s' ...", COLLECTION_NAME, MILVUS_INDEX_TYPE)
-
-        schema = CollectionSchema(
-            [
-                FieldSchema("pk",         DataType.INT64, is_primary=True, auto_id=True),
-                FieldSchema("file_id",    DataType.INT64),
-                FieldSchema("client_id",  DataType.INT64),
-                FieldSchema("chunk_hash", DataType.INT64),
-                FieldSchema("source",     DataType.VARCHAR, max_length=256),
-                FieldSchema("chunk_text", DataType.VARCHAR, max_length=5000),
-                FieldSchema("vector",     DataType.FLOAT_VECTOR, dim=VECTOR_DIM),
-            ],
-            description="Chunked document embeddings (multi-tenant, billion-scale)",
-        )
-
-        coll = Collection(name=COLLECTION_NAME, schema=schema)
-        coll.create_index(field_name="vector", index_params=_build_index_params())
-        coll.create_index(field_name="file_id", index_params={"index_type": "STL_SORT"})
-        coll.create_index(field_name="client_id", index_params={"index_type": "STL_SORT"})
-        LOGGER.info("Milvus collection '%s' created with index '%s'", COLLECTION_NAME, MILVUS_INDEX_TYPE)
-        return coll
-
-    coll = Collection(COLLECTION_NAME)
-    existing_fields = [f.name for f in coll.schema.fields]
-    if "client_id" not in existing_fields:
-        LOGGER.warning("Milvus collection '%s' missing client_id; dropping. Re-index needed.", COLLECTION_NAME)
-        coll.drop()
-        return _ensure_collection()
-    return coll
-
-
-def _ensure_partition(coll: Collection, name: str) -> None:
-    """Create partition for user if missing."""
-    if not coll.has_partition(name):
-        coll.create_partition(name)
-
-
-def _insert_batches(
-    coll: Collection,
-    rows: List[Tuple[int, int, int, str, str, List[float]]],   # (file_id, client_id, chunk_hash, source, chunk_text, vector)
-    partition: str,
-    batch: int = BATCH_SZ,
-) -> None:
-    """Safe batched insert to Milvus."""
-    for i in range(0, len(rows), batch):
-        slice_ = rows[i: i + batch]
-        try:
-            coll.insert(
-                [
-                    [r[0] for r in slice_],  # file_id
-                    [r[1] for r in slice_],  # client_id
-                    [r[2] for r in slice_],  # chunk_hash
-                    [r[3] for r in slice_],  # source (filename)
-                    [r[4] for r in slice_],  # chunk_text
-                    [r[5] for r in slice_],  # vector
-                ],
-                partition_name=partition,
-            )
-        except Exception as exc:
-            LOGGER.error("Milvus insert error @batch %s: %s", i // batch, exc)
+def _ensure_collection():
+    """Loaded collection (kept for callers in views and commands)."""
+    return milvus_store.get_collection()
 
 
 def _partition_name(user_id: int) -> str:
     return f"{PARTITION_PREFIX}{user_id}"
 
 
-# ───────────────────────────── Celery tasks ─────────────────────────────────
-@shared_task(name="document_search.index_file")
-def index_file(file_id: int, force: bool = False) -> dict:
-    """
-    Index a single File into Milvus + VectorChunk.
+INDEX_VERSION_KEY = "search:index_version"
+LOCK_TTL = 15 * 60  # seconds; a crashed worker cannot block a file for longer
 
-    Parameters
-    ----------
-    file_id : PK of core.File
-    force   : Re-index even if chunks already exist.
-    """
+
+def _bump_index_version() -> None:
     try:
-        file = File.objects.select_related("user").get(pk=file_id)
-    except File.DoesNotExist:
-        LOGGER.error("File %s does not exist.", file_id)
+        cache.incr(INDEX_VERSION_KEY)
+    except ValueError:
+        cache.set(INDEX_VERSION_KEY, 1, timeout=None)
+    except Exception:  # cache down: searches simply miss the cache
+        pass
+
+
+def _index_version() -> int:
+    try:
+        return int(cache.get(INDEX_VERSION_KEY) or 0)
+    except Exception:
+        return 0
+
+
+def _query_key(*parts) -> str:
+    import hashlib
+    raw = "|".join(str(p) for p in parts)
+    return hashlib.sha1(raw.encode("utf-8")).hexdigest()
+
+
+# ───────────────────────────── Celery tasks ─────────────────────────────────
+@shared_task(
+    name="document_search.index_file",
+    bind=True,
+    acks_late=True,
+    autoretry_for=(Exception,),
+    dont_autoretry_for=(File.DoesNotExist,),
+    retry_backoff=30,
+    retry_backoff_max=1800,
+    retry_jitter=True,
+    max_retries=6,
+)
+def index_file(self, file_id: int, force: bool = False) -> dict:
+    """
+    Index one File into Milvus (vectors) and VectorChunk (cached embeddings).
+
+    Safe to run any number of times: a per-file lock stops concurrent runs, Milvus
+    rows for the file are replaced (never duplicated), and the file only counts as
+    indexed once Milvus accepted the vectors, so a failure is retried instead of
+    being remembered as done.
+    """
+    file = File.objects.select_related("user", "user__client").filter(pk=file_id).first()
+    if file is None:
+        LOGGER.warning("index_file: file %s does not exist (deleted or not committed).", file_id)
         return {"status": "error", "detail": "file-not-found"}
 
     if not force and file.vector_chunks.exists():
-        LOGGER.debug("File %s already indexed; skipping.", file_id)
         return {"status": "skipped"}
 
-    # 1️⃣ Extract ▸ Chunk ▸ Embed
-    chunks, vectors = compute_chunks(file.filepath)
+    lock_key = f"lock:index_file:{file_id}"
+    try:
+        acquired = cache.add(lock_key, self.request.id or "1", timeout=LOCK_TTL)
+    except Exception:
+        acquired = True  # cache unavailable: indexing is idempotent anyway
+    if not acquired:
+        return {"status": "in-progress"}
 
-    # ── Lightweight whole-doc type classification (single embed) ─────────
+    try:
+        chunks, vectors = compute_chunks(file.filepath)
+        _classify_document(file, chunks)
+        if not chunks:
+            LOGGER.warning("No extractable text for file %s (%s).", file_id, file.filename)
+            milvus_store.delete_file_vectors(file.id)
+            VectorChunk.objects.filter(file=file).delete()
+            return {"status": "empty"}
+
+        client_id = file.user.client_id if file.user and file.user.client_id else -1
+        stored = milvus_store.replace_file_vectors(file.id, file.user_id, client_id, file.filename, chunks, vectors)
+
+        with transaction.atomic():
+            VectorChunk.objects.filter(file=file).delete()
+            VectorChunk.objects.bulk_create(
+                [VectorChunk(file=file, user_id=file.user_id, chunk_index=i, chunk_text=txt, embedding=vec)
+                 for i, (txt, vec) in enumerate(zip(chunks, vectors))],
+                batch_size=500,
+            )
+        _bump_index_version()
+        LOGGER.info("Indexed file %s: %s chunks (%s stored in Milvus).", file_id, len(chunks), stored)
+        return {"status": "ok", "chunks": len(chunks)}
+    finally:
+        try:
+            cache.delete(lock_key)
+        except Exception:
+            pass
+
+
+def _classify_document(file, chunks) -> None:
+    """Lightweight whole-document type label from one embedding (no File.save: avoids re-index signals)."""
     all_text = " ".join(chunks) if chunks else ""
-    if all_text.strip():
-        embed_model = _get_model()
-        doc_embedding = embed_model.encode([all_text])[0]
+    if not all_text.strip():
+        File.objects.filter(pk=file.pk).update(document_type="Unknown")
+        return
+    embed_model = _get_model()
+    doc_embedding = embed_model.encode([all_text[:20000]])[0]
+    labels = {
+        # Legal & Compliance
+        "Contract": "Legal contract between parties with terms and signatures.",
+        "Legal Agreement": "Legal obligations, rights, or terms between parties.",
+        "NDA": "Non-disclosure agreement restricting sharing confidential information.",
+        "SLA": "Service level agreement with performance standards and responsibilities.",
+        "Court Order": "Orders or judgments issued by a court.",
+        "Legal Complaint": "Formal legal complaint filed in court.",
+        "Terms and Conditions": "Rules and legal agreements for using products or services.",
+        "Privacy Policy": "Explains how personal data is collected and used.",
+        "Policy Document": "Official rules or guidelines that must be followed.",
+        "Permit": "Legal permission granted for specific activities.",
+        "License": "Authorization document granting legal permission.",
+        "Certificate": "Official document verifying a fact or achievement.",
+        "Will": "Estate distribution instructions after death.",
+        # Finance & Accounting
+        "Financial Report": "Financial results, performance, or analysis.",
+        "Income Statement": "Revenue and expenses over a period.",
+        "Balance Sheet": "Assets, liabilities, and equity snapshot.",
+        "Cash Flow Statement": "Cash inflows and outflows over a period.",
+        "Budget": "Planned income and expenses for a period.",
+        "Invoice": "Bill for payment with items and totals.",
+        "Receipt": "Acknowledgment of payment received.",
+        "Bank Statement": "Account transactions and balances.",
+        "Audit Report": "Independent financial audit opinion.",
+        "Payroll Report": "Employee wages and deductions summary.",
+        "Purchase Order": "Authorization to buy goods or services.",
+        "Bill of Lading": "Receipt of goods for shipment.",
+        "Statement of Work": "Project deliverables, scope, and responsibilities.",
+        # Business & Operations
+        "Business Proposal": "Proposes plans, services, or products to a client.",
+        "Business Plan": "Business strategies, objectives, and forecasts.",
+        "RFP Response": "Response to a request for proposal.",
+        "SOP": "Standard operating procedure with step-by-step instructions.",
+        "Project Report": "Project progress, findings, or results.",
+        "Meeting Minutes": "Discussion points and decisions from meetings.",
+        "Memo": "Formal internal communication message.",
+        "Agenda": "List of topics to be discussed in a meeting.",
+        "Checklist": "Tasks or items to complete or verify.",
+        "Schedule": "Timeline or plan with dates and times.",
+        "Log File": "System, server, or application log entries.",
+        "User Manual": "Instructions for using a product or system.",
+        "Technical Specification": "Detailed technical requirements and designs.",
+        "Runbook": "Operational procedures for incidents or maintenance.",
+        "Architecture Diagram": "System architecture documentation overview.",
+        # Sales & Marketing
+        "Press Release": "Public announcement of news or events.",
+        "Brochure": "Marketing or informational pamphlet.",
+        "Advertisement": "Promotes products, services, or events.",
+        "Price List": "Catalog of products or services with prices.",
+        "Statement of Capabilities": "Company capabilities and differentiators.",
+        # HR & Talent
+        "Resume": "Work experience and skills summary.",
+        "Cover Letter": "Letter expressing job interest accompanying a resume.",
+        "Offer Letter": "Employment offer details and terms.",
+        "Job Description": "Role responsibilities and required qualifications.",
+        "Performance Review": "Employee performance evaluation.",
+        # Medical & Insurance
+        "Medical Report": "Medical or health record details and assessments.",
+        "Prescription": "Medication or treatment directive by a clinician.",
+        "Lab Result": "Medical or laboratory test outcomes.",
+        "Patient Summary": "Patient medical history and conditions.",
+        "Insurance Claim": "Request to insurer for reimbursement.",
+        "EOB": "Explanation of benefits document from insurer.",
+        # Research & Education
+        "Research Paper": "Academic research findings and analysis.",
+        "White Paper": "Authoritative information or solution on a topic.",
+        "Case Study": "Detailed analysis of a specific example.",
+        "Thesis": "Lengthy academic dissertation.",
+        "Lecture Notes": "Notes from educational lectures.",
+        "Transcript": "Verbatim record of spoken words or courses.",
+        "Dataset Description": "Metadata and description for datasets.",
+        # IT & Security
+        "Security Policy": "Information security rules and standards.",
+        "Vulnerability Report": "Security weaknesses and remediation.",
+        "Penetration Test Report": "Results of simulated attacks and fixes.",
+        "Incident Report": "Security incident details and timeline.",
+        "Change Request": "Proposed system change and approvals.",
+        "Release Notes": "Software release changes and fixes.",
+        # Government & Public
+        "Notice": "Official information or updates to the public.",
+        "Regulatory Filing": "Submission to a regulator or exchange.",
+        # Misc
+        "FAQ": "Frequently asked questions and answers.",
+        "Summary": "Condensed version of longer content.",
+        "Newsletter": "Periodic news or updates for readers.",
+        "Unclassified": "Document type cannot be determined.",
+    }
 
-        # Expanded label set (grouped; keep strings concise)
-        labels = {
-            # Legal & Compliance
-            "Contract": "Legal contract between parties with terms and signatures.",
-            "Legal Agreement": "Legal obligations, rights, or terms between parties.",
-            "NDA": "Non-disclosure agreement restricting sharing confidential information.",
-            "SLA": "Service level agreement with performance standards and responsibilities.",
-            "Court Order": "Orders or judgments issued by a court.",
-            "Legal Complaint": "Formal legal complaint filed in court.",
-            "Terms and Conditions": "Rules and legal agreements for using products or services.",
-            "Privacy Policy": "Explains how personal data is collected and used.",
-            "Policy Document": "Official rules or guidelines that must be followed.",
-            "Permit": "Legal permission granted for specific activities.",
-            "License": "Authorization document granting legal permission.",
-            "Certificate": "Official document verifying a fact or achievement.",
-            "Will": "Estate distribution instructions after death.",
-            # Finance & Accounting
-            "Financial Report": "Financial results, performance, or analysis.",
-            "Income Statement": "Revenue and expenses over a period.",
-            "Balance Sheet": "Assets, liabilities, and equity snapshot.",
-            "Cash Flow Statement": "Cash inflows and outflows over a period.",
-            "Budget": "Planned income and expenses for a period.",
-            "Invoice": "Bill for payment with items and totals.",
-            "Receipt": "Acknowledgment of payment received.",
-            "Bank Statement": "Account transactions and balances.",
-            "Audit Report": "Independent financial audit opinion.",
-            "Payroll Report": "Employee wages and deductions summary.",
-            "Purchase Order": "Authorization to buy goods or services.",
-            "Bill of Lading": "Receipt of goods for shipment.",
-            "Statement of Work": "Project deliverables, scope, and responsibilities.",
-            # Business & Operations
-            "Business Proposal": "Proposes plans, services, or products to a client.",
-            "Business Plan": "Business strategies, objectives, and forecasts.",
-            "RFP Response": "Response to a request for proposal.",
-            "SOP": "Standard operating procedure with step-by-step instructions.",
-            "Project Report": "Project progress, findings, or results.",
-            "Meeting Minutes": "Discussion points and decisions from meetings.",
-            "Memo": "Formal internal communication message.",
-            "Agenda": "List of topics to be discussed in a meeting.",
-            "Checklist": "Tasks or items to complete or verify.",
-            "Schedule": "Timeline or plan with dates and times.",
-            "Log File": "System, server, or application log entries.",
-            "User Manual": "Instructions for using a product or system.",
-            "Technical Specification": "Detailed technical requirements and designs.",
-            "Runbook": "Operational procedures for incidents or maintenance.",
-            "Architecture Diagram": "System architecture documentation overview.",
-            # Sales & Marketing
-            "Press Release": "Public announcement of news or events.",
-            "Brochure": "Marketing or informational pamphlet.",
-            "Advertisement": "Promotes products, services, or events.",
-            "Price List": "Catalog of products or services with prices.",
-            "Statement of Capabilities": "Company capabilities and differentiators.",
-            # HR & Talent
-            "Resume": "Work experience and skills summary.",
-            "Cover Letter": "Letter expressing job interest accompanying a resume.",
-            "Offer Letter": "Employment offer details and terms.",
-            "Job Description": "Role responsibilities and required qualifications.",
-            "Performance Review": "Employee performance evaluation.",
-            # Medical & Insurance
-            "Medical Report": "Medical or health record details and assessments.",
-            "Prescription": "Medication or treatment directive by a clinician.",
-            "Lab Result": "Medical or laboratory test outcomes.",
-            "Patient Summary": "Patient medical history and conditions.",
-            "Insurance Claim": "Request to insurer for reimbursement.",
-            "EOB": "Explanation of benefits document from insurer.",
-            # Research & Education
-            "Research Paper": "Academic research findings and analysis.",
-            "White Paper": "Authoritative information or solution on a topic.",
-            "Case Study": "Detailed analysis of a specific example.",
-            "Thesis": "Lengthy academic dissertation.",
-            "Lecture Notes": "Notes from educational lectures.",
-            "Transcript": "Verbatim record of spoken words or courses.",
-            "Dataset Description": "Metadata and description for datasets.",
-            # IT & Security
-            "Security Policy": "Information security rules and standards.",
-            "Vulnerability Report": "Security weaknesses and remediation.",
-            "Penetration Test Report": "Results of simulated attacks and fixes.",
-            "Incident Report": "Security incident details and timeline.",
-            "Change Request": "Proposed system change and approvals.",
-            "Release Notes": "Software release changes and fixes.",
-            # Government & Public
-            "Notice": "Official information or updates to the public.",
-            "Regulatory Filing": "Submission to a regulator or exchange.",
-            # Misc
-            "FAQ": "Frequently asked questions and answers.",
-            "Summary": "Condensed version of longer content.",
-            "Newsletter": "Periodic news or updates for readers.",
-            "Unclassified": "Document type cannot be determined.",
-        }
-
-        label_texts = list(labels.values())
-        label_names = list(labels.keys())
-        label_embeddings = embed_model.encode(label_texts)
-
-        from sklearn.metrics.pairwise import cosine_similarity
-        scores = cosine_similarity([doc_embedding], label_embeddings)
-        best_idx = scores.argmax()
-        best_label = label_names[best_idx]
-
-        file.document_type = best_label
-        file.save(update_fields=["document_type"])
-        LOGGER.info("→ File %s classified as: %s", file_id, best_label)
-    else:
-        file.document_type = "Unknown"
-        file.save(update_fields=["document_type"])
-        LOGGER.info("→ File %s classified as: Unknown", file_id)
-
-    if not chunks:
-        LOGGER.warning("No extractable text for %s.", file.filename)
-        return {"status": "empty"}
-
-    # 2️⃣ Persist to Django (atomic)
-    with transaction.atomic():
-        if force:
-            file.vector_chunks.all().delete()
-        VectorChunk.objects.bulk_create(
-            [
-                VectorChunk(
-                    file=file,
-                    user_id=file.user_id,
-                    chunk_index=i,
-                    chunk_text=txt,
-                    embedding=vec,
-                )
-                for i, (txt, vec) in enumerate(zip(chunks, vectors))
-            ],
-            batch_size=500,
-        )
-
-    # 3️⃣ Insert into Milvus (partitioned by user, tagged with client_id)
-    coll = _ensure_collection()
-    part = _partition_name(file.user_id)
-    _ensure_partition(coll, part)
-    coll.load(partition_names=[part])
-
-    client_id = file.user.client.id if file.user and file.user.client else -1
-
-    seen = set()
-    rows = []
-    for txt, vec in zip(chunks, vectors):
-        h = hash(txt)
-        if h in seen:
-            continue
-        seen.add(h)
-        rows.append((file.id, client_id, h, file.filename, txt, vec))
-
-    _insert_batches(coll, rows, partition=part)
-
-    coll.flush()
-    coll.release()
-
-    LOGGER.info("✅ Indexed %s chunks for file %s → partition %s", len(chunks), file_id, part)
-    return {"status": "ok", "chunks": len(chunks)}
+    label_texts = list(labels.values())
+    label_names = list(labels.keys())
+    label_embeddings = embed_model.encode(label_texts)
+    from sklearn.metrics.pairwise import cosine_similarity
+    best = label_names[int(cosine_similarity([doc_embedding], label_embeddings).argmax())]
+    File.objects.filter(pk=file.pk).update(document_type=best)
 
 
 @shared_task(name="document_search.bulk_reindex")
@@ -414,98 +327,16 @@ def _reindex_batch(file_ids: list[int]) -> dict:
     indexed = 0
     for fid in file_ids:
         try:
-            index_file(fid, force=False)
+            index_file.apply(args=(fid,), kwargs={"force": False}, throw=True)
             indexed += 1
         except Exception as e:
             LOGGER.error("Failed to index file %s: %s", fid, e)
     return {"indexed": indexed, "batch_size": len(file_ids)}
 
-'''
-@shared_task(name="document_search.exec_search")
-def exec_search(user_id: int, query: str, file_id: int | None, top_k: int) -> list[dict]:
-    """
-    Heavy-weight search:
-        • embed query
-        • Milvus ANN search (user partition)
-        • return [{file_id, chunk_text, score, preview}, …]
-    """
-    cache_key = f"search:{user_id}:{file_id}:{top_k}:{hash(query)}"
-    cached = cache.get(cache_key)
-    if cached:
-        return cached  # ⏩ hot path
-
-    # ── embed ───────────────────────────────────────────────────────────
-    q_vec = embed_text(query)
-
-    # ── Milvus ──────────────────────────────────────────────────────────
-    coll = _ensure_collection()
-    part = _partition_name(user_id)
-    _ensure_partition(coll, part)
-    coll.load(partition_names=[part])
-
-    if isinstance(file_id, list):
-        expr = f"file_id in {tuple(file_id)}"
-    elif file_id:
-        expr = f"file_id == {file_id}"
-    else:
-        expr = ""
-
-    import time
-    t0 = time.time()
-
-    res = coll.search(
-        data=[q_vec],
-        anns_field="vector",
-        param={"metric_type": MILVUS_METRIC_TYPE, "params": {"nprobe": MILVUS_NPROBE, "ef": MILVUS_EF}},
-        limit=top_k,
-        expr=expr,
-        output_fields=["file_id", "chunk_text"],
-    )
-    duration = int((time.time() - t0) * 1000)
-    coll.release()
-
-    seen_chunks = set()
-    hits = []
-    for hit in res[0]:
-        fid   = int(hit.entity.get("file_id"))
-        ctext = hit.entity.get("chunk_text", "")
-        preview = preview_for_file(fid)
-        chash = hash(ctext)
-        if chash in seen_chunks:
-            continue
-        seen_chunks.add(chash)
-
-        snippet = (ctext[:297] + "…") if len(ctext) > 300 else ctext
-        snippet = snippet.replace("\n", "  \n")  # Markdown line breaks
-
-        hits.append({
-            "file_id": fid,
-            "snippet_md": snippet,
-            "score": float(hit.score),
-            "preview": preview,
-        })
-        if len(hits) >= top_k:
-            break
-
-    # ── cache & DB log ──────────────────────────────────────────────────
-    cache.set(cache_key, hits, timeout=60 * 60 * 6)  # 6 h
-
-    SearchQueryLog.objects.create(
-        user_id=user_id,
-        file_id=file_id if File.objects.filter(id=file_id).exists() else None,
-        query_text=query,
-        top_k=top_k,
-        duration_ms=duration,
-        result_count=len(hits),
-        result_json=hits,
-    )
-
-    return hits
-'''
 
 @shared_task(name="document_search.exec_search")
 def exec_search(user_id: int, query: str, file_id: int | None, top_k: int) -> list[dict]:
-    cache_key = f"search:v2:{user_id}:{file_id}:{top_k}:{hash(query)}"
+    cache_key = "search:v3:" + _query_key(_index_version(), user_id, file_id, top_k, query)
     cached = cache.get(cache_key)
     if cached:
         return cached
@@ -525,36 +356,10 @@ def exec_search(user_id: int, query: str, file_id: int | None, top_k: int) -> li
     if not accessible_ids:
         return []
 
-    # 2) Determine which partitions to load (owners of accessible files)
-    owner_rows = (
-        File.objects
-        .filter(id__in=accessible_ids)
-        .values("id", "user_id")  # or "user_id" if that's your canonical owner field
-    )
-    owner_partitions = {f"user_{row['user_id']}" for row in owner_rows}
-
-    # 3) Embed query
+    # 2) Embed query, 3) search only files the user may read (organisation-filtered)
     q_vec = embed_text(query)
-
-    # 4) Milvus search over only needed partitions + file_id expr
-    coll = _ensure_collection()
-    for p in owner_partitions:
-        _ensure_partition(coll, p)
-    coll.load(partition_names=list(owner_partitions))
-
-    id_list = ",".join(map(str, sorted(accessible_ids)))
-    client_id_val = user.client.id if hasattr(user, "client") and user.client else -1
-    expr = f"file_id in [{id_list}] and client_id == {client_id_val}"
-
-    res = coll.search(
-        data=[q_vec],
-        anns_field="vector",
-        param={"metric_type": MILVUS_METRIC_TYPE, "params": {"nprobe": MILVUS_NPROBE, "ef": MILVUS_EF}},
-        limit=top_k,
-        expr=expr,
-        output_fields=["file_id", "chunk_text"],
-    )
-    coll.release()
+    client_id_val = user.client_id if getattr(user, "client_id", None) else -1
+    res = [milvus_store.search(q_vec, accessible_ids, client_id_val, top_k)]
 
     # 5) Dedup + shape
     seen = set()
@@ -579,7 +384,7 @@ def exec_search(user_id: int, query: str, file_id: int | None, top_k: int) -> li
         if len(hits) >= top_k:
             break
 
-    cache.set(cache_key, hits, timeout=60 * 60 * 6)
+    cache.set(cache_key, hits, timeout=60 * 60)  # key changes whenever new documents are indexed
     SearchQueryLog.objects.create(
         user_id=user_id,
         file_id=file_id if File.objects.filter(id=file_id).exists() else None,
@@ -591,120 +396,6 @@ def exec_search(user_id: int, query: str, file_id: int | None, top_k: int) -> li
     )
     return hits
 
-'''
-@shared_task(name="document_search.semantic_search_task")
-def semantic_search_task(
-    user_id: int,
-    query: str,
-    top_k: int,
-    file_id: int | None,
-    filters: dict | None,
-) -> list[dict]:
-    """
-    Perform semantic search asynchronously.
-    NOTE: View must call with **five** args (no extra list of accessible ids).
-    """
-    try:
-        filters = filters or {}
-
-        # Embed query
-        embed_model = _get_model()
-        query_vector = embed_model.encode([query])[0]
-
-        # Milvus: ensure collection & user's partition
-        collection = _ensure_collection()
-        part_name = _partition_name(user_id)
-        _ensure_partition(collection, part_name)
-        collection.load(partition_names=[part_name])
-
-        # Optional file constraint for Milvus ANN
-        if isinstance(file_id, list):
-            expr = f"file_id in {tuple(file_id)}"
-        elif file_id:
-            expr = f"file_id == {file_id}"
-        else:
-            expr = ""
-
-        results = collection.search(
-            data=[query_vector],
-            anns_field="vector",
-            param={"metric_type": MILVUS_METRIC_TYPE, "params": {"nprobe": MILVUS_NPROBE, "ef": MILVUS_EF}},
-            limit=top_k,
-            expr=expr,
-            output_fields=["file_id", "chunk_text"],
-        )
-
-        # Vector-hit file ids
-        vector_file_ids = list({int(hit.entity.get("file_id")) for hit in results[0]})
-
-        # 🔐 Compute accessible file IDs the same way as views
-        User = get_user_model()
-        user = User.objects.filter(pk=user_id).first()
-        if user:
-            accessible_file_ids = set(get_user_accessible_file_ids(user))
-        else:
-            # Fallback to ownership-only if user lookup fails
-            accessible_file_ids = set(File.objects.filter(user_id=user_id).values_list("id", flat=True))
-
-        if vector_file_ids:
-            allowed_ids = set(vector_file_ids) & set(accessible_file_ids)
-        else:
-            return []
-
-        if not allowed_ids:
-            return []
-
-        # Build additional filters
-        q = Q(id__in=allowed_ids)
-
-        if filters.get("created_from"):
-            q &= Q(created_at__gte=datetime.fromisoformat(filters["created_from"]))
-        if filters.get("created_to"):
-            q &= Q(created_at__lte=datetime.fromisoformat(filters["created_to"]))
-        if filters.get("author"):
-            q &= Q(metadata__author__icontains=filters["author"])
-        if filters.get("project_id"):
-            q &= Q(project_id=filters["project_id"])
-        if filters.get("service_id"):
-            q &= Q(service_id=filters["service_id"])
-
-        files = File.objects.filter(q).prefetch_related("metadata")
-
-        # Best (highest score) hit per file from vector results
-        best_per_file: dict[int, tuple[str, float]] = {}
-        for hit in results[0]:
-            fid = int(hit.entity.get("file_id"))
-            if fid not in allowed_ids:
-                continue
-            score = float(hit.score)
-            chunk = hit.entity.get("chunk_text", "")
-            prev = best_per_file.get(fid)
-            if (not prev) or score > prev[1]:
-                best_per_file[fid] = (chunk, score)
-
-        out = []
-        for f in files:
-            md = f.metadata.first()
-            chunk_text, score = best_per_file.get(f.id, ("", None))
-            out.append({
-                "file_id": f.id,
-                "filename": f.filename,
-                "file_size": f.file_size,
-                "file_type": f.file_type,
-                "document_type": getattr(f, "document_type", None),
-                "created_at": f.created_at,
-                "author": getattr(md, "author", None) if md else None,
-                "keywords": getattr(md, "keywords", None) if md else None,
-                "chunk_text": chunk_text,
-                "score": score,
-            })
-
-        return out
-
-    except Exception as e:
-        LOGGER.error("Error in semantic search task: %s", str(e))
-        return {"error": str(e)}
-'''
 
 @shared_task(name="document_search.semantic_search_task")
 def semantic_search_task(
@@ -748,36 +439,11 @@ def semantic_search_task(
         if not accessible_ids:
             return {"results": [], "count": 0}
 
-        # 2) Owner partitions to load
-        owner_rows = (
-            File.objects
-            .filter(id__in=accessible_ids)
-            .values("id", "user_id")  # or "user_id"
-        )
-        owner_partitions = {f"user_{row['user_id']}" for row in owner_rows}
-
-        # 3) Embed
+        # 2) Embed, 3) search only files the user may read (organisation-filtered)
         embed_model = _get_model()
         qvec = embed_model.encode([query])[0]
-
-        # 4) Search only allowed partitions + ids
-        coll = _ensure_collection()
-        for p in owner_partitions:
-            _ensure_partition(coll, p)
-        coll.load(partition_names=list(owner_partitions))
-
-        id_list = ",".join(map(str, sorted(accessible_ids)))
-        client_id_val = user.client.id if hasattr(user, "client") and user.client else -1
-        expr = f"file_id in [{id_list}] and client_id == {client_id_val}"
-
-        results = coll.search(
-            data=[qvec],
-            anns_field="vector",
-            param={"metric_type": MILVUS_METRIC_TYPE, "params": {"nprobe": MILVUS_NPROBE, "ef": MILVUS_EF}},
-            limit=top_k,
-            expr=expr,
-            output_fields=["file_id", "chunk_text"],
-        )
+        client_id_val = user.client_id if getattr(user, "client_id", None) else -1
+        results = [milvus_store.search(qvec, accessible_ids, client_id_val, top_k)]
 
         vector_file_ids = {int(hit.entity.get("file_id")) for hit in results[0]}
         allowed_ids = vector_file_ids & accessible_ids
@@ -883,3 +549,53 @@ def semantic_search_task(
 # ───────────── Optional alias for semantic clarity ─────────────
 process_file_for_search = index_file
 
+
+
+@shared_task(name="document_search.delete_file_vectors", acks_late=True, autoretry_for=(Exception,),
+             retry_backoff=30, retry_backoff_max=1800, max_retries=6)
+def delete_file_vectors_task(file_id: int) -> str:
+    milvus_store.delete_file_vectors(file_id)
+    _bump_index_version()
+    return "deleted"
+
+
+def find_unindexed(limit: int | None = None) -> dict:
+    """
+    Files missing from Milvus or Elasticsearch. A file counts as missing from
+    Milvus when it has no cached chunks, or has chunks but no vectors in Milvus
+    (the "worked yesterday, gone today" case after a failed or lost insert).
+    """
+    qs = File.objects.exclude(document_type="deliverable").order_by("-id")
+    ids = list(qs.values_list("id", flat=True)[:limit] if limit else qs.values_list("id", flat=True))
+    with_chunks = set(VectorChunk.objects.filter(file_id__in=ids).values_list("file_id", flat=True).distinct())
+    in_milvus = milvus_store.indexed_file_ids(sorted(with_chunks)) if with_chunks else set()
+    milvus_missing = [i for i in ids if i not in with_chunks or i not in in_milvus]
+
+    es_missing = []
+    try:
+        from elasticsearch_dsl.connections import connections as es_connections
+        es = es_connections.get_connection()
+        for i in range(0, len(ids), 1000):
+            part = [str(x) for x in ids[i: i + 1000]]
+            found = {d["_id"] for d in es.mget(index="files", body={"ids": part}, _source=False)["docs"] if d.get("found")}
+            es_missing += [int(x) for x in part if x not in found]
+    except Exception as exc:
+        LOGGER.warning("Elasticsearch check skipped: %s", exc)
+        es_missing = None
+    return {"checked": len(ids), "milvus_missing": milvus_missing, "es_missing": es_missing}
+
+
+@shared_task(name="document_search.repair_search_indexes")
+def repair_search_indexes(limit: int | None = None) -> dict:
+    """Nightly self-healing: re-queue every file missing from either search index."""
+    from file_elasticsearch.tasks import es_index_file
+
+    report = find_unindexed(limit)
+    for fid in report["milvus_missing"]:
+        index_file.delay(fid, force=True)
+    for fid in report["es_missing"] or []:
+        es_index_file.delay(fid)
+    summary = {"checked": report["checked"], "milvus_requeued": len(report["milvus_missing"]),
+               "es_requeued": len(report["es_missing"] or []), "es_checked": report["es_missing"] is not None}
+    LOGGER.info("Search index repair: %s", summary)
+    return summary

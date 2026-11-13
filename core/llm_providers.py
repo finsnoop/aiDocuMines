@@ -4,8 +4,9 @@ model-list proxy.
 
 Server-side configuration (environment variables):
 
-    LITELLM_BASE_URL      LiteLLM proxy, e.g. http://litellm:4000        (default)
-    LITELLM_API_KEY       LiteLLM master/virtual key
+    LITELLM_URL           LiteLLM proxy, e.g. http://aidocumines_litellm:4000/v1
+                          (LITELLM_BASE_URL is accepted too)
+    LITELLM_API_KEY       LiteLLM virtual key (falls back to LITELLM_MASTER_KEY)
     OLLAMA_URL            e.g. http://ollama:11434
     VLLM_URL              e.g. http://vllm:8000/v1
     VLLM_API_KEY
@@ -38,7 +39,8 @@ def default_provider() -> str:
 
 def default_endpoint(provider: str) -> str:
     return {
-        "litellm": _env("LITELLM_BASE_URL", "http://litellm:4000"),
+        # LITELLM_URL is the name used on the production server (may end in /v1)
+        "litellm": _env("LITELLM_BASE_URL") or _env("LITELLM_URL", "http://aidocumines_litellm:4000"),
         "ollama": _env("OLLAMA_URL", "http://ollama:11434"),
         "vllm": _env("VLLM_URL", "http://vllm:8000/v1"),
         "openai": "https://api.openai.com/v1",
@@ -47,7 +49,7 @@ def default_endpoint(provider: str) -> str:
 
 def default_api_key(provider: str) -> str:
     return {
-        "litellm": _env("LITELLM_API_KEY"),
+        "litellm": _env("LITELLM_API_KEY") or _env("LITELLM_MASTER_KEY"),
         "vllm": _env("VLLM_API_KEY", "EMPTY"),
         "openai": _env("OPENAI_API_KEY"),
     }.get(provider, "")

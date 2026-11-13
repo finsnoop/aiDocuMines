@@ -33,7 +33,8 @@ EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "all-MiniLM-L6-v2")
 VECTOR_DIM = int(os.getenv("VECTOR_DIM", "384"))
 
 # Elasticsearch
-ES_SHARDS = int(os.getenv("ES_SHARDS", "3"))
-ES_REPLICAS = int(os.getenv("ES_REPLICAS", "1"))
+# One node: 1 shard, 0 replicas (a replica can never be placed, so the index stays "yellow").
+ES_SHARDS = int(os.getenv("ES_SHARDS", "1"))
+ES_REPLICAS = int(os.getenv("ES_REPLICAS", "0"))
 ES_BATCH_SIZE = int(os.getenv("ES_BATCH_SIZE", "500"))
 ES_SEARCH_PAGINATE_BY = int(os.getenv("ES_SEARCH_PAGINATE_BY", "50"))

@@ -129,7 +129,7 @@ class BudgetSerializer(serializers.ModelSerializer):
 class SubscriptionSerializer(serializers.ModelSerializer):
     user = UserSerializer(read_only=True)
     tenant = TenantSerializer(read_only=True)
-    is_active = serializers.BooleanField(source="is_active", read_only=True)  # property on model
+    is_active = serializers.BooleanField(read_only=True)  # property on model
 
     user_id = serializers.PrimaryKeyRelatedField(
         queryset=User.objects.all(), source="user", write_only=True

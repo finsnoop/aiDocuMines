@@ -284,7 +284,7 @@ def queue_post_upload_processing(user, run, fresh, project_id, service_id):
             )
             logger.info("✅ Created EndpointResponseTable entry with ID: %s for file_id=%s", endpoint_response.id, fresh.id)
 
-            index_file.apply_async((fresh.id,), {"force": True}, task_id=str(endpoint_response.id))
+            index_file.apply_async((fresh.id,), {"force": False}, task_id=str(endpoint_response.id))
             logger.info("🚀 Indexing task successfully queued for file_id=%s", fresh.id)
 
         except Exception as e:

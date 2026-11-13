@@ -405,7 +405,13 @@ class OnlyOfficeSignedDownloadView(APIView):
         if not verify_signed_download_token(token, str(file_id)):
             return Response({"error": "Invalid or expired token"}, status=403)
 
-        f = get_file_for_user(request.user, file_id)
+        # The Document Server calls this without a user session: the signed, expiring,
+        # file-bound token IS the authorisation. Tokens are only minted (editor-config,
+        # convert) for users who passed the access check on this file.
+        from core.models import File
+        f = File.objects.filter(pk=file_id).first()
+        if f is None:
+            return Response({"error": "File not found"}, status=404)
 
         # Prefer in-container path; fall back to stripped host-like path if needed
         real_path = f.filepath

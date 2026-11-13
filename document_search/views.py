@@ -4,7 +4,8 @@ from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status, generics
 from rest_framework.permissions import IsAuthenticated
-from pymilvus import Collection, connections
+from django.http import Http404
+from document_search import milvus_store
 
 from oauth2_provider.contrib.rest_framework import OAuth2Authentication
 from custom_authentication.rbac import HasPermission
@@ -56,29 +57,6 @@ logger = logging.getLogger(__name__)
 # ─────────────────────────────────────────────────────────────
 # 🧠  Connect to Milvus collection (same host/port as tasks.py)
 # ─────────────────────────────────────────────────────────────
-def _get_partition_names(accessible_file_ids):
-    """Resolve Milvus partition names from accessible file IDs."""
-    if not accessible_file_ids:
-        return set()
-    owner_rows = File.objects.filter(id__in=accessible_file_ids).values("id", "user_id")
-    return {f"user_{row['user_id']}" for row in owner_rows}
-
-
-def _load_collection_partitions(partitions=None):
-    """Connect and load only the specified partitions (or none = load all)."""
-    if not connections.has_connection("default"):
-        connections.connect(alias="default", host=MILVUS_HOST, port=MILVUS_PORT)
-    _ensure_collection()
-    collection = Collection(COLLECTION_NAME)
-    if partitions:
-        for p in partitions:
-            if not collection.has_partition(p):
-                collection.create_partition(p)
-        collection.load(partition_names=list(partitions))
-    else:
-        collection.load()
-    return collection
-
 # -------------------------------------------------------------
 # Semantic File Search
 # -------------------------------------------------------------
@@ -170,28 +148,16 @@ class ChunkedFileSearchView(APIView):
         embed_model = _get_model()
         query_vector = embed_model.encode([query])[0]
 
-        partitions = _get_partition_names(accessible_file_ids)
-        collection = _load_collection_partitions(partitions)
-
-        client_id_val = user.client.id if hasattr(user, "client") and user.client else -1
-        id_list = ",".join(map(str, sorted(accessible_file_ids)))
-        expr = f"file_id in [{id_list}] and client_id == {client_id_val}"
-
+        client_id_val = user.client_id if getattr(user, "client_id", None) else -1
         offset = (page - 1) * page_size
         fetch_top_k = offset + page_size
 
         try:
-            results = collection.search(
-                data=[query_vector],
-                anns_field="vector",
-                param={"metric_type": MILVUS_METRIC_TYPE, "params": {"nprobe": MILVUS_NPROBE, "ef": MILVUS_EF}},
-                limit=max(fetch_top_k, top_k),
-                expr=expr,
-                output_fields=["file_id", "chunk_text"],
-            )
-        except Exception as e:
-            logger.exception("Search failed")
-            return Response({"error": str(e)}, status=500)
+            results = [milvus_store.search(query_vector, accessible_file_ids, client_id_val, max(fetch_top_k, top_k))]
+        except Exception:
+            logger.exception("Semantic search failed")
+            return Response({"error": "Semantic search is temporarily unavailable. Please try again shortly."},
+                            status=503)
 
         seen_file_ids = set()
         all_matches = []
@@ -204,7 +170,7 @@ class ChunkedFileSearchView(APIView):
                 continue
             try:
                 file_obj = get_file_for_user(request.user, fid)
-            except File.DoesNotExist:
+            except (File.DoesNotExist, Http404):
                 continue
             all_matches.append({
                 "file_id": fid,
@@ -306,26 +272,16 @@ class AdvancedDocumentSearchView(APIView):
         if not accessible_file_ids:
             return Response({"count": 0, "results": []}, status=200)
 
-        # Step 2: load only relevant Milvus partitions
-        partitions = _get_partition_names(accessible_file_ids)
-        collection = _load_collection_partitions(partitions)
-
-        # Step 3: vector search scoped to accessible files + client
+        # Step 2-3: vector search scoped to accessible files + organisation
         embed_model = _get_model()
         query_vector = embed_model.encode([query])[0]
-
-        client_id_val = user.client.id if hasattr(user, "client") and user.client else -1
-        id_list = ",".join(map(str, sorted(accessible_file_ids)))
-        expr = f"file_id in [{id_list}] and client_id == {client_id_val}"
-
-        results = collection.search(
-            data=[query_vector],
-            anns_field="vector",
-            param={"metric_type": "COSINE", "params": {"nprobe": 10}},
-            limit=top_k,
-            expr=expr,
-            output_fields=["file_id", "chunk_text"],
-        )
+        client_id_val = user.client_id if getattr(user, "client_id", None) else -1
+        try:
+            results = [milvus_store.search(query_vector, accessible_file_ids, client_id_val, top_k)]
+        except Exception:
+            logger.exception("Semantic search failed")
+            return Response({"error": "Semantic search is temporarily unavailable. Please try again shortly."},
+                            status=503)
 
         vector_file_ids = {int(hit.entity.get("file_id")) for hit in results[0]}
         allowed_file_ids = vector_file_ids & accessible_file_ids

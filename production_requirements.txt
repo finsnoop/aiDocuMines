@@ -228,7 +228,7 @@ pillow
 protobuf
 pydantic
 pydantic_core
-pymilvus
+pymilvus==2.6.18  # matches Milvus server v2.6.17; pinned so a rebuild cannot silently change the client
 PyMuPDF
 python-dateutil
 python-docx

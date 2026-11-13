@@ -243,3 +243,32 @@ class ModelDiscoveryTests(TestCase):
 
         self.assertTrue(all(prompt_for(s) for s in ALL_SERVICES))
         self.assertIn("page or clause", prompt_for({"service_type": "pe-extract-risk-clauses"}))
+
+
+class PracticeAreaDashboardTests(TestCase):
+    """Endpoints the platform_check sweep found crashing."""
+
+    @classmethod
+    def setUpTestData(cls):
+        from core.tests.test_tenancy import token_for
+        cls.firm = Client.objects.create(name="Firm A")
+        cls.user = make_user("a1@firm-a.test", cls.firm, groups=["Client"])
+        cls.app, cls.tok = token_for(cls.user)
+
+    def _get(self, path):
+        c = APIClient()
+        return c.get(path, HTTP_AUTHORIZATION=f"Bearer {self.tok.token}", HTTP_X_CLIENT_ID=self.app.client_id)
+
+    def test_portfolio_compliance(self):
+        r = self._get("/api/v1/private-equity/portfolio-compliance/")
+        self.assertEqual(r.status_code, 200, r.content[:300])
+        self.assertEqual(r.json()["total_covenants"], 0)
+
+    def test_risk_heatmap(self):
+        r = self._get("/api/v1/private-equity/risk-heatmap/")
+        self.assertEqual(r.status_code, 200, r.content[:300])
+        self.assertEqual(r.json()["deals"], [])
+
+    def test_my_subscription(self):
+        r = self._get("/api/v1/cost/subscriptions/me/")
+        self.assertLess(r.status_code, 500, r.content[:300])

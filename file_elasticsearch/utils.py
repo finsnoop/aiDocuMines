@@ -118,7 +118,7 @@ def basic_search(query, scope="both", user=None, accessible_ids=None, page=1, pa
               should=[
                   Q("multi_match", query=query, fields=["filename^4", "filename.trigram^3"], type="best_fields", boost=3),
                   Q("multi_match", query=query, fields=["filepath^2", "filepath.trigram^2"], type="best_fields", boost=2),
-                  Q("match", content={"query": query, "minimum_should_match": "60%"}, boost=1),
+                  Q("match", content={"query": query, "minimum_should_match": "60%", "boost": 1}),
               ],
               minimum_should_match=1,
             )

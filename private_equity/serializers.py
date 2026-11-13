@@ -701,24 +701,27 @@ class ConsentFilingSerializer(serializers.ModelSerializer):
 # ═══════════════════════════════════════════════════════════════
 
 class PortfolioComplianceSerializer(serializers.Serializer):
-    """Serializer for portfolio compliance dashboard"""
+    """Serializer for the portfolio compliance dashboard (covenants and consent filings)."""
 
-    total_deals = serializers.IntegerField()
-    total_obligations = serializers.IntegerField()
-    pending_obligations = serializers.IntegerField()
-    overdue_obligations = serializers.IntegerField()
-    upcoming_deadlines = serializers.ListField(child=serializers.DictField())
-    risk_distribution = serializers.DictField()
-    compliance_by_deal = serializers.ListField(child=serializers.DictField())
+    total_covenants = serializers.IntegerField()
+    compliant_covenants = serializers.IntegerField()
+    breached_covenants = serializers.IntegerField()
+    at_risk_covenants = serializers.IntegerField()
+    covenant_compliance_rate = serializers.FloatField()
+    total_filings = serializers.IntegerField()
+    completed_filings = serializers.IntegerField()
+    pending_filings = serializers.IntegerField()
+    filing_completion_rate = serializers.FloatField()
+    overdue_covenants = serializers.IntegerField()
+    overdue_filings = serializers.IntegerField()
 
 
 class RiskHeatmapSerializer(serializers.Serializer):
-    """Serializer for risk heatmap data"""
+    """Serializer for the deal risk heatmap."""
 
-    heatmap_type = serializers.CharField()
-    categories = serializers.ListField(child=serializers.CharField())
-    data = serializers.ListField(child=serializers.DictField())
-    summary = serializers.DictField()
+    deals = serializers.ListField(child=serializers.DictField())
+    total_deals = serializers.IntegerField()
+    high_risk_deals = serializers.IntegerField()
 
 
 class BidAnalysisSerializer(serializers.Serializer):

@@ -2030,11 +2030,11 @@ class PortfolioComplianceView(APIView):
         # Get overdue items
         from django.utils import timezone
         overdue_covenants = covenants.filter(
-            next_review_date__lt=timezone.now().date()
+            next_reporting_date__lt=timezone.now().date()
         ).exclude(status='compliant').count()
 
         overdue_filings = filings.filter(
-            deadline__lt=timezone.now().date()
+            due_date__lt=timezone.now().date()
         ).exclude(status='completed').count()
 
         compliance_data = {
