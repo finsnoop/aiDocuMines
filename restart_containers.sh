@@ -71,7 +71,7 @@ done
 echo ""
 echo "── Infrastructure containers ──"
 # Only aiDocuMines' own containers (never CapRover srv-* ones, which CapRover replaces itself)
-for container in aidocumines_api_layer_db aidocumines_redis aidocumines_milvus_etcd aidocumines_milvus_minio aidocumines_milvus aidocumines_elasticsearch aidocumines_litellm; do
+for container in aidocumines_api_layer_db aidocumines_redis aidocumines_milvus aidocumines_elasticsearch aidocumines_litellm; do
     restart_if_needed "$container"
 done
 

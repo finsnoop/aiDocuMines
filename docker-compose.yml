@@ -136,6 +136,7 @@ services:
 
   celery:
     build: { context: ., dockerfile: Dockerfile }
+    image: aidocumines-celery:latest
     container_name: aidocumines_celery
     restart: unless-stopped
     command: /app/entrypoint.sh
@@ -162,6 +163,7 @@ services:
 
   celery_beat:
     build: { context: ., dockerfile: Dockerfile }
+    image: aidocumines-celery:latest
     container_name: aidocumines_celery_beat
     restart: unless-stopped
     command: /app/entrypoint.sh
@@ -188,6 +190,7 @@ services:
 
   file_monitor:
     build: { context: ., dockerfile: Dockerfile }
+    image: aidocumines-celery:latest
     container_name: aidocumines_file_monitor
     restart: unless-stopped
     command: /usr/bin/supervisord -c /etc/supervisor/conf.d/supervisord.conf
@@ -208,75 +211,30 @@ services:
       db_prepare: { condition: service_completed_successfully }
     networks: [captain-overlay-network]
 
-  milvus-etcd:
-    image: quay.io/coreos/etcd:v3.5.5
-    container_name: aidocumines_milvus_etcd
-    restart: unless-stopped
-    command: >
-      etcd --data-dir /etcd-data
-           --listen-client-urls http://0.0.0.0:2379
-           --advertise-client-urls http://aidocumines_milvus_etcd:2379
-    volumes: [ "milvus-etcd-data:/etcd-data" ]
-    healthcheck:
-      test: ["CMD", "etcdctl", "endpoint", "health", "--endpoints=http://aidocumines_milvus_etcd:2379"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-    networks: [captain-overlay-network]
-
-  milvus-minio:
-    image: minio/minio:RELEASE.2024-03-30T09-41-56Z
-    container_name: aidocumines_milvus_minio
-    restart: unless-stopped
-    command: server /data --console-address ":9001"
-    environment:
-      MINIO_ACCESS_KEY: minioadmin
-      MINIO_SECRET_KEY: minioadmin
-      MINIO_BUCKET: milvus-bucket
-    ports: ["127.0.0.1:9002:9001"]
-    volumes: [ "milvus-minio-data:/data" ]
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://aidocumines_milvus_minio:9000/minio/health/live"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-    networks: [captain-overlay-network]
-
-  milvus-minio-init:
-    image: minio/mc
-    depends_on:
-      milvus-minio: { condition: service_healthy }
-    entrypoint: >
-      sh -c "
-        mc alias set local http://aidocumines_milvus_minio:9000 minioadmin minioadmin &&
-        mc mb -p local/milvus-bucket || true
-      "
-    networks: [captain-overlay-network]
-
+  # Milvus standalone with its own embedded etcd and local disk storage: one container,
+  # no MinIO (its Docker Hub images are no longer published). Data lives in milvus-data.
   milvus:
     image: milvusdb/milvus:v2.6.17
     container_name: aidocumines_milvus
     command: ["milvus", "run", "standalone"]
     restart: unless-stopped
-    depends_on:
-      milvus-etcd:   { condition: service_healthy }
-      milvus-minio:  { condition: service_healthy }
-      milvus-minio-init: { condition: service_completed_successfully }
     environment:
-      ETCD_ENDPOINTS:  aidocumines_milvus_etcd:2379
-      MINIO_ADDRESS:   aidocumines_milvus_minio:9000
-      MINIO_ACCESS_KEY: minioadmin
-      MINIO_SECRET_KEY: minioadmin
-      MILVUS_LOG_LEVEL: info
-      MILVUS_STORAGE_BUCKET_NAME: milvus-bucket
+      ETCD_USE_EMBED: "true"
+      ETCD_DATA_DIR: /var/lib/milvus/etcd
+      ETCD_CONFIG_PATH: /milvus/configs/embedEtcd.yaml
+      COMMON_STORAGETYPE: local
+      DEPLOY_MODE: STANDALONE
     ports:
       - "127.0.0.1:19530:19530"
       - "127.0.0.1:9091:9091"
-    volumes: [ "milvus-data:/var/lib/milvus" ]
+    volumes:
+      - milvus-data:/var/lib/milvus
+      - ./deploy/milvus/embedEtcd.yaml:/milvus/configs/embedEtcd.yaml:ro
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:9091/healthz"]
       interval: 20s
       timeout: 5s
+      start_period: 90s
       retries: 10
     networks: [captain-overlay-network]
 
@@ -349,8 +307,6 @@ services:
 volumes:
   postgres_data:
   ollama-data:
-  milvus-etcd-data:
-  milvus-minio-data:
   milvus-data:
   elasticsearch_data:
   onlyoffice_data:
