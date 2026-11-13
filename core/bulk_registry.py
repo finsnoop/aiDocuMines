@@ -109,19 +109,35 @@ def _tenant_fields(user_id):
     user = _requesting_user(user_id)
     return run_owner_fields(user) if user else {}
 
+def _actor(file_id, user_id):
+    """
+    Who a bulk run belongs to: the person who started it (their organisation is the tenant),
+    falling back to the file's owner only if that person no longer exists.
+    """
+    from core.models import File
+    user = _requesting_user(user_id)
+    if user is None:
+        f = File.objects.filter(id=file_id).select_related("user").first()
+        user = f.user if f else None
+    return user
+
+
+def _owned(model_cls, user, **fields):
+    """fields + owner + organisation, for whichever of user/client the model has."""
+    names = {f.name for f in model_cls._meta.get_fields()}
+    if user is not None:
+        if "user" in names and "user" not in fields:
+            fields["user"] = user
+        if "client" in names and "client" not in fields and getattr(user, "client_id", None):
+            fields["client_id"] = user.client_id
+    return fields
+
 # ---- Run creators ----
 
 def _create_run(file_id, user_id, model_cls, status_default='Pending', user_field='user',
                 id_field='id', extra_fields=None):
     """Create a run object and return a dict of field->value for the task call."""
-    from django.contrib.auth import get_user_model
-    from core.models import File
-    try:
-        file_obj = File.objects.get(id=file_id)
-        owner = file_obj.user
-    except File.DoesNotExist:
-        User = get_user_model()
-        owner = User.objects.filter(id=user_id).first()
+    owner = _actor(file_id, user_id)
 
     fields = {}
     if hasattr(model_cls, 'status'):
@@ -131,7 +147,7 @@ def _create_run(file_id, user_id, model_cls, status_default='Pending', user_fiel
     if extra_fields:
         fields.update(extra_fields)
 
-    run_obj = model_cls.objects.create(**fields)
+    run_obj = model_cls.objects.create(**_owned(model_cls, owner, **fields))
     return {id_field: run_obj.id}
 
 
@@ -199,84 +215,41 @@ def _run_le(file_id, user_id):
 
 def _run_patent(file_id, user_id):
     from ip_litigation.models import PatentDocument
-    from django.contrib.auth import get_user_model
-    from core.models import File
-    try:
-        file_obj = File.objects.get(id=file_id)
-        owner = file_obj.user
-    except File.DoesNotExist:
-        User = get_user_model()
-        owner = User.objects.filter(id=user_id).first()
-    doc = PatentDocument.objects.create(
-        user=owner,
-        status='pending',
-    )
+    owner = _actor(file_id, user_id)
+    doc = PatentDocument.objects.create(**_owned(PatentDocument, owner, status='pending'))
     return {'patent_document_id': doc.id}
 
 
 def _run_prior_art(file_id, user_id):
     from ip_litigation.models import PriorArtDocument
-    from django.contrib.auth import get_user_model
-    from core.models import File
-    try:
-        file_obj = File.objects.get(id=file_id)
-        owner = file_obj.user
-    except File.DoesNotExist:
-        User = get_user_model()
-        owner = User.objects.filter(id=user_id).first()
-    doc = PriorArtDocument.objects.create(
-        user=owner,
-    )
+    owner = _actor(file_id, user_id)
+    doc = PriorArtDocument.objects.create(**_owned(PriorArtDocument, owner))
     return {'prior_art_document_id': doc.id}
 
 
 def _run_infringement(file_id, user_id):
     from ip_litigation.models import InfringementAnalysis
-    from django.contrib.auth import get_user_model
-    from core.models import File
-    try:
-        file_obj = File.objects.get(id=file_id)
-        owner = file_obj.user
-    except File.DoesNotExist:
-        User = get_user_model()
-        owner = User.objects.filter(id=user_id).first()
-    analysis = InfringementAnalysis.objects.create(
-        user=owner,
-    )
+    owner = _actor(file_id, user_id)
+    analysis = InfringementAnalysis.objects.create(**_owned(InfringementAnalysis, owner))
     return {'infringement_analysis_id': analysis.id}
 
 
 def _run_structure(file_id, user_id):
     from document_structures.models import DocumentStructureRun
-    from django.contrib.auth import get_user_model
+    owner = _actor(file_id, user_id)
+    import uuid
     from core.models import File
-    try:
-        file_obj = File.objects.get(id=file_id)
-        owner = file_obj.user
-    except File.DoesNotExist:
-        User = get_user_model()
-        owner = User.objects.filter(id=user_id).first()
-    run = DocumentStructureRun.objects.create(
-        user=owner,
-        status='Pending',
-    )
+    f = File.objects.get(id=file_id)
+    run = DocumentStructureRun.objects.create(**_owned(
+        DocumentStructureRun, owner, id=str(uuid.uuid4()), run=f.run, file=f,
+        partition_strategy='auto', status='Pending'))
     return {'document_structure_run_id': run.id}
 
 
 def _run_clustering(file_id, user_id):
     from document_classification.models import ClusteringRun
-    from django.contrib.auth import get_user_model
-    from core.models import File
-    try:
-        file_obj = File.objects.get(id=file_id)
-        owner = file_obj.user
-    except File.DoesNotExist:
-        User = get_user_model()
-        owner = User.objects.filter(id=user_id).first()
-    run = ClusteringRun.objects.create(
-        user=owner,
-        status='Pending',
-    )
+    owner = _actor(file_id, user_id)
+    run = ClusteringRun.objects.create(**_owned(ClusteringRun, owner, status='Pending'))
     return {'run_id': run.id}
 
 
@@ -292,52 +265,36 @@ def _run_redlining(file_id, user_id):
 
 def _run_core_run(file_id, user_id):
     from core.models import Run
-    from django.contrib.auth import get_user_model
-    from core.models import File
-    try:
-        file_obj = File.objects.get(id=file_id)
-        owner = file_obj.user
-    except File.DoesNotExist:
-        User = get_user_model()
-        owner = User.objects.filter(id=user_id).first()
-    run = Run.objects.create(
-        user=owner,
-        status='Uploaded',
-    )
+    owner = _actor(file_id, user_id)
+    run = Run.objects.create(**_owned(Run, owner, status='Uploaded'))
     return {'run_id': run.run_id}
 
 
 def _run_dsar(file_id, user_id):
     from regulatory_compliance.models import DSARRequest
-    from django.contrib.auth import get_user_model
+    owner = _actor(file_id, user_id)
+    import uuid
+    from django.utils import timezone
     from core.models import File
-    try:
-        file_obj = File.objects.get(id=file_id)
-        owner = file_obj.user
-    except File.DoesNotExist:
-        User = get_user_model()
-        owner = User.objects.filter(id=user_id).first()
-    req = DSARRequest.objects.create(
-        user=owner,
-        status='received',
-    )
+    f = File.objects.filter(id=file_id).only("filename").first()
+    # A bulk DSAR starts from a document; the data subject's details are completed during review.
+    req = DSARRequest.objects.create(**_owned(
+        DSARRequest, owner, status='received',
+        request_id=f"BULK-{uuid.uuid4().hex[:12].upper()}",
+        request_type='access',
+        request_date=timezone.now(),
+        response_due_date=timezone.now() + timezone.timedelta(days=30),
+        data_subject_name='To be identified',
+        data_subject_email='',
+        request_description=f"Created by a bulk DSAR run from {f.filename if f else 'a document'}.",
+    ))
     return {'dsar_request_id': req.id}
 
 
 def _run_redaction(file_id, user_id):
     from regulatory_compliance.models import RedactionTask
-    from django.contrib.auth import get_user_model
-    from core.models import File
-    try:
-        file_obj = File.objects.get(id=file_id)
-        owner = file_obj.user
-    except File.DoesNotExist:
-        User = get_user_model()
-        owner = User.objects.filter(id=user_id).first()
-    task = RedactionTask.objects.create(
-        user=owner,
-        status='pending',
-    )
+    owner = _actor(file_id, user_id)
+    task = RedactionTask.objects.create(**_owned(RedactionTask, owner, status='pending'))
     return {'redaction_task_id': task.id}
 
 

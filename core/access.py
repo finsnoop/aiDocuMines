@@ -197,10 +197,21 @@ def _matter_member_files_q(user, action: str) -> Q:
         return Q(pk__in=[])
     from core.models import Matter
 
-    names = list(Matter.objects.filter(client_id=tid, members=user).values_list("name", flat=True))
-    if not names:
+    # A matter's documents are the ones its team members put in it: files of that project
+    # owned by a member. Other people's files that merely share the project name (common
+    # folder names such as "Contracts" or "Project Atlas") are never included.
+    through = Matter.members.through
+    matters = dict(Matter.objects.filter(client_id=tid, members=user).values_list("id", "name")[:500])
+    if not matters:
         return Q(pk__in=[])
-    return Q(user__client_id=tid, project_id__in=names)
+    team: dict = {}
+    member_col = Matter.members.field.m2m_reverse_field_name() + "_id"
+    for matter_id, member_id in through.objects.filter(matter_id__in=matters).values_list("matter_id", member_col):
+        team.setdefault(matter_id, []).append(member_id)
+    q = Q(pk__in=[])
+    for matter_id, name in matters.items():
+        q |= Q(user__client_id=tid, project_id=name, user_id__in=team.get(matter_id, [user.id]))
+    return q
 
 
 def matters_for_user(user):
