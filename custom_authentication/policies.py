@@ -59,13 +59,17 @@ def ai_access(user) -> dict:
     """
     policy = policy_for(user)
     if policy is None:
-        return {"provider": "", "has_org_key": False, "allow_personal": True, "org_id": None}
+        return {"provider": "", "has_org_key": False, "allow_personal": True, "org_id": None,
+                "allowed": [], "default_model": ""}
     from custom_authentication.models import OrganisationPolicy
     # The column is encrypted (even an empty value), so check the decrypted value.
     row = OrganisationPolicy.objects.filter(pk=policy.pk).only("ai_api_key").first() if policy.pk else None
     has_key = bool(row and row.ai_api_key)
+    allowed = [{"provider": str(m.get("provider") or ""), "model": str(m.get("model") or "")}
+               for m in (policy.allowed_ai_models or []) if isinstance(m, dict) and m.get("model")]
     return {"provider": policy.ai_provider or "", "has_org_key": has_key,
-            "allow_personal": bool(policy.allow_personal_ai_keys), "org_id": policy.client_id}
+            "allow_personal": bool(policy.allow_personal_ai_keys), "org_id": policy.client_id,
+            "allowed": allowed, "default_model": policy.default_ai_model or ""}
 
 
 def organisation_ai_key(client_id) -> str:

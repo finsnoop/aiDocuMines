@@ -465,6 +465,7 @@ def _policy_out(p):
         "updated_at": p.updated_at, "updated_by": p.updated_by.email if p.updated_by else None,
         # The key itself is never returned: only whether one is set and its last characters.
         "ai_key_configured": bool(key), "ai_key_hint": f"…{key[-4:]}" if len(key) >= 8 else ("set" if key else ""),
+        "allowed_ai_models": p.allowed_ai_models or [],
     }
 
 
@@ -509,6 +510,28 @@ class PolicyView(APIView):
             if getattr(p, f) != v:
                 changed[f] = {"from": getattr(p, f), "to": v}
                 setattr(p, f, v)
+        # Models people may use (empty = not restricted). Each: {"provider", "model"}.
+        if "allowed_ai_models" in request.data:
+            import re as _re
+            raw = request.data.get("allowed_ai_models") or []
+            if not isinstance(raw, list) or len(raw) > 300:
+                return Response({"error": "Choose up to 300 models."}, status=400)
+            cleaned, seen = [], set()
+            for m in raw:
+                prov = str((m or {}).get("provider") or "").strip().lower() if isinstance(m, dict) else ""
+                name = str((m or {}).get("model") or "").strip()[:200] if isinstance(m, dict) else ""
+                if prov not in AI_PROVIDERS or not _re.fullmatch(r"[\w.:/@+-]+", name or "-") or not name:
+                    return Response({"error": "One of the chosen models is not valid."}, status=400)
+                if (prov, name) not in seen:
+                    seen.add((prov, name))
+                    cleaned.append({"provider": prov, "model": name})
+            if cleaned != (p.allowed_ai_models or []):
+                changed["allowed_ai_models"] = {"from": len(p.allowed_ai_models or []), "to": len(cleaned)}
+                p.allowed_ai_models = cleaned
+        # The default model must be one of the allowed ones.
+        if p.allowed_ai_models and p.default_ai_model not in [m["model"] for m in p.allowed_ai_models]:
+            p.default_ai_model = p.allowed_ai_models[0]["model"]
+            changed.setdefault("default_ai_model", {"to": p.default_ai_model})
         # Write-only organisation AI key: a new value replaces it, clear_ai_api_key removes it.
         new_key = str(request.data.get("ai_api_key") or "").strip()
         if new_key:

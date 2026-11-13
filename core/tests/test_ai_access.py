@@ -114,3 +114,67 @@ class OrganisationAIAccessTests(TestCase):
         if r.status_code == 200:
             self.assertFalse(r.json()["ai_personal_keys_allowed"])
             self.assertTrue(r.json()["ai_managed_by_organisation"])
+
+
+class AllowedModelsTests(TestCase):
+    """Administrators choose which models people may use; nothing else gets through."""
+
+    @classmethod
+    def setUpTestData(cls):
+        cls.firm = Client.objects.create(name="Firm A")
+        cls.admin = make_user("admin@a.test", cls.firm, staff=True, groups=["Admin"])
+        cls.member = make_user("member@a.test", cls.firm, groups=["Client"])
+
+    def setUp(self):
+        cache.clear()
+        self.allowed = [{"provider": "litellm", "model": "openai/gpt-4o-mini"},
+                        {"provider": "litellm", "model": "anthropic/claude-sonnet"}]
+
+    def _allow(self, **extra):
+        return api(self.admin).patch(POLICY, {"ai_provider": "litellm", "allowed_ai_models": self.allowed,
+                                             "default_ai_model": "anthropic/claude-sonnet", **extra}, format="json")
+
+    def test_admin_saves_the_list_and_default(self):
+        r = self._allow()
+        self.assertEqual(r.status_code, 200, r.content)
+        self.assertEqual(r.json()["allowed_ai_models"], self.allowed)
+        self.assertEqual(r.json()["default_ai_model"], "anthropic/claude-sonnet")
+
+    def test_default_is_kept_inside_the_list(self):
+        r = self._allow(default_ai_model="gpt-something-else")
+        self.assertEqual(r.json()["default_ai_model"], "openai/gpt-4o-mini")
+
+    def test_invalid_entries_are_refused(self):
+        r = api(self.admin).patch(POLICY, {"allowed_ai_models": [{"provider": "evil", "model": "x"}]}, format="json")
+        self.assertEqual(r.status_code, 400)
+        self.assertEqual(api(self.member).patch(POLICY, {"allowed_ai_models": self.allowed}, format="json").status_code, 403)
+
+    def test_a_model_outside_the_list_is_replaced_by_the_default(self):
+        self._allow()
+        with mock.patch("core.llm_providers.model_for", side_effect=lambda p, m: m):
+            cfg = clean_llm_config({"provider": "openai", "model": "gpt-5-pro"}, self.member)
+        self.assertEqual((cfg["provider"], cfg["model"]), ("litellm", "anthropic/claude-sonnet"))
+        with mock.patch("core.llm_providers.model_for", side_effect=lambda p, m: m):
+            cfg = clean_llm_config({"provider": "litellm", "model": "openai/gpt-4o-mini"}, self.member)
+        self.assertEqual(cfg["model"], "openai/gpt-4o-mini")
+
+    def test_people_only_see_allowed_models(self):
+        self._allow()
+        r = api(self.member).get("/api/v1/grid-documents-interrogation/models/available/")
+        self.assertEqual(r.status_code, 200, r.content)
+        self.assertTrue(r.json()["restricted"])
+        self.assertEqual([m["model"] for m in r.json()["models"]], ["openai/gpt-4o-mini", "anthropic/claude-sonnet"])
+        everything = {"object": "list", "data": [{"id": "openai/gpt-4o-mini"}, {"id": "openai/gpt-5-pro"},
+                                                 {"id": "anthropic/claude-sonnet"}]}
+        with mock.patch("grid_documents_interrogation.views_models.list_models", return_value=everything):
+            member = api(self.member).post("/api/v1/grid-documents-interrogation/proxy/models/", {"provider": "litellm"}, format="json")
+            admin = api(self.admin).post("/api/v1/grid-documents-interrogation/proxy/models/", {"provider": "litellm"}, format="json")
+        self.assertEqual([m["id"] for m in member.json()["data"]], ["openai/gpt-4o-mini", "anthropic/claude-sonnet"])
+        self.assertEqual(len(admin.json()["data"]), 3)          # admins see everything, to choose from
+
+    def test_unrestricted_organisation_sees_the_providers_chat_models(self):
+        everything = {"object": "list", "data": [{"id": "gpt-4o-mini"}, {"id": "tts-1"}, {"id": "openai/*"}]}
+        with mock.patch("grid_documents_interrogation.views_models.list_models", return_value=everything):
+            r = api(self.member).get("/api/v1/grid-documents-interrogation/models/available/")
+        self.assertFalse(r.json()["restricted"])
+        self.assertEqual([m["model"] for m in r.json()["models"]], ["gpt-4o-mini"])

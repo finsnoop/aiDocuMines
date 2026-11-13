@@ -333,6 +333,9 @@ class OrganisationPolicy(models.Model):
     ai_provider = models.CharField(max_length=20, blank=True, default="")
     ai_api_key = EncryptedCharField(max_length=1000, blank=True, default="")
     allow_personal_ai_keys = models.BooleanField(default=False)
+    # Models people in the organisation may use: [{"provider": "litellm", "model": "openai/gpt-4o-mini"}, ...].
+    # Empty = not restricted yet (the platform's models). default_ai_model is the default among them.
+    allowed_ai_models = models.JSONField(default=list, blank=True)
     updated_at = models.DateTimeField(auto_now=True)
     updated_by = models.ForeignKey(CustomUser, null=True, blank=True, on_delete=models.SET_NULL, related_name="+")
 

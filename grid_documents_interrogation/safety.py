@@ -84,6 +84,12 @@ def clean_llm_config(raw, user=None) -> dict:
     else:
         from core.llm_providers import model_for
         model = model_for(provider, model) or model
+    # The organisation's allow-list: only models its administrators chose (else its default).
+    if access and access.get("allowed"):
+        allowed = [(m["provider"] or provider, m["model"]) for m in access["allowed"]]
+        if (provider, model) not in allowed:
+            pick = next((a for a in allowed if a[1] == access.get("default_model")), allowed[0])
+            provider, model = pick
 
     def num(key, default, lo, hi, cast=float):
         try:
