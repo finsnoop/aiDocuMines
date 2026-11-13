@@ -133,6 +133,10 @@ class File(models.Model):
                 name="uniq_file_md5_per_user"
             )
         ]
+        indexes = [
+            # Matter document lists and counts: project_id + owner (built concurrently, see 0012).
+            models.Index(fields=["project_id", "user"], name="file_project_user"),
+        ]
 
     @classmethod
     def make_copy(cls, original_file: "File", project_id: str, service_id: str) -> "File":
@@ -341,6 +345,7 @@ class BulkJob(models.Model):
 
     class Meta:
         ordering = ["-created_at"]
+        indexes = [models.Index(fields=["project_id", "user"], name="bulkjob_project_user")]
 
     def __str__(self):
         return f"BulkJob({self.job_type}) {self.id} - {self.status} ({self.processed_files}/{self.total_files})"
@@ -403,6 +408,8 @@ class Matter(models.Model):
     created_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, related_name="matters_created")
     members = models.ManyToManyField(User, related_name="matters", blank=True)
     ai_budget = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
+    # Catalogue service_types this matter is set up to run (chosen at creation, editable later).
+    services = models.JSONField(default=list, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -410,6 +417,10 @@ class Matter(models.Model):
         ordering = ["-updated_at"]
         constraints = [
             models.UniqueConstraint(fields=["client", "name"], name="uniq_matter_name_per_client"),
+        ]
+        indexes = [
+            models.Index(fields=["client", "-updated_at"], name="matter_client_recent"),
+            models.Index(fields=["client", "status", "-updated_at"], name="matter_client_status_recent"),
         ]
 
     def __str__(self):

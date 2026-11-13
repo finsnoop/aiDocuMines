@@ -492,32 +492,38 @@ class BulkJobDownloadView(APIView):
     permission_classes = [TokenHasReadWriteScope]
 
     def get(self, request, job_id):
-        import os
-        from django.http import FileResponse, Http404
         from core.access import scope_by_owner
-        from core.bulk_outputs import build_deliverables
-        from core.tasks_bulk import get_bulk_output_folder, get_service_display_name
 
         job = get_object_or_404(scope_by_owner(request.user, BulkJob.objects.all()), id=job_id)
-        if job.status in ("Pending", "Processing"):
-            return Response({"error": "The job is still running."}, status=409)
+        return deliverable_response(job, request.query_params.get("format"))
 
-        fmt = (request.query_params.get("format") or "xlsx").lower()
-        key = {"xlsx": "xlsx_file_id", "zip": "zip_file_id"}.get(fmt)
-        if not key:
-            return Response({"error": "format must be xlsx or zip"}, status=400)
 
-        deliverables = (job.result_summary or {}).get("deliverables") or {}
+def deliverable_response(job, fmt=None):
+    """Excel ('xlsx') or ZIP ('zip') deliverable of a finished job, built on demand if missing."""
+    import os
+    from django.http import FileResponse, Http404
+    from core.bulk_outputs import build_deliverables
+    from core.tasks_bulk import get_bulk_output_folder, get_service_display_name
+
+    if job.status in ("Pending", "Queued", "Processing"):
+        return Response({"error": "The job is still running."}, status=409)
+
+    fmt = (fmt or "xlsx").lower()
+    key = {"xlsx": "xlsx_file_id", "zip": "zip_file_id"}.get(fmt)
+    if not key:
+        return Response({"error": "format must be xlsx or zip"}, status=400)
+
+    deliverables = (job.result_summary or {}).get("deliverables") or {}
+    file_id = deliverables.get(key)
+    f = File.objects.filter(id=file_id, user=job.user).first() if file_id else None
+    if f is None or not os.path.isfile(f.filepath):
+        folder = get_bulk_output_folder(job) if job.folder_id else None
+        deliverables = build_deliverables(job, get_service_display_name(job.job_type), folder)
+        job.result_summary = {**(job.result_summary or {}), "deliverables": deliverables}
+        job.save(update_fields=["result_summary"])
         file_id = deliverables.get(key)
         f = File.objects.filter(id=file_id, user=job.user).first() if file_id else None
-        if f is None or not os.path.isfile(f.filepath):
-            folder = get_bulk_output_folder(job) if job.folder_id else None
-            deliverables = build_deliverables(job, get_service_display_name(job.job_type), folder)
-            job.result_summary = {**(job.result_summary or {}), "deliverables": deliverables}
-            job.save(update_fields=["result_summary"])
-            file_id = deliverables.get(key)
-            f = File.objects.filter(id=file_id, user=job.user).first() if file_id else None
-        if f is None or not os.path.isfile(f.filepath):
-            raise Http404("This job produced no output documents." if fmt == "zip" else "Results not available.")
+    if f is None or not os.path.isfile(f.filepath):
+        raise Http404("This job produced no output documents." if fmt == "zip" else "Results not available.")
 
-        return FileResponse(open(f.filepath, "rb"), as_attachment=True, filename=f.filename)
+    return FileResponse(open(f.filepath, "rb"), as_attachment=True, filename=f.filename)

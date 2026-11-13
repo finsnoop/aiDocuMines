@@ -35,7 +35,8 @@ from core.onlyoffice_views import (
     OnlyOfficeDocServerUrlView
 )
 
-from .views_matters import (MatterCreateView, MatterDetailView, MatterListView, MatterMembersView,
+from .views_matters import (MatterCreateView, MatterDetailView, MatterDocumentsView, MatterJobDownloadView,
+                            MatterJobsView, MatterListView, MatterMembersView, MatterPeopleView, MatterRunView,
                             MatterUploadView)
 
 urlpatterns = [
@@ -47,6 +48,11 @@ urlpatterns = [
     path("projects/<uuid:matter_id>/members/", MatterMembersView.as_view(), name="matter-members"),
     path("projects/<uuid:matter_id>/members/<int:user_id>/", MatterMembersView.as_view(), name="matter-member"),
     path("projects/<uuid:matter_id>/upload/", MatterUploadView.as_view(), name="matter-upload"),
+    path("projects/<uuid:matter_id>/documents/", MatterDocumentsView.as_view(), name="matter-documents"),
+    path("projects/<uuid:matter_id>/jobs/", MatterJobsView.as_view(), name="matter-jobs"),
+    path("projects/<uuid:matter_id>/run/", MatterRunView.as_view(), name="matter-run"),
+    path("projects/<uuid:matter_id>/people/", MatterPeopleView.as_view(), name="matter-people"),
+    path("projects/<uuid:matter_id>/jobs/<uuid:job_id>/download/", MatterJobDownloadView.as_view(), name="matter-job-download"),
     path("upload/", FileUploadView.as_view(), name="file-upload"),
 
     # ✅ Task Status (Universal)

@@ -32,6 +32,10 @@ class MatterTests(TestCase):
         cls.a_admin = make_user("admin@firm-a.test", cls.firm_a, staff=True, groups=["Admin"])
         cls.b1 = make_user("b1@firm-b.test", cls.firm_b, groups=["Client"])
 
+    def setUp(self):
+        from django.core.cache import cache
+        cache.clear()  # legacy-adoption throttle lives in the shared cache
+
     def _create(self, user, name="Project Atlas", **extra):
         return api(user).post("/api/v1/core/projects/create/", {"name": name, **extra}, format="json")
 
@@ -79,7 +83,7 @@ class MatterTests(TestCase):
         self.assertEqual(r.status_code, 200, r.content)
         self.assertTrue(access.can_access_file(self.a2, f))
         self.assertFalse(access.can_access_file(self.a2, f, "delete"))  # team members cannot delete
-        docs = api(self.a2).get(f"/api/v1/core/projects/{mid}/").json()["documents"]
+        docs = api(self.a2).get(f"/api/v1/core/projects/{mid}/documents/").json()["results"]
         self.assertEqual([d["filename"] for d in docs], ["spa.pdf"])
 
     def test_cannot_add_user_from_another_firm(self):
@@ -122,12 +126,79 @@ class MatterTests(TestCase):
         self.assertTrue(queued.called)
         self.assertTrue(File.objects.filter(user=self.a1, project_id="Project Atlas").exists())
 
+    def test_empty_files_are_rejected(self):
+        mid = self._create(self.a1).json()["id"]
+        empty = SimpleUploadedFile("blank.pdf", b"", content_type="application/pdf")
+        with override_settings(MEDIA_ROOT=self._tmp()):
+            r = api(self.a1).post(f"/api/v1/core/projects/{mid}/upload/", {"file": [empty]}, format="multipart")
+        self.assertEqual(r.status_code, 200, r.content)
+        self.assertEqual(r.json()["files"][0]["status"], "rejected")
+
     def test_closed_matter_rejects_uploads(self):
         mid = self._create(self.a1).json()["id"]
         api(self.a1).patch(f"/api/v1/core/projects/{mid}/", {"status": "closed"}, format="json")
         pdf = SimpleUploadedFile("a.pdf", b"%PDF-1.4", content_type="application/pdf")
         r = api(self.a1).post(f"/api/v1/core/projects/{mid}/upload/", {"file": [pdf]}, format="multipart")
         self.assertEqual(r.status_code, 400)
+
+    def test_list_is_paginated(self):
+        for i in range(30):
+            Matter.objects.create(client=self.firm_a, name=f"Deal {i:02d}", created_by=self.a1).members.add(self.a1)
+        r = api(self.a1).get("/api/v1/core/projects/?page=2&page_size=25").json()
+        self.assertEqual(r["count"], 30)
+        self.assertEqual(r["total_pages"], 2)
+        self.assertEqual(len(r["results"]), 5)
+        self.assertEqual(api(self.a1).get("/api/v1/core/projects/?page_size=5000").json()["page_size"], 100)
+
+    def test_list_counts_documents_per_matter(self):
+        mid = self._create(self.a1).json()["id"]
+        for n in ("a.pdf", "b.pdf"):
+            f = make_file(self.a1, n)
+            File.objects.filter(id=f.id).update(project_id="Project Atlas")
+        row = next(m for m in api(self.a1).get("/api/v1/core/projects/").json()["results"] if m["id"] == mid)
+        self.assertEqual(row["document_count"], 2)
+
+    def test_services_are_validated_and_saved(self):
+        self.assertEqual(self._create(self.a1, services=["no-such-service"]).status_code, 400)
+        from core.service_catalog import ALL_SERVICES
+        st = ALL_SERVICES[0]["service_type"]
+        r = self._create(self.a1, name="With services", services=[st, st])
+        self.assertEqual(r.status_code, 201, r.content)
+        self.assertEqual([s["service_type"] for s in r.json()["services"]], [st])
+
+    def test_documents_endpoint_is_paginated_and_searchable(self):
+        mid = self._create(self.a1).json()["id"]
+        for i in range(7):
+            f = make_file(self.a1, f"doc{i}.pdf")
+            File.objects.filter(id=f.id).update(project_id="Project Atlas")
+        r = api(self.a1).get(f"/api/v1/core/projects/{mid}/documents/?page_size=3").json()
+        self.assertEqual((r["count"], r["total_pages"], len(r["results"])), (7, 3, 3))
+        r = api(self.a1).get(f"/api/v1/core/projects/{mid}/documents/?search=doc6").json()
+        self.assertEqual([d["filename"] for d in r["results"]], ["doc6.pdf"])
+
+    def test_team_member_can_run_on_colleagues_documents(self):
+        from core.service_catalog import ALL_SERVICES
+        svc = next(s for s in ALL_SERVICES
+                   if s.get("handler_job_type") and "pdf" in (s.get("accepted_extensions") or ["pdf"]))
+        mid = self._create(self.a1).json()["id"]
+        f = make_file(self.a1, "nda.pdf")
+        File.objects.filter(id=f.id).update(project_id="Project Atlas", extension="pdf")
+        api(self.a1).post(f"/api/v1/core/projects/{mid}/members/", {"user_ids": [self.a2.id]}, format="json")
+        with mock.patch("core.tasks_bulk.execute_bulk_job.delay") as delay,                 mock.patch("core.bulk_registry.get_bulk_handler", return_value=object()),                 self.captureOnCommitCallbacks(execute=True):
+            r = api(self.a2).post(f"/api/v1/core/projects/{mid}/run/", {"service_type": svc["service_type"]}, format="json")
+        self.assertEqual(r.status_code, 201, r.content)
+        self.assertEqual(r.json()["total_files"], 1)
+        delay.assert_called_once()
+        jobs = api(self.a1).get(f"/api/v1/core/projects/{mid}/jobs/").json()
+        self.assertEqual(jobs["count"], 1)
+        self.assertEqual(jobs["results"][0]["run_by"]["email"], self.a2.email)
+
+    def test_other_firm_cannot_reach_matter_endpoints(self):
+        mid = self._create(self.a1).json()["id"]
+        for path in ("documents/", "jobs/"):
+            self.assertEqual(api(self.b1).get(f"/api/v1/core/projects/{mid}/{path}").status_code, 404, path)
+        self.assertEqual(api(self.b1).post(f"/api/v1/core/projects/{mid}/run/", {"service_type": "x"},
+                                           format="json").status_code, 404)
 
     def _tmp(self):
         import tempfile
