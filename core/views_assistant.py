@@ -92,19 +92,20 @@ class AssistantAskView(APIView):
             if isinstance(m, dict) and m.get("role") in ("user", "assistant")
         ]
         provider = str(request.data.get("provider") or default_provider()).lower()
+        from grid_documents_interrogation.safety import clean_llm_config
         from custom_authentication.policies import assistant_policy
 
         model = (request.data.get("model") or assistant_policy(user)["model"] or os.getenv("ASSISTANT_MODEL")
                  or os.getenv("OPENAI_MODEL") or "gpt-4o-mini")
         try:
-            answer = dispatch_to_llm(query, context_block, {"provider": provider, "model": model}, history)
+            answer = dispatch_to_llm(query, context_block, clean_llm_config({"provider": provider, "model": model}, user), history)
         except Exception as exc:
             fallback = available_chat_model(provider) if is_missing_model_error(exc) else None
             if fallback and fallback != model:
                 logger.warning("Model %r unavailable (%s); using %r. Update ASSISTANT_MODEL/OPENAI_MODEL.", model, exc, fallback)
                 model = fallback
                 try:
-                    answer = dispatch_to_llm(query, context_block, {"provider": provider, "model": model}, history)
+                    answer = dispatch_to_llm(query, context_block, clean_llm_config({"provider": provider, "model": model}, user), history)
                 except Exception as exc2:
                     logger.warning("Assistant model call failed for user %s: %s", user.pk, exc2)
                     return Response({"error": "The AI model is not reachable right now. Please try again shortly."},

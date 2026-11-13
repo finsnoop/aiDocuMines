@@ -338,6 +338,18 @@ class Command(BaseCommand):
             self.stdout.write(f"    Refused for {user.email} ({len(denied)}): " + ", ".join(denied[:60]))
 
     # ── entry point ───────────────────────────────────────────────────────────
+    def check_sign_in_service(self, r):
+        """Sign-in first asks the Node service; people added in the admin console are registered there."""
+        base = (os.getenv("NODE_BACKEND_URL") or "").rstrip("/")
+        if not base:
+            return r.add("Sign-in service (NODE_BACKEND_URL)", False,
+                         "not set: new users cannot sign in. Set it to the sign-in service URL, e.g. https://<backend host>")
+        try:
+            resp = requests.get(f"{base}/api/db-health", timeout=TIMEOUT)
+            r.add("Sign-in service (NODE_BACKEND_URL)", resp.status_code < 500, f"{base} HTTP {resp.status_code}")
+        except Exception as e:
+            r.add("Sign-in service (NODE_BACKEND_URL)", False, f"{base}: {str(e)[:150]}")
+
     def handle(self, *args, **opts):
         self.verbosity = int(opts.get("verbosity", 1))
         r = Result()
@@ -348,6 +360,7 @@ class Command(BaseCommand):
         self.check_models(r, opts["chat"])
         self.check_onlyoffice(r, opts.get("onlyoffice_file_id"))
         self.check_nextcloud(r)
+        self.check_sign_in_service(r)
         self.check_email(r, opts.get("email_to"))
         if not opts["skip_endpoints"]:
             self.sweep_endpoints(r, opts.get("as_email"))

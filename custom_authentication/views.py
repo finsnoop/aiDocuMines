@@ -1,4 +1,4 @@
-from custom_authentication.policies import policy_for as _policy_for
+from custom_authentication.policies import policy_for as _policy_for, ai_access as _ai_access
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
@@ -1476,6 +1476,10 @@ class WhoAmIView(APIView):
             "is_tenant_admin": is_tenant_admin(user),
             "is_platform_superuser": is_platform_superuser(user),
             "session_timeout_minutes": getattr(_policy_for(user), "session_timeout_minutes", 30),
+            # How this person's AI calls are made (no secrets): the page hides personal key fields
+            # when the organisation manages AI access.
+            "ai_personal_keys_allowed": _ai_access(user)["allow_personal"],
+            "ai_managed_by_organisation": _ai_access(user)["has_org_key"],
             "2fa_enabled": user.is_2fa_enabled,
         })
 

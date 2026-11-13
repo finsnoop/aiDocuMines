@@ -550,6 +550,12 @@ def dispatch_to_llm(
     # Sanitize inputs to prevent type errors
     if not isinstance(llm_config, dict):
         llm_config = {}
+    # The organisation's own AI key, read from the database at call time (never queued or logged).
+    if llm_config.get("key_org") and not llm_config.get("api_key"):
+        from custom_authentication.policies import organisation_ai_key
+        org_key = organisation_ai_key(llm_config["key_org"])
+        if org_key:
+            llm_config = {**llm_config, "api_key": org_key}
     if not isinstance(chunk, str):
         chunk = str(chunk) if chunk else ""
     if not isinstance(query_text, str):

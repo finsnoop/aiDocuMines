@@ -85,6 +85,18 @@ class AdminConsoleTests(TestCase):
         self.assertTrue(self.member.check_password(r.json()["temporary_password"]))
         self.assertIn("updateUserPasswordByEmail", post.call_args[0][0])
 
+    def test_reset_password_registers_someone_the_sign_in_service_lost(self):
+        # Sign-in service does not know the person (404), then accepts the registration (201).
+        responses = [mock.Mock(status_code=404), mock.Mock(status_code=201)]
+        with mock.patch("custom_authentication.views_admin.requests.post", side_effect=responses) as post:
+            r = api(self.admin).post(A + f"people/{self.member.id}/reset-password/")
+        self.assertEqual(r.status_code, 200)
+        self.assertTrue(r.json()["sign_in_updated"])
+        register = post.call_args_list[1]
+        self.assertTrue(register[0][0].endswith("/api/user"))
+        self.assertEqual(register[1]["json"]["email"], self.member.email)
+        self.assertEqual(register[1]["json"]["password"], r.json()["temporary_password"])
+
     # organisations
     def test_org_admin_sees_only_own_org_and_cannot_create(self):
         r = api(self.admin).get(A + "organisations/").json()

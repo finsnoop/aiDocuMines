@@ -1,6 +1,7 @@
 from django.contrib.auth.models import AbstractUser, BaseUserManager
 from django.db import models
 import uuid
+from core.fields.encrypted_char import EncryptedCharField
 from django.utils.timezone import now, timedelta
 from django.utils.crypto import get_random_string
 from oauth2_provider.models import Application
@@ -326,6 +327,12 @@ class OrganisationPolicy(models.Model):
     assistant_web_enabled = models.BooleanField(default=True)
     default_ai_model = models.CharField(max_length=120, blank=True, default="")
     session_timeout_minutes = models.PositiveIntegerField(default=30)
+    # AI access for the whole organisation, set by its administrators. When a key is set,
+    # every AI call made for the organisation's people uses it; people cannot bring their
+    # own keys unless allow_personal_ai_keys is on (off by default, for data-handling risk).
+    ai_provider = models.CharField(max_length=20, blank=True, default="")
+    ai_api_key = EncryptedCharField(max_length=1000, blank=True, default="")
+    allow_personal_ai_keys = models.BooleanField(default=False)
     updated_at = models.DateTimeField(auto_now=True)
     updated_by = models.ForeignKey(CustomUser, null=True, blank=True, on_delete=models.SET_NULL, related_name="+")
 

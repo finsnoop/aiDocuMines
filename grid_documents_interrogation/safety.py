@@ -57,14 +57,33 @@ def db_features_enabled() -> bool:
 
 
 # ── Model settings ────────────────────────────────────────────────────────────
-def clean_llm_config(raw) -> dict:
-    raw = raw if isinstance(raw, dict) else {}
+def clean_llm_config(raw, user=None) -> dict:
+    """
+    Model settings for one AI call. With `user`, the organisation's AI rules apply:
+    its provider and key are used, and people's own keys and endpoints are ignored
+    unless the organisation allows personal keys. The organisation key is not put in
+    the config (configs travel through the task queue); dispatch_to_llm reads it by
+    `key_org` when it calls the model.
+    """
+    raw = dict(raw) if isinstance(raw, dict) else {}
+    access = None
+    if user is not None:
+        from custom_authentication.policies import ai_access
+        access = ai_access(user)
+        if not access["allow_personal"]:
+            raw.pop("api_key", None)
+            raw.pop("endpoint", None)
+        if access["provider"]:
+            raw["provider"] = access["provider"]
     provider = str(raw.get("provider") or default_provider()).lower()
     if provider not in PROVIDERS:
         provider = default_provider()
     model = str(raw.get("model") or "").strip()[:200]
     if not model or not re.fullmatch(r"[\w.:/@+-]+", model):
         model = available_chat_model(provider) or os.getenv("OPENAI_MODEL") or "gpt-4o-mini"
+    else:
+        from core.llm_providers import model_for
+        model = model_for(provider, model) or model
 
     def num(key, default, lo, hi, cast=float):
         try:
@@ -83,6 +102,11 @@ def clean_llm_config(raw) -> dict:
     key = str(raw.get("api_key") or "").strip()
     if key:
         cfg["api_key"] = key[:400]
+    elif access and access["has_org_key"]:
+        cfg["key_org"] = access["org_id"]
+    elif user is None and raw.get("key_org"):
+        # Internal re-clean of a config already resolved for a user (e.g. inside a task).
+        cfg["key_org"] = raw["key_org"]
     if "num_ctx" in raw:
         cfg["num_ctx"] = num("num_ctx", 8192, 512, 131072, int)
     return cfg

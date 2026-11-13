@@ -76,12 +76,10 @@ def resolve_endpoint(provider: str, requested: Optional[str]) -> str:
 
 def resolve_api_key(provider: str, requested: Optional[str]) -> str:
     """
-    The key to send. The LiteLLM gateway is always called with the platform's own key:
-    a user-typed key belongs to an underlying provider, and LiteLLM would reject it as a
-    virtual key. Other providers use the caller's key when given, else the server's.
+    The key to send: the one resolved for this call (an organisation's key, or a personal
+    key where the organisation allows them), else the platform's own key. Personal keys
+    are dropped before this point unless allowed (grid_documents_interrogation.safety).
     """
-    if provider == "litellm":
-        return default_api_key("litellm") or (requested or "").strip()
     return (requested or "").strip() or default_api_key(provider)
 
 
@@ -148,12 +146,43 @@ PREFERRED = ("gpt-4o-mini", "gpt-4.1-mini", "gpt-4o", "gpt-4.1")
 
 
 def pick_chat_model(ids, preferred=None):
-    """A model that answers chat completions: `preferred` if offered, else a sensible current default."""
-    chat = [i for i in ids if i and not any(w in i.lower() for w in NOT_CHAT)]
+    """
+    A model that answers chat completions: `preferred` if offered, else a sensible current
+    default. Gateways such as LiteLLM name models "<provider>/<model>" (openai/gpt-4o-mini),
+    so names are matched with or without that prefix.
+    """
+    chat = [i for i in ids if i and "*" not in i and not any(w in i.lower() for w in NOT_CHAT)]
+    bare = {i.split("/", 1)[-1]: i for i in chat}
     for want in (preferred, *PREFERRED):
-        if want and want in chat:
+        if not want:
+            continue
+        if want in chat:
             return want
+        hit = bare.get(want.split("/", 1)[-1])
+        if hit:
+            return hit
     return chat[0] if chat else None
+
+
+def model_for(provider: str, requested: str) -> str:
+    """The requested model as this provider names it (adds or drops a gateway prefix if needed)."""
+    requested = (requested or "").strip()
+    if not requested:
+        return available_chat_model(provider) or ""
+    if provider != "litellm":
+        return requested.split("/", 1)[-1] if provider == "openai" and requested.startswith("openai/") else requested
+    try:
+        from django.core.cache import cache
+        ids = cache.get(f"llm:ids:{provider}")
+        if ids is None:
+            data = list_models(provider)
+            ids = [m.get("id") for m in data.get("data", [])]
+            cache.set(f"llm:ids:{provider}", ids, 3600)
+    except Exception:
+        return requested
+    if requested in ids:
+        return requested
+    return pick_chat_model(ids, requested) if any(i.split("/", 1)[-1] == requested.split("/", 1)[-1] for i in ids) else requested
 
 
 def available_chat_model(provider: str):

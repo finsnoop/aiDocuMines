@@ -123,7 +123,7 @@ def ask_question(query: str = "", file_ids: Iterable[int] = (), user_id: Optiona
     from grid_documents_interrogation.safety import clean_llm_config
     from grid_documents_interrogation.utils import dispatch_to_llm
 
-    cfg = clean_llm_config({"model": assistant_policy(user).get("model") or ""})
+    cfg = clean_llm_config({"model": assistant_policy(user).get("model") or ""}, user)
     try:
         answer = dispatch_to_llm(query[:4000], "\n\n".join(parts), cfg, previous_messages=None)
     except Exception as exc:

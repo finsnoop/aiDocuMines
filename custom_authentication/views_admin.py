@@ -105,16 +105,32 @@ def _node_base():
     return (os.getenv("NODE_BACKEND_URL") or "http://aidocumines_node_backend:7000").rstrip("/")
 
 
-def _register_sign_in(user, password, client_id, client_secret):
+def _register_sign_in(user, password, client_id, client_secret, existing_ok=True):
     """Sign-in first checks the Node service, so new users must exist there too."""
     try:
         r = requests.post(f"{_node_base()}/api/user", timeout=10, json={
             "username": (user.email.split("@")[0])[:150], "email": user.email, "password": password,
             "client_id": client_id, "client_secret": client_secret})
-        return r.status_code in (200, 201, 409)
+        return r.status_code in (200, 201) or (existing_ok and r.status_code == 409)
     except requests.RequestException as exc:
         logger.warning("Could not register %s with the sign-in service: %s", user.email, exc)
         return False
+
+
+def _reregister_sign_in(user, password):
+    """Give the user fresh OAuth app credentials and register them with the sign-in service."""
+    from oauth2_provider.generators import generate_client_secret
+    from oauth2_provider.models import Application
+    secret = generate_client_secret()
+    app = Application.objects.filter(user=user, authorization_grant_type=Application.GRANT_PASSWORD).order_by("id").first()
+    if app is None:
+        name = f"{user.client.name if user.client_id else 'aiDocuMines'} - {user.email}"
+        app = Application.objects.create(user=user, name=name, client_type=Application.CLIENT_CONFIDENTIAL,
+                                         authorization_grant_type=Application.GRANT_PASSWORD, client_secret=secret)
+    else:
+        app.client_secret = secret
+        app.save(update_fields=["client_secret"])
+    return _register_sign_in(user, password, app.client_id, secret, existing_ok=False)
 
 
 def _sync_password(request, email, password):
@@ -284,7 +300,12 @@ class ResetPasswordView(APIView):
         target.set_password(password)
         target.save(update_fields=["password"])
         synced = _sync_password(request, target.email, password)
-        audit(request, "user.password_reset", "user", target.id, target.email, client_id=target.client_id)
+        if not synced:
+            # The sign-in service may not know this person (e.g. they were added while it was
+            # unreachable). Register them there with fresh app credentials so they can sign in.
+            synced = _reregister_sign_in(target, password)
+        audit(request, "user.password_reset", "user", target.id, target.email, client_id=target.client_id,
+              sign_in_updated=synced)
         return Response({"temporary_password": password, "sign_in_updated": synced})
 
 
@@ -433,12 +454,18 @@ class AuditView(APIView):
 POLICY_FIELDS = {
     "allowed_file_types": str, "max_upload_mb": int, "assistant_enabled": bool, "assistant_web_enabled": bool,
     "default_ai_model": str, "session_timeout_minutes": int,
+    "ai_provider": str, "allow_personal_ai_keys": bool,
 }
+AI_PROVIDERS = ("", "litellm", "openai", "ollama", "vllm")
 
 
 def _policy_out(p):
-    return {f: getattr(p, f) for f in POLICY_FIELDS} | {"updated_at": p.updated_at,
-                                                         "updated_by": p.updated_by.email if p.updated_by else None}
+    key = p.ai_api_key or ""
+    return {f: getattr(p, f) for f in POLICY_FIELDS} | {
+        "updated_at": p.updated_at, "updated_by": p.updated_by.email if p.updated_by else None,
+        # The key itself is never returned: only whether one is set and its last characters.
+        "ai_key_configured": bool(key), "ai_key_hint": f"…{key[-4:]}" if len(key) >= 8 else ("set" if key else ""),
+    }
 
 
 class PolicyView(APIView):
@@ -477,9 +504,21 @@ class PolicyView(APIView):
                 return Response({"error": "Session timeout must be between 5 minutes and 24 hours."}, status=400)
             if f == "allowed_file_types":
                 v = ",".join(sorted({e.strip().lstrip(".").lower() for e in v.split(",") if e.strip()}))
+            if f == "ai_provider" and v not in AI_PROVIDERS:
+                return Response({"error": "Choose LiteLLM, OpenAI, Ollama or vLLM."}, status=400)
             if getattr(p, f) != v:
                 changed[f] = {"from": getattr(p, f), "to": v}
                 setattr(p, f, v)
+        # Write-only organisation AI key: a new value replaces it, clear_ai_api_key removes it.
+        new_key = str(request.data.get("ai_api_key") or "").strip()
+        if new_key:
+            if len(new_key) < 8 or len(new_key) > 500 or any(c.isspace() for c in new_key):
+                return Response({"error": "That does not look like an API key."}, status=400)
+            p.ai_api_key = new_key
+            changed["ai_api_key"] = "replaced"
+        elif request.data.get("clear_ai_api_key") and p.ai_api_key:
+            p.ai_api_key = ""
+            changed["ai_api_key"] = "removed"
         if changed:
             p.updated_by = request.user
             p.save()

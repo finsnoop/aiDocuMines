@@ -1,4 +1,6 @@
 # system_settings/views.py
+import logging
+logger = logging.getLogger(__name__)
 
 from rest_framework.views import APIView
 from rest_framework.response import Response
@@ -195,23 +197,29 @@ class PlatformGlobalSettingsView(APIView):
         if serializer.is_valid():
             serializer.save()
 
-            SystemSettingsAuditTrail.objects.create(
-                client=None,
-                run=None,
-                changes={"platform_global": serializer.validated_data}
-            )
+            # Platform-wide change: recorded in the admin audit log (the per-organisation
+            # settings trail requires an organisation).
+            try:
+                from custom_authentication.models import AdminAuditEvent
+                AdminAuditEvent.objects.create(
+                    actor=request.user, client=getattr(request.user, "client", None),
+                    action="platform_settings.updated", target_type="platform", target_label="Platform settings",
+                    details={"changes": {k: str(v) for k, v in serializer.validated_data.items()}},
+                )
+            except Exception:
+                logger.warning("Could not record platform settings change in the audit log", exc_info=True)
             return Response({"message": "Platform settings saved", "settings": serializer.data})
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
     @staticmethod
     def _is_superadmin(request) -> bool:
+        """Platform-wide settings affect every organisation: only the platform team may
+        read or change them, never an organisation's own SuperAdmin role."""
         user = getattr(request, 'user', None)
         if not user or not user.is_authenticated:
             return False
-        if getattr(user, 'is_superuser', False):
-            return True
-        from custom_authentication.rbac import get_user_roles
-        return 'SuperAdmin' in get_user_roles(user)
+        from core.access import is_platform_superuser
+        return is_platform_superuser(user)
 
 
 class PlatformGlobalSettingsPublicView(APIView):

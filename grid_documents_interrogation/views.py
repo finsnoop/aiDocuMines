@@ -349,7 +349,7 @@ class QueryViewSet(viewsets.ModelViewSet):
         service_id = request.data.get("service_id")
         generate_report = request.data.get("generate_report", False)
 
-        llm_config = safety.clean_llm_config(request.data.get("llm_config"))
+        llm_config = safety.clean_llm_config(request.data.get("llm_config"), request.user)
 
         if not topic_id or not query_text:
             return Response({"error": "topic_id and query_text are required."}, status=400)
@@ -535,7 +535,7 @@ class QueryViewSet(viewsets.ModelViewSet):
         if blocked:
             return blocked
         new_query_text = str(request.data.get("query_text") or original.query_text)[:MAX_QUERY_CHARS]
-        llm_config = safety.clean_llm_config(request.data.get("llm_config"))
+        llm_config = safety.clean_llm_config(request.data.get("llm_config"), request.user)
 
         previous_messages = _build_previous_messages(
             original.topic, request.user, llm_config, request
