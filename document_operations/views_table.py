@@ -91,12 +91,18 @@ class DocumentTableView(APIView):
 
 
 class DocumentFacetsView(APIView):
-    """GET /api/v1/documents/table/facets/  matters, services and file types for the table's filters (bounded)."""
+    """
+    GET /api/v1/documents/table/facets/  matters, services and file types for the table's filters (bounded).
+    ?project_id=X narrows services and file types to that project (used by the Assistant's topic picker).
+    """
     permission_classes = [IsAuthenticated]
     LIMIT = 200
 
     def get(self, request):
         qs = accessible_files(request.user).exclude(document_type="deliverable").order_by()
+        project = (request.query_params.get("project_id") or "").strip()[:255]
+        if project:
+            qs = qs.filter(project_id=project)
 
         def distinct(field):
             return sorted({v for v in qs.values_list(field, flat=True).distinct()[: self.LIMIT] if v})

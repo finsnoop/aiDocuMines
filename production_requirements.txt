@@ -23,6 +23,7 @@ vine
 # Database and ORM
 psycopg2-binary
 sqlalchemy
+PyMySQL
 alembic
 
 # File Handling and Processing

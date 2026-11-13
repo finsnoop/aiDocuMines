@@ -1,54 +1,91 @@
 # db_meta_views.py
+"""
+DocuChat database helpers: test a connection, list tables, list columns.
 
-from rest_framework.decorators import api_view, permission_classes
+Body: {"connection_id": <saved connection>} or {"connection_string": "postgresql://..."},
+plus "table" for columns. Targets are vetted by safety.py (no SQLite, no internal or
+platform hosts, read-only sessions, short timeouts). Errors never echo driver output,
+which can contain credentials or internal addresses.
+"""
+import logging
+
+from rest_framework import status
+from rest_framework.decorators import api_view, permission_classes, throttle_classes
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
-from rest_framework import status
-from sqlalchemy import create_engine, inspect
-from sqlalchemy.exc import SQLAlchemyError
-from sqlalchemy import text
-from .db_query_tools import fetch_tables, fetch_column_names
+from rest_framework.throttling import UserRateThrottle
+
+from custom_authentication.permissions import IsClientOrAdminOrSuperUser
+from custom_authentication.policies import assistant_policy
+
+from . import safety
+from .db_query_tools import fetch_column_names, fetch_tables, test_connection
+
+logger = logging.getLogger(__name__)
 
 
-@api_view(['POST'])
-@permission_classes([IsAuthenticated])
+class DbToolsThrottle(UserRateThrottle):
+    scope = "docuchat-db"
+    rate = "30/min"
+
+
+def _guard(request):
+    if not safety.db_features_enabled():
+        return Response({"error": "Database questions are turned off on this platform."}, status=403)
+    if not assistant_policy(request.user)["enabled"]:
+        return Response({"error": "The Assistant is turned off for your organisation."}, status=403)
+    return None
+
+
+def _failed(exc, what):
+    if isinstance(exc, safety.UnsafeTarget):
+        return Response({"error": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+    logger.info("DocuChat %s failed: %s", what, type(exc).__name__)
+    return Response({"error": "The database could not be reached with those details. "
+                              "Check the host, port, database name, user name and password."},
+                    status=status.HTTP_400_BAD_REQUEST)
+
+
+@api_view(["POST"])
+@permission_classes([IsAuthenticated, IsClientOrAdminOrSuperUser])
+@throttle_classes([DbToolsThrottle])
 def test_db_connection(request):
-    connection_string = request.data.get("connection_string")
-
-    if not connection_string:
-        return Response({"error": "Missing connection_string"}, status=status.HTTP_400_BAD_REQUEST)
-
+    blocked = _guard(request)
+    if blocked:
+        return blocked
     try:
-        engine = create_engine(connection_string)
-        with engine.connect() as conn:
-            # conn.execute("SELECT 1")
-            conn.execute(text("SELECT 1"))
-        return Response({"success": True, "message": "Connection successful"})
-    except SQLAlchemyError as e:
-        return Response({"success": False, "error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+        url = safety.url_for_request(request, request.data)
+        test_connection(url)
+        return Response({"success": True, "message": f"Connected to {safety.describe(url)}."})
+    except Exception as exc:
+        return _failed(exc, "connection test")
 
 
-@api_view(['POST'])
-@permission_classes([IsAuthenticated])
+@api_view(["POST"])
+@permission_classes([IsAuthenticated, IsClientOrAdminOrSuperUser])
+@throttle_classes([DbToolsThrottle])
 def list_tables(request):
-    connection_string = request.data.get("connection_string")
+    blocked = _guard(request)
+    if blocked:
+        return blocked
+    try:
+        url = safety.url_for_request(request, request.data)
+        return Response({"tables": fetch_tables(url), "database": safety.describe(url)})
+    except Exception as exc:
+        return _failed(exc, "table list")
 
-    if not connection_string:
-        return Response({"error": "Missing connection_string"}, status=status.HTTP_400_BAD_REQUEST)
 
-    tables = fetch_tables(connection_string)
-    return Response({"tables": tables})
-
-
-@api_view(['POST'])
-@permission_classes([IsAuthenticated])
+@api_view(["POST"])
+@permission_classes([IsAuthenticated, IsClientOrAdminOrSuperUser])
+@throttle_classes([DbToolsThrottle])
 def list_columns(request):
-    connection_string = request.data.get("connection_string")
-    table = request.data.get("table")
-
-    if not connection_string or not table:
-        return Response({"error": "connection_string and table are required"}, status=status.HTTP_400_BAD_REQUEST)
-
-    columns = fetch_column_names(connection_string, table)
-    return Response({"columns": columns})
-
+    blocked = _guard(request)
+    if blocked:
+        return blocked
+    if not request.data.get("table"):
+        return Response({"error": "table is required"}, status=status.HTTP_400_BAD_REQUEST)
+    try:
+        url = safety.url_for_request(request, request.data)
+        return Response({"columns": fetch_column_names(url, request.data["table"])})
+    except Exception as exc:
+        return _failed(exc, "column list")

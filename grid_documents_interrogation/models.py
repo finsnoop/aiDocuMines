@@ -35,31 +35,16 @@ class DatabaseConnection(models.Model):
         return f"{self.name} ({self.database_type})"
     
     def build_connection_uri(self):
-        try:
-            username = quote_plus(str(self.username))
-            decrypted_password = str(self.password)  # This should trigger decryption
-            password = quote_plus(decrypted_password)
-
-            print(f"[🔐 DB URI DEBUG]")
-            print(f"   Raw Username: {self.username}")
-            print(f"   Raw Password: {self.password}")
-            print(f"   Encoded Username: {username}")
-            print(f"   Encoded Password: {password}")
-
-            if self.database_type == "postgres":
-                uri = f"postgresql://{username}:{password}@{self.host}:{self.port}/{self.database_name}"
-            elif self.database_type == "mysql":
-                uri = f"mysql+pymysql://{username}:{password}@{self.host}:{self.port}/{self.database_name}"
-            elif self.database_type == "sqlite":
-                uri = f"sqlite:///{self.database_name}"
-            else:
-                raise ValueError(f"Unsupported database type: {self.database_type}")
-
-            print(f"[🔌 Final Connection URI]: {uri}")
-            return uri
-        except Exception as e:
-            print(f"[❌ URI Build Failed]: {e}")
-            raise
+        """Connection URL for this database. Never log it: it contains the password."""
+        username = quote_plus(str(self.username))
+        password = quote_plus(str(self.password))  # decrypted on access
+        database = quote_plus(str(self.database_name))
+        if self.database_type == "postgres":
+            return f"postgresql://{username}:{password}@{self.host}:{self.port}/{database}"
+        if self.database_type == "mysql":
+            return f"mysql+pymysql://{username}:{password}@{self.host}:{self.port}/{database}"
+        # SQLite would read files on the server itself; other engines are not supported.
+        raise ValueError(f"Unsupported database type: {self.database_type}")
 
     '''
     def build_connection_uri(self):

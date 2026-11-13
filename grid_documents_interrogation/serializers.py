@@ -26,6 +26,24 @@ class DatabaseConnectionSerializer(serializers.ModelSerializer):
         ]
         read_only_fields = ['id', 'created_at', 'owner']
 
+    def validate_database_type(self, value):
+        if value not in ("postgres", "mysql"):
+            raise serializers.ValidationError("Only PostgreSQL and MySQL databases can be connected.")
+        return value
+
+    def validate_port(self, value):
+        if not 1 <= int(value) <= 65535:
+            raise serializers.ValidationError("Enter a port between 1 and 65535.")
+        return value
+
+    def validate_host(self, value):
+        from .safety import UnsafeTarget, check_host
+        try:
+            check_host(value)
+        except UnsafeTarget as exc:
+            raise serializers.ValidationError(str(exc))
+        return value.strip()
+
     def create(self, validated_data):
         password = validated_data.pop("password", None)
         instance = DatabaseConnection(**validated_data)
@@ -53,6 +71,16 @@ class TopicSerializer(serializers.ModelSerializer):
     )
     files = FileSerializer(many=True, read_only=True)
     has_data_source = serializers.BooleanField(read_only=True)  # ✅ FIXED: removed `source=...`
+
+    def get_fields(self):
+        fields = super().get_fields()
+        # A topic may only be linked to the caller's own saved connections.
+        request = self.context.get("request")
+        user = getattr(request, "user", None)
+        fields["db_connection_id"].queryset = (
+            DatabaseConnection.objects.filter(owner=user) if user and user.is_authenticated
+            else DatabaseConnection.objects.none())
+        return fields
 
     class Meta:
         model = Topic

@@ -298,15 +298,41 @@ def perform_ocr_on_pdf(file_path):
 '''
 
 
+def _pdf_text_layer(file_path):
+    """Text already embedded in the PDF (digital documents): fast, exact, no OCR needed."""
+    try:
+        doc = fitz.open(file_path)
+        try:
+            text = "\n".join(page.get_text() for page in doc)
+        finally:
+            doc.close()
+        if isinstance(text, str) and text.strip():
+            return text
+    except Exception:
+        pass
+    try:
+        from pdfminer.high_level import extract_text
+        text = extract_text(file_path) or ""
+        if text.strip():
+            return text
+    except Exception:
+        pass
+    return ""
+
+
 def read_pdf_file(file_path):
     """
-    Returns text content of PDF file. Uses OCR for scanned PDFs.
+    Returns text content of PDF file: the embedded text layer when there is one,
+    OCR only for scanned PDFs (little or no embedded text).
     """
+    text = _pdf_text_layer(file_path)
+    if len(text.strip()) >= 20:
+        return text
     try:
-        return perform_ocr_on_pdf(file_path)
+        return perform_ocr_on_pdf(file_path) or text
     except Exception as e:
-        print(f"[❌ PDF READ ERROR] {e}")
-        return ""
+        print(f"[PDF READ ERROR] {e}")
+        return text
 
 '''
 def read_pdf_file(file_path):

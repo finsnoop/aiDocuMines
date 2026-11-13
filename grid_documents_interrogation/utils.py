@@ -1,4 +1,6 @@
 import os
+import logging
+logger = logging.getLogger(__name__)
 import json
 import tiktoken  # for OpenAI token estimation
 import pandas as pd
@@ -58,12 +60,21 @@ def _split_text_by_tokens(text: str, model_name: str, chunk_size_tokens: int) ->
     """
     if not text:
         return []
-    enc = _get_encoder(model_name)
-    tokens = enc.encode(text)
     chunks = []
-    for i in range(0, len(tokens), chunk_size_tokens):
-        chunk_tokens = tokens[i:i + chunk_size_tokens]
-        chunks.append(enc.decode(chunk_tokens))
+    try:
+        enc = _get_encoder(model_name)
+        tokens = enc.encode(text)
+        for i in range(0, len(tokens), chunk_size_tokens):
+            piece = enc.decode(tokens[i:i + chunk_size_tokens])
+            if isinstance(piece, str) and piece:
+                chunks.append(piece)
+    except Exception as exc:
+        logger.warning("Token chunking unavailable (%s); splitting by characters", type(exc).__name__)
+        chunks = []
+    if not chunks:
+        # ~4 characters per token: never silently drop the document.
+        size = max(chunk_size_tokens * 4, 4000)
+        chunks = [text[i:i + size] for i in range(0, len(text), size)]
     return chunks
 
 
@@ -213,6 +224,33 @@ def _history_to_text(previous_messages: Optional[List[dict]], limit: int = 10) -
     return "\n".join(lines)
 
 
+def _chat_completion(client, model, messages, temperature, timeout, max_out=1024):
+    """
+    One chat completion that copes with model generations: newer OpenAI models want
+    `max_completion_tokens` and may reject a custom temperature, older servers only
+    know `max_tokens`. Retries once with the parameters the server asked for.
+    """
+    kwargs = {"model": model, "messages": messages, "max_tokens": max_out, "temperature": temperature,
+              "timeout": timeout}
+    for _ in range(3):
+        try:
+            response = client.chat.completions.create(**kwargs)
+            return response.choices[0].message.content or ""
+        except Exception as exc:
+            text = str(exc).lower()
+            changed = False
+            if "max_tokens" in text and "max_completion_tokens" in text and "max_tokens" in kwargs:
+                kwargs["max_completion_tokens"] = kwargs.pop("max_tokens")
+                changed = True
+            if "temperature" in text and ("unsupported" in text or "does not support" in text) and "temperature" in kwargs:
+                kwargs.pop("temperature")
+                changed = True
+            if not changed:
+                raise
+    response = client.chat.completions.create(**kwargs)
+    return response.choices[0].message.content or ""
+
+
 def dispatch_to_llm(
     query_text: str,
     chunk: str,
@@ -244,14 +282,7 @@ def dispatch_to_llm(
         # Reuse your existing helper to respect token budgets
         messages = _build_messages_for_openai(previous_messages, chunk, query_text, model)
         try:
-            response = client.chat.completions.create(
-                model=model,
-                messages=messages,
-                max_tokens=1024,
-                temperature=temperature,
-                timeout=timeout,  # available on newer SDKs; safe to include
-            )
-            text = response.choices[0].message.content or ""
+            text = _chat_completion(client, model, messages, temperature, timeout)
             return text if isinstance(text, str) else str(text)
         except Exception as e:
             raise RuntimeError(f"OpenAI invocation failed (model={model}): {e}")
@@ -308,14 +339,7 @@ def dispatch_to_llm(
         try:
             client = OpenAI(api_key=api_key, base_url=base_url)
             messages = _build_messages_for_openai(previous_messages, chunk, query_text, model)
-            response = client.chat.completions.create(
-                model=model,
-                messages=messages,
-                max_tokens=1024,
-                temperature=temperature,
-                timeout=timeout,
-            )
-            text = response.choices[0].message.content or ""
+            text = _chat_completion(client, model, messages, temperature, timeout)
             return text if isinstance(text, str) else str(text)
         except Exception as e:
             raise RuntimeError(f"LiteLLM invocation failed (model={model}): {e}")
@@ -332,14 +356,7 @@ def dispatch_to_llm(
         try:
             client = OpenAI(api_key=api_key, base_url=base_url)
             messages = _build_messages_for_openai(previous_messages, chunk, query_text, model)
-            response = client.chat.completions.create(
-                model=model,
-                messages=messages,
-                max_tokens=1024,
-                temperature=temperature,
-                timeout=timeout,
-            )
-            text = response.choices[0].message.content or ""
+            text = _chat_completion(client, model, messages, temperature, timeout)
             return text if isinstance(text, str) else str(text)
         except Exception as e:
             raise RuntimeError(f"vLLM invocation failed (url={base_url}, model={model}): {e}")
@@ -435,7 +452,13 @@ def _get_or_build_cached_text_for_file_id(file_id: int) -> str:
         return cached_text
 
     # 2) fallback extraction once, then cache
-    text = _materialize_text_from_file_path(file_obj.filepath)
+    try:
+        text = _materialize_text_from_file_path(file_obj.filepath)
+    except ValueError:
+        # 3) the text the platform extracted when the document was indexed
+        if file_obj.content and file_obj.content.strip():
+            return file_obj.content
+        raise
     _save_cache_and_update_storage(file_obj, text, chosen_path)
     return text
 
@@ -487,20 +510,15 @@ def execute_db_query(
     chunk_size: int = 100,
     previous_messages: Optional[List[dict]] = None
 ):
-    from .db_query_tools import fetch_column_names, generate_sql_query, execute_sql_query
+    from .db_query_tools import fetch_column_names, generate_sql_query, execute_sql_query, fallback_select
+    from .safety import UnsafeTarget, checked_url, describe
 
     try:
-        print(f"[DEBUG] Connecting to database using: {connection_string}")
-        column_names = fetch_column_names(connection_string, table_name)
-        print(f"[DEBUG] Retrieved columns: {column_names}")
-
-        sql_query = generate_sql_query(table_name, query_text, column_names)
-        if not sql_query:
-            print(f"[INFO] SQL generation failed, using fallback: SELECT * FROM {table_name} LIMIT 100")
-            sql_query = f"SELECT * FROM {table_name} LIMIT 100"
-
-        print(f"[DEBUG] Final SQL Query: {sql_query}")
-        result = execute_sql_query(connection_string, sql_query, stream=stream, chunk_size=chunk_size)
+        url = checked_url(connection_string)
+        logger.info("DocuChat DB query on %s table=%s", describe(url), table_name)
+        column_names = fetch_column_names(url, table_name)
+        sql_query = generate_sql_query(table_name, query_text, column_names, llm_config) or fallback_select(url, table_name)
+        result = execute_sql_query(url, sql_query, stream=stream, chunk_size=chunk_size)
 
         # Normalize results to text for LLM
         text_data = ""
@@ -540,7 +558,9 @@ def execute_db_query(
 
         return "\n\n---\n\n".join(answers)
 
+    except UnsafeTarget as e:
+        return f"[ERROR] {e}"
     except Exception as e:
-        print(f"[FATAL] Unexpected error in DB query pipeline: {e}")
-        return f"[ERROR] Database query failed: {str(e)}"
+        logger.warning("DocuChat DB query failed: %s", type(e).__name__)
+        return "[ERROR] The database query failed. Check the connection details and table name."
 

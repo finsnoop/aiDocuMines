@@ -1,140 +1,106 @@
 # db_query_tools.py
+"""
+Read-only access to a user's own external database for DocuChat.
+
+Every function takes a connection string or URL, vets it (safety.checked_url) and
+connects read-only with short timeouts (safety.open_engine). Passwords are never
+logged.
+"""
+import logging
 
 import pandas as pd
 import sqlalchemy
-from sqlalchemy import create_engine, inspect
-from langchain_ollama import ChatOllama
-from langchain_core.prompts import ChatPromptTemplate
-from langchain_core.output_parsers import StrOutputParser
-from urllib.parse import unquote
-from sqlalchemy.engine.url import make_url
+from sqlalchemy import inspect
 
+from . import safety
 
-# Initialize LLaMA model from Ollama
-llama = ChatOllama(model="llama3.1:latest", temperature=0.5)
+logger = logging.getLogger(__name__)
 
-
-def safe_create_engine(connection_string):
-    try:
-        parsed_url = make_url(unquote(connection_string))
-        safe_url = parsed_url.set(password="***")
-        print(f"[🔌 Creating engine for]: {safe_url}")
-        return create_engine(parsed_url)
-    except Exception as e:
-        print(f"[❌ ERROR in safe_create_engine]: {e}")
-        raise
-
-
-'''
-def safe_create_engine(connection_string):
-    try:
-        # Unquote password and parse properly
-        parsed_url = make_url(unquote(connection_string))
-        return create_engine(parsed_url)
-    except Exception as e:
-        print(f"[❌ ERROR in safe_create_engine]: {e}")
-        raise
-'''
 
 def fetch_tables(connection_string):
-    """List all available tables in the database."""
+    """Tables and views in the database."""
+    engine = safety.open_engine(connection_string)
     try:
-        engine = safe_create_engine(connection_string)  # create_engine(connection_string)
-        inspector = inspect(engine)
-        return inspector.get_table_names()
-    except Exception as e:
-        print(f"[Error] Failed to fetch tables: {e}")
-        return []
+        return safety.list_tables(engine)
+    finally:
+        engine.dispose()
 
 
 def fetch_column_names(connection_string, table):
-    """Fetch all column names from a given table."""
+    """Column names of an existing table."""
+    engine = safety.open_engine(connection_string)
     try:
-        engine = safe_create_engine(connection_string) # create_engine(connection_string)
-        inspector = inspect(engine)
-        columns = inspector.get_columns(table)
-        return [col['name'] for col in columns]
-    except Exception as e:
-        print(f"[Error] Failed to fetch columns: {e}")
-        return []
+        table = safety.checked_table(engine, table)
+        return [c["name"] for c in inspect(engine).get_columns(table)]
+    finally:
+        engine.dispose()
 
 
-def generate_sql_query(table, user_query, column_names):
-    columns_str = ", ".join(column_names)
-    prompt = f"""
-    Convert the following natural language request into a SQL query for the table `{table}`.
-    Available columns: {columns_str}
-
-    Request: {user_query}
-    Only return the SQL query.
+def generate_sql_query(table, user_query, column_names, llm_config=None):
     """
-    try:
-        template = ChatPromptTemplate.from_template(prompt)
-        parser = StrOutputParser()
-        chain = template | llama | parser
-        sql_query = chain.invoke({"question": user_query})
+    Ask the configured model for one SELECT over `table`. Returns None when no usable
+    query comes back; callers then fall back to a plain capped SELECT.
+    """
+    from .utils import dispatch_to_llm
 
-        print(f"[🧠 SQL GENERATED]: {sql_query.strip()}")
-        return sql_query.strip().rstrip(";")
-    except Exception as e:
-        print(f"[❌ SQL GENERATION FAILED]: {e}")
-        return f"SELECT * FROM {table} LIMIT 100"
+    schema = f"Table: {table}\nColumns: {', '.join(column_names)}"
+    instruction = (
+        "Write one read-only SQL SELECT statement over the table above that answers the request below. "
+        "Use only the listed columns. Return only the SQL, with no explanation and no code fences.\n\n"
+        f"Request: {user_query}"
+    )
+    try:
+        cfg = safety.clean_llm_config(llm_config or {})
+        sql = dispatch_to_llm(instruction, schema, cfg, previous_messages=None)
+        return safety.safe_select(sql)
+    except safety.UnsafeTarget as exc:
+        logger.info("Generated SQL rejected: %s", exc)
+    except Exception as exc:
+        logger.warning("SQL generation failed: %s", exc)
+    return None
 
 
 def execute_sql_query(connection_string, sql_query, stream=False, chunk_size=100):
-    """
-    Run the SQL query and return results either all-at-once or in chunks.
-    If streaming, loads all chunks into memory and returns a single DataFrame.
-    """
+    """Run a row-capped SELECT in a read-only session and return a DataFrame (always re-vetted here)."""
+    sql_query = safety.safe_select(sql_query)
+    engine = safety.open_engine(connection_string)
     try:
-        engine = safe_create_engine(connection_string)
         with engine.connect() as connection:
-            if stream:
-                result = connection.execution_options(stream_results=True).execute(sqlalchemy.text(sql_query))
-                df_chunks = []
-                while True:
-                    rows = result.fetchmany(chunk_size)
-                    if not rows:
-                        break
-                    df_chunks.append(pd.DataFrame(rows, columns=result.keys()))
-                return pd.concat(df_chunks, ignore_index=True) if df_chunks else pd.DataFrame()
-            else:
-                return pd.read_sql_query(sql_query, con=connection)
-    except Exception as e:
-        print(f"[Error] SQL execution failed: {e}")
-        return pd.DataFrame([{"error": str(e)}])
+            result = connection.execution_options(stream_results=True).execute(sqlalchemy.text(sql_query))
+            cols = list(result.keys())
+            rows = result.fetchmany(safety.MAX_ROWS)
+            return pd.DataFrame(rows, columns=cols)
+    finally:
+        engine.dispose()
 
 
-
-'''
-def execute_sql_query(connection_string, sql_query, stream=False, chunk_size=100):
-    """Run the SQL query and return results either all-at-once or in chunks."""
+def overview_query(connection_string, table, limit=5):
+    """A few sample rows of an existing table."""
+    engine = safety.open_engine(connection_string)
     try:
-        engine = safe_create_engine(connection_string) # create_engine(connection_string)
+        table = safety.checked_table(engine, table)
+        sql = f"SELECT * FROM {safety.quoted(engine, table)} LIMIT {int(limit)}"
         with engine.connect() as connection:
-            if stream:
-                result = connection.execution_options(stream_results=True).execute(sqlalchemy.text(sql_query))
-                while True:
-                    rows = result.fetchmany(chunk_size)
-                    if not rows:
-                        break
-                    yield pd.DataFrame(rows, columns=result.keys())
-            else:
-                return pd.read_sql_query(sql_query, con=connection)
-    except Exception as e:
-        print(f"[Error] SQL execution failed: {e}")
-        return pd.DataFrame([{"error": str(e)}])
-'''
+            result = connection.execute(sqlalchemy.text(sql))
+            return [c["name"] for c in inspect(engine).get_columns(table)], pd.DataFrame(result.fetchall(), columns=list(result.keys()))
+    finally:
+        engine.dispose()
+
+
+def fallback_select(connection_string, table):
+    engine = safety.open_engine(connection_string)
+    try:
+        table = safety.checked_table(engine, table)
+        return f"SELECT * FROM (SELECT * FROM {safety.quoted(engine, table)}) AS docuchat_q LIMIT 100"
+    finally:
+        engine.dispose()
 
 
 def test_connection(connection_string):
-    """Verify whether the DB is reachable and credentials are valid."""
+    """Verify whether the DB is reachable and credentials are valid (raises on failure)."""
+    engine = safety.open_engine(connection_string)
     try:
-        engine = safe_create_engine(connection_string)
         with engine.connect() as conn:
             conn.execute(sqlalchemy.text("SELECT 1"))
-        print("[✅ DB Connection Successful]")
-    except Exception as e:
-        print(f"[❌ DB Connection Failed]: {e}")
-        raise
-
+    finally:
+        engine.dispose()

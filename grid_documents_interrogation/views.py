@@ -6,6 +6,7 @@ import time
 from io import StringIO
 
 import pandas as pd
+from django.http import Http404
 from django.shortcuts import get_object_or_404
 from rest_framework import viewsets, status
 from rest_framework.decorators import action
@@ -19,8 +20,32 @@ from core.models import File, Run
 from core.utils import generate_and_register_service_report
 
 from .tasks import process_file_query, process_db_query
-from .db_query_tools import fetch_column_names, generate_sql_query, execute_sql_query, test_connection
+from .db_query_tools import overview_query, test_connection
 from .file_readers import read_pdf_file
+from . import safety
+from custom_authentication.policies import assistant_policy
+
+HISTORY_TURNS = 20          # earlier question/answer pairs sent as memory
+MAX_QUERY_CHARS = 8000
+
+
+def _history(topic, user):
+    """The last HISTORY_TURNS exchanges of a topic, oldest first (bounded, whatever the topic's size)."""
+    recent = list(Query.objects.filter(topic=topic, user=user).order_by("-created_at")
+                  .values_list("query_text", "response_text")[:HISTORY_TURNS])
+    messages = []
+    for q, a in reversed(recent):
+        if isinstance(q, str) and q.strip():
+            messages.append({"role": "user", "content": q})
+        if isinstance(a, str) and a.strip():
+            messages.append({"role": "assistant", "content": a})
+    return messages
+
+
+def _assistant_blocked(user):
+    if not assistant_policy(user)["enabled"]:
+        return Response({"error": "The Assistant is turned off for your organisation."}, status=403)
+    return None
 from core.access import get_file_for_user, get_scoped_or_404, get_run_for_user, scope_by_file, scope_by_owner
 
 logger = logging.getLogger(__name__)
@@ -47,12 +72,15 @@ class DatabaseConnectionViewSet(viewsets.ModelViewSet):
         if not db_conn or str(db_conn.pk) != pk:
             db_conn = get_object_or_404(DatabaseConnection, pk=pk, owner=request.user)
 
-        connection_uri = db_conn.build_connection_uri()
         try:
-            test_connection(connection_uri)
-            return Response({"success": "Connection successful."})
+            url = safety.checked_url(db_conn.build_connection_uri())
+            test_connection(url)
+            return Response({"success": f"Connected to {safety.describe(url)}."})
+        except safety.UnsafeTarget as e:
+            return Response({"error": str(e)}, status=400)
         except Exception as e:
-            return Response({"error": str(e)}, status=500)
+            logger.info("Saved connection %s test failed: %s", db_conn.pk, type(e).__name__)
+            return Response({"error": "The database could not be reached with those details."}, status=400)
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -108,11 +136,22 @@ class TopicViewSet(viewsets.ModelViewSet):
         topic.files.add(file_obj)
         return Response({"message": f"File {file_obj.filename} attached to topic {topic.id}."}, status=200)
 
+    @action(detail=True, methods=["post"])
+    def detach_file(self, request, pk=None):
+        """Unlink a document from the topic (the document itself is untouched)."""
+        topic = self.get_object()
+        try:
+            file_id = int(request.data.get("file_id"))
+        except (TypeError, ValueError):
+            return Response({"error": "file_id is required"}, status=400)
+        topic.files.remove(file_id)
+        return Response({"message": "Document removed from this topic."}, status=200)
+
     @action(detail=False, methods=['post'], url_path='start-interrogation')
     def start_interrogation(self, request):
-        project_id = request.data.get("project_id")
-        service_id = request.data.get("service_id")
-        name = request.data.get("name", f"{project_id}-{service_id}")
+        project_id = str(request.data.get("project_id") or "").strip()[:255]
+        service_id = str(request.data.get("service_id") or "").strip()[:255]
+        name = (str(request.data.get("name") or "").strip() or f"{project_id}-{service_id}")[:100]
 
         if not project_id or not service_id:
             return Response({"error": "project_id and service_id are required"}, status=400)
@@ -157,8 +196,13 @@ class TopicViewSet(viewsets.ModelViewSet):
 # Queries
 # ──────────────────────────────────────────────────────────────────────────────
 class QueryViewSet(viewsets.ModelViewSet):
+    """Questions are only created by ask/reask (which check access); no raw create or edit."""
     serializer_class = QuerySerializer
     permission_classes = [IsAuthenticated, IsClientOrAdminOrSuperUser]
+    http_method_names = ["get", "post", "delete", "head", "options"]
+
+    def create(self, request, *args, **kwargs):
+        return Response({"error": "Use queries/ask/ to ask a question."}, status=405)
 
     def get_queryset(self):
         return Query.objects.filter(user=self.request.user).order_by('-created_at')
@@ -194,13 +238,14 @@ class QueryViewSet(viewsets.ModelViewSet):
         service_id = request.data.get("service_id")
         generate_report = request.data.get("generate_report", False)
 
-        llm_config = request.data.get("llm_config") or {
-            "provider": "openai",
-            "model": "gpt-4o-mini"
-        }
+        llm_config = safety.clean_llm_config(request.data.get("llm_config"))
 
         if not topic_id or not query_text:
             return Response({"error": "topic_id and query_text are required."}, status=400)
+        blocked = _assistant_blocked(request.user)
+        if blocked:
+            return blocked
+        query_text = str(query_text)[:MAX_QUERY_CHARS]
 
         topic = get_object_or_404(Topic, id=topic_id, user=request.user)
 
@@ -209,13 +254,7 @@ class QueryViewSet(viewsets.ModelViewSet):
                 "error": "No data source connected to this topic. Attach a file or link a database connection."
             }, status=400)
 
-        # Build conversation memory
-        previous_messages = []
-        for q in Query.objects.filter(topic=topic).order_by('created_at'):
-            if q.query_text and isinstance(q.query_text, str) and q.query_text.strip():
-                previous_messages.append({"role": "user", "content": q.query_text})
-            if q.response_text and isinstance(q.response_text, str) and q.response_text.strip():
-                previous_messages.append({"role": "assistant", "content": q.response_text})
+        previous_messages = _history(topic, request.user)
 
         try:
             file = None
@@ -233,20 +272,22 @@ class QueryViewSet(viewsets.ModelViewSet):
                 )
 
             elif data_source == "db":
-                connection_string = request.data.get("connection_string")
+                if not safety.db_features_enabled():
+                    return Response({"error": "Database questions are turned off on this platform."}, status=403)
                 table_name = request.data.get("table")
-
-                # If connection_string is not supplied, try topic.db_connection
-                if not connection_string:
-                    if topic.db_connection:
-                        connection_string = topic.db_connection.build_connection_uri()
-                    else:
-                        return Response(
-                            {"error": "Missing connection_string and no DB connection linked to topic."},
-                            status=400
-                        )
                 if not table_name:
                     return Response({"error": "Missing 'table' for DB query."}, status=400)
+                try:
+                    if request.data.get("connection_id") or request.data.get("connection_string"):
+                        url = safety.url_for_request(request, request.data)
+                    elif topic.db_connection and topic.db_connection.owner_id == request.user.id:
+                        url = safety.checked_url(topic.db_connection.build_connection_uri())
+                    else:
+                        return Response({"error": "Choose a saved connection or enter a connection string."},
+                                        status=400)
+                except safety.UnsafeTarget as exc:
+                    return Response({"error": str(exc)}, status=400)
+                connection_string = url.render_as_string(hide_password=False)
 
                 task = process_db_query.delay(
                     query_text,
@@ -311,8 +352,12 @@ class QueryViewSet(viewsets.ModelViewSet):
 
             return Response(response_data, status=201)
 
-        except Exception as e:
-            return Response({"error": f"Query processing failed: {str(e)}"}, status=500)
+        except Http404:
+            raise
+        except Exception:
+            logger.exception("DocuChat question failed for topic %s", topic_id)
+            return Response({"error": "The question could not be answered right now. Please try again."},
+                            status=502)
 
     @action(detail=True, methods=['get'])
     def download(self, request, pk=None):
@@ -343,17 +388,10 @@ class QueryViewSet(viewsets.ModelViewSet):
         file = query.file
         file_path = file.filepath if file else None
 
+        # Only the chat message is removed. The document it referred to may be shared with,
+        # or owned by, someone else, and is managed from the documents pages.
         query.delete()
-
-        if file and not Query.objects.filter(file=file).exists():
-            file.delete()
-            if file_path and os.path.exists(file_path):
-                try:
-                    os.remove(file_path)
-                except Exception:
-                    pass
-
-        return Response({"success": "Query and associated file deleted."})
+        return Response({"success": "Message deleted."})
 
     @action(detail=False, methods=['get'], url_path='fetch-previous')
     def fetch_previous_chat(self, request):
@@ -386,29 +424,16 @@ class QueryViewSet(viewsets.ModelViewSet):
         Re-ask with history. Supports file-based follow-ups (fast path via file_id).
         """
         original = get_object_or_404(Query, id=pk, user=request.user)
-        new_query_text = request.data.get("query_text", original.query_text)
-        llm_config = request.data.get("llm_config", {
-            "provider": "openai",
-            "model": "gpt-4o-mini"
-        })
-
-        # Build memory from topic history
-        previous_queries = Query.objects.filter(
-            topic=original.topic,
-            user=request.user,
-        ).order_by('created_at')
-
-        previous_messages = []
-        for q in previous_queries:
-            try:
-                if q.query_text and isinstance(q.query_text, str) and q.query_text.strip():
-                    previous_messages.append({"role": "user", "content": q.query_text})
-                if q.response_text and isinstance(q.response_text, str) and q.response_text.strip():
-                    previous_messages.append({"role": "assistant", "content": q.response_text})
-            except Exception as e:
-                print(f"[⚠️ Skipped bad query ID {q.id} due to: {e}]")
+        blocked = _assistant_blocked(request.user)
+        if blocked:
+            return blocked
+        new_query_text = str(request.data.get("query_text") or original.query_text)[:MAX_QUERY_CHARS]
+        llm_config = safety.clean_llm_config(request.data.get("llm_config"))
+        previous_messages = _history(original.topic, request.user)
 
         if original.file:
+            # Access may have been withdrawn since the first question.
+            get_file_for_user(request.user, original.file_id)
             try:
                 # NEW: route via Celery fast path with file_id
                 task = process_file_query.delay(
@@ -418,8 +443,10 @@ class QueryViewSet(viewsets.ModelViewSet):
                     previous_messages=previous_messages
                 )
                 result = task.get(timeout=60)
-            except Exception as e:
-                return Response({"error": f"Follow-up query failed: {e}"}, status=500)
+            except Exception:
+                logger.exception("DocuChat follow-up failed for query %s", pk)
+                return Response({"error": "The follow-up could not be answered right now. Please try again."},
+                                status=502)
         else:
             # Optional: add DB re-ask path using topic.db_connection if you want
             return Response({"error": "Re-ask is only supported for file-based queries for now."}, status=400)
@@ -452,10 +479,15 @@ class QueryViewSet(viewsets.ModelViewSet):
 
         file = get_file_for_user(request.user, file_id)
         try:
-            text = read_pdf_file(file.filepath)
-            return Response({"ocr_text": text[:5000]})
+            text = read_pdf_file(file.filepath) if (file.filepath or "").lower().endswith(".pdf") else ""
+            if not (text or "").strip():
+                text = file.content or ""
+            if not text.strip():
+                return Response({"error": "No text could be read from this document."}, status=422)
+            return Response({"ocr_text": text[:5000], "file_name": file.filename})
         except Exception as e:
-            return Response({"error": str(e)}, status=500)
+            logger.info("OCR preview failed for file %s: %s", file.pk, type(e).__name__)
+            return Response({"error": "No text could be read from this document."}, status=422)
 
     @action(detail=False, methods=['post'], url_path='db-inspect')
     def db_inspect(self, request):
@@ -464,31 +496,31 @@ class QueryViewSet(viewsets.ModelViewSet):
         Body: { "connection_string": "...", "table": "users" }
         If connection_string omitted, will attempt to use Topic=db_connection if provided via ?topic_id=...
         """
-        connection_string = request.data.get("connection_string")
+        if not safety.db_features_enabled():
+            return Response({"error": "Database questions are turned off on this platform."}, status=403)
+        blocked = _assistant_blocked(request.user)
+        if blocked:
+            return blocked
         table_name = request.data.get("table")
         if not table_name:
             return Response({"error": "table is required"}, status=400)
-
-        # Optional: allow topic_id to reuse linked DB connection
-        topic_id = request.query_params.get("topic_id")
-        if not connection_string and topic_id:
-            topic = get_object_or_404(Topic, id=topic_id, user=request.user)
-            if topic.db_connection:
-                connection_string = topic.db_connection.build_connection_uri()
-
-        if not connection_string:
-            return Response({"error": "connection_string is required (or provide ?topic_id with a linked DB)."}, status=400)
-
         try:
-            cols = fetch_column_names(connection_string, table_name)
-            sql = generate_sql_query(table_name, "overview", cols)
-            df = execute_sql_query(connection_string, sql)
-
-            sample_data = df.head().to_dict(orient="records") if hasattr(df, 'head') else str(df)
+            topic_id = request.query_params.get("topic_id") or request.data.get("topic_id")
+            if not (request.data.get("connection_id") or request.data.get("connection_string")) and topic_id:
+                topic = get_object_or_404(Topic, id=topic_id, user=request.user)
+                if not topic.db_connection or topic.db_connection.owner_id != request.user.id:
+                    return Response({"error": "This topic has no saved database connection."}, status=400)
+                url = safety.checked_url(topic.db_connection.build_connection_uri())
+            else:
+                url = safety.url_for_request(request, request.data)
+            cols, df = overview_query(url, table_name)
             return Response({
                 "columns": cols,
-                "sample_data": sample_data
+                "sample_data": df.astype(str).to_dict(orient="records"),
+                "database": safety.describe(url),
             })
+        except safety.UnsafeTarget as e:
+            return Response({"error": str(e)}, status=400)
         except Exception as e:
-            return Response({"error": str(e)}, status=500)
-
+            logger.info("DocuChat db-inspect failed: %s", type(e).__name__)
+            return Response({"error": "The database could not be reached with those details."}, status=400)
