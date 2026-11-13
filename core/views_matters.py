@@ -197,7 +197,7 @@ class MatterCreateView(APIView):
             matter.members.add(request.user)
             ids = request.data.get("member_ids") or []
             if isinstance(ids, list) and ids:
-                matter.members.add(*scope_users(request.user, User.objects.filter(id__in=ids)))
+                matter.members.add(*scope_users(User.objects.filter(id__in=ids), request.user))
         return Response(_summary(matter, request.user), status=status.HTTP_201_CREATED)
 
 
@@ -272,7 +272,7 @@ class MatterMembersView(APIView):
         ids = request.data.get("user_ids") or []
         if not isinstance(ids, list) or not ids:
             return Response({"error": "user_ids must be a non-empty list."}, status=status.HTTP_400_BAD_REQUEST)
-        candidates = scope_users(request.user, User.objects.filter(id__in=ids))
+        candidates = scope_users(User.objects.filter(id__in=ids), request.user)
         if matter.client_id:
             candidates = candidates.filter(client_id=matter.client_id)
         added = list(candidates)

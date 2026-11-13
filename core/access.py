@@ -299,7 +299,9 @@ def can_access_file(user, file_obj, action: str = "view") -> bool:
             getattr(file_obj.user, "client_id", None) == tenant_id(user):
         return True
     from core.models import File
-    return File.objects.filter(pk=file_obj.pk).filter(_shared_file_ids_q(user, action)).exists()
+    return File.objects.filter(pk=file_obj.pk).filter(
+        _shared_file_ids_q(user, action) | _matter_member_files_q(user, action)
+    ).exists()
 
 
 def get_file_for_user(user, file_id, action: str = "view"):

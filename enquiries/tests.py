@@ -1,3 +1,4 @@
+from django.core.cache import cache
 from django.test import TestCase, override_settings
 from rest_framework.test import APIClient
 
@@ -16,6 +17,9 @@ VALID = {
     "DEFAULT_PARSER_CLASSES": ["rest_framework.parsers.JSONParser"],
 })
 class EnquiryTests(TestCase):
+    def setUp(self):
+        cache.clear()  # rate-limit counters live in the shared cache
+
     def test_valid_enquiry_is_stored_without_login(self):
         r = APIClient().post(URL, VALID, format="json")
         self.assertEqual(r.status_code, 201, r.content)
