@@ -43,7 +43,7 @@ if [ ! -f .env ]; then
   echo -e "${RED}✗  .env not found in $(pwd) — nothing was changed${NC}"; exit 1
 fi
 missing=0
-for var in SECRET_KEY POSTGRES_USER POSTGRES_PASSWORD POSTGRES_DB FIELD_ENCRYPTION_KEY ENCRYPTION_SECRET_KEY REDIS_PASSWORD ELASTICSEARCH_PASSWORD; do
+for var in SECRET_KEY POSTGRES_USER POSTGRES_PASSWORD POSTGRES_DB FIELD_ENCRYPTION_KEY ENCRYPTION_SECRET_KEY REDIS_PASSWORD ELASTICSEARCH_PASSWORD \n           ONLYOFFICE_JWT_SECRET OO_POSTGRES_DB OO_POSTGRES_USER OO_POSTGRES_PASSWORD; do
   if [ -z "$(env_value "$var")" ]; then
     echo -e "${RED}✗  $var is not set in .env${NC}"; missing=1
   fi

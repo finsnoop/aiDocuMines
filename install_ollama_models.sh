@@ -2,7 +2,7 @@
 set -euo pipefail
 
 CONTAINER_NAME="${CONTAINER_NAME:-aidocumines_ollama}"
-OLLAMA_HOST_URL="${OLLAMA_HOST_URL:-http://127.0.0.1:11434}"
+OLLAMA_HOST_URL="${OLLAMA_HOST_URL:-http://127.0.0.1:11435}"   # docker-compose.yml publishes 127.0.0.1:11435
 HEALTH_TIMEOUT_SECONDS="${HEALTH_TIMEOUT_SECONDS:-180}"
 
 MODELS=(

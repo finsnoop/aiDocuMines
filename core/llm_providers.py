@@ -41,7 +41,7 @@ def default_endpoint(provider: str) -> str:
     return {
         # LITELLM_URL is the name used on the production server (may end in /v1)
         "litellm": _env("LITELLM_BASE_URL") or _env("LITELLM_URL", "http://aidocumines_litellm:4000"),
-        "ollama": _env("OLLAMA_URL", "http://ollama:11434"),
+        "ollama": _env("OLLAMA_URL", "http://aidocumines_ollama:11434"),
         "vllm": _env("VLLM_URL", "http://vllm:8000/v1"),
         "openai": "https://api.openai.com/v1",
     }.get(provider, "")

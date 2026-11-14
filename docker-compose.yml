@@ -87,9 +87,6 @@ services:
   ollama:
     image: ollama/ollama:latest          # pin latest or a specific version
     container_name: aidocumines_ollama
-    # Opt-in: production uses the AI providers configured in .env. Start with:
-    #   docker compose --profile local-ollama up -d ollama
-    profiles: ["local-ollama"]
     restart: unless-stopped
     mem_limit: ${OLLAMA_MEM_LIMIT:-4g}
     logging: *logging
@@ -382,7 +379,6 @@ services:
   onlyoffice_postgres:
     image: postgres:13
     container_name: onlyoffice-db
-    profiles: ["bundled-onlyoffice"]   # opt-in: production uses the CapRover OnlyOffice (ONLYOFFICE_URL)
     restart: unless-stopped
     mem_limit: 512m
     logging: *logging
@@ -403,9 +399,6 @@ services:
   onlyoffice:
     image: onlyoffice/documentserver:latest
     container_name: onlyoffice
-    # Opt-in: production uses the CapRover OnlyOffice app (ONLYOFFICE_URL). Start with:
-    #   docker compose --profile bundled-onlyoffice up -d onlyoffice
-    profiles: ["bundled-onlyoffice"]
     restart: unless-stopped
     mem_limit: ${ONLYOFFICE_MEM_LIMIT:-3g}
     logging: *logging

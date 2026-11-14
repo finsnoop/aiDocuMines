@@ -629,7 +629,7 @@ def dispatch_to_llm(
         base_url = (
             llm_config.get("endpoint")
             or os.getenv("OLLAMA_URL")
-            or "http://ollama:11434"
+            or "http://aidocumines_ollama:11434"
         )
 
         # LangChain's ChatOllama .invoke() returns an AIMessage; use .predict() to get str

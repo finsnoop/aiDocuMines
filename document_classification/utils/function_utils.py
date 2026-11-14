@@ -327,7 +327,7 @@ def _generate_descriptions_ollama(
 ) -> Dict[int, Dict[str, Any]]:
     import json
     descriptions = {}
-    ollama_url = os.environ.get('OLLAMA_URL', 'http://ollama:11434')
+    ollama_url = os.environ.get('OLLAMA_URL', 'http://aidocumines_ollama:11434')
     from openai import OpenAI
 
     client = OpenAI(base_url=f'{ollama_url}/v1', api_key='ollama')

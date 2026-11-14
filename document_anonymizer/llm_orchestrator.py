@@ -30,9 +30,10 @@ def query_model(blocks, element_ids, model="phi-2", api_key=None):
     else:
         # Local Ollama model inference
         try:
+            import os
             import requests
             res = requests.post(
-                "http://ollama:11434/api/generate",
+                os.getenv("OLLAMA_URL", "http://aidocumines_ollama:11434").rstrip("/") + "/api/generate",
                 json={"model": model, "prompt": f"Summarize the following:\n\n{prompt}", "stream": False},
                 timeout=30
             )
