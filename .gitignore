@@ -224,3 +224,6 @@ backups/
 .env.audit
 oidc-private-key.pem
 pip-audit.json
+
+# The Docker build installs from this hashed lock file: it must be committed.
+!production_requirements.lock
