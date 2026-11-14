@@ -7,7 +7,7 @@ if [ ! -s "$TLS_DIR/server.key" ] || [ ! -s "$TLS_DIR/server.crt" ]; then
   umask 077
   openssl req -x509 -newkey rsa:3072 -sha256 -nodes -days 825 \
     -subj /CN=aidocumines-postgresql \
-    -addext "subjectAltName=DNS:database,DNS:aidocumines_api_layer_database,DNS:localhost,IP:127.0.0.1" \
+    -addext "subjectAltName=DNS:database,DNS:aidocumines_api_layer_database,DNS:aidocumines_api_layer_db,DNS:localhost,IP:127.0.0.1" \
     -addext "basicConstraints=critical,CA:TRUE" \
     -keyout "$TLS_DIR/server.key" -out "$TLS_DIR/server.crt" 2>/dev/null
 fi

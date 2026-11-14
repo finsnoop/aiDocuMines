@@ -49,7 +49,7 @@ for var in SECRET_KEY POSTGRES_USER POSTGRES_PASSWORD POSTGRES_DB FIELD_ENCRYPTI
   fi
 done
 case "$(env_value SECRET_KEY)" in
-  django-insecure-default|changeme|change-me|secret)
+  django-insecure*|changeme|change-me|secret)
     echo -e "${RED}✗  SECRET_KEY in .env is a placeholder; generate one: python3 -c \"import secrets; print(secrets.token_urlsafe(64))\"${NC}"; missing=1 ;;
 esac
 if [ "$missing" -ne 0 ]; then
