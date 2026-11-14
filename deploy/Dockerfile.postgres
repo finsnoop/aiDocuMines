@@ -1,4 +1,6 @@
-ARG POSTGRES_BASE=postgres:15-bookworm
+# Same Debian release (glibc collation version 2.41) as the database files were created with:
+# changing it makes PostgreSQL warn about a collation mismatch and can corrupt text indexes.
+ARG POSTGRES_BASE=postgres:15-trixie
 FROM ${POSTGRES_BASE}
 USER root
 RUN if command -v apk >/dev/null; then apk add --no-cache openssl; else apt-get update && apt-get install -y --no-install-recommends openssl && rm -rf /var/lib/apt/lists/*; fi
