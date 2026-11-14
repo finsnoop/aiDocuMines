@@ -16,7 +16,8 @@ from custom_authentication.authentication import ClientBoundOAuth2Authentication
 from drf_yasg.utils import swagger_auto_schema
 from drf_yasg import openapi
 from document_versioning.utils import get_next_version_number, generate_diff, restore_from_archive
-from core.access import get_file_for_user, get_scoped_or_404, get_run_for_user, scope_by_file, scope_by_owner
+from core.access import (get_file_for_user, get_scoped_or_404, get_run_for_user, scope_by_file,
+                         scope_by_owner, accessible_files, is_tenant_admin)
 
 
 logger = logging.getLogger(__name__)
@@ -51,12 +52,6 @@ def health_check(request):
     return JsonResponse({"status": "ok"}, status=200)
 
 
-def get_user_from_client_id(client_id):
-    try:
-        application = Application.objects.get(client_id=client_id)
-        return application.user
-    except Application.DoesNotExist:
-        return None
 
 
 class SubmitVersionAPIView(APIView):
@@ -80,7 +75,7 @@ class SubmitVersionAPIView(APIView):
         if not all([client_id, client_secret, file_id]):
             return Response({"error": "Missing required parameters"}, status=status.HTTP_400_BAD_REQUEST)
 
-        user = get_user_from_client_id(client_id)
+        user = request.user
         if not user:
             return Response({"error": "Invalid client ID"}, status=status.HTTP_401_UNAUTHORIZED)
 
@@ -122,7 +117,7 @@ class ListVersionsAPIView(APIView):
         if not all([client_id, client_secret, file_id]):
             return Response({"error": "Missing required parameters"}, status=status.HTTP_400_BAD_REQUEST)
 
-        user = get_user_from_client_id(client_id)
+        user = request.user
         if not user:
             return Response({"error": "Invalid client ID"}, status=status.HTTP_401_UNAUTHORIZED)
 
@@ -172,7 +167,7 @@ class GetVersionDiffAPIView(APIView):
         if not all([client_id, client_secret, file_id, from_version_id, to_version_id]):
             return Response({"error": "Missing required parameters"}, status=status.HTTP_400_BAD_REQUEST)
 
-        user = get_user_from_client_id(client_id)
+        user = request.user
         if not user:
             return Response({"error": "Invalid client ID"}, status=status.HTTP_401_UNAUTHORIZED)
 
@@ -224,7 +219,7 @@ class CompareVersionsDetailedView(APIView):
         if not all([client_id, client_secret, file_id, from_version_id, to_version_id]):
             return Response({"error": "Missing required parameters"}, status=status.HTTP_400_BAD_REQUEST)
 
-        user = get_user_from_client_id(client_id)
+        user = request.user
         if not user:
             return Response({"error": "Invalid client ID"}, status=status.HTTP_401_UNAUTHORIZED)
 
@@ -279,12 +274,12 @@ class CheckVersionStatusAPIView(APIView):
         if not all([client_id, client_secret]):
             return Response({"error": "Missing required parameters"}, status=status.HTTP_400_BAD_REQUEST)
 
-        user = get_user_from_client_id(client_id)
+        user = request.user
         if not user:
             return Response({"error": "Invalid client ID"}, status=status.HTTP_401_UNAUTHORIZED)
 
         if version_id:
-            version = get_object_or_404(DocumentVersion, id=version_id)
+            version = get_scoped_or_404(request.user, DocumentVersion, "file", id=version_id)
             return Response({
                 "id": str(version.id),
                 "file_id": str(version.file.id),
@@ -338,11 +333,11 @@ class DownloadVersionAPIView(APIView):
         if not all([client_id, client_secret, version_id]):
             return Response({"error": "Missing required parameters"}, status=status.HTTP_400_BAD_REQUEST)
 
-        user = get_user_from_client_id(client_id)
+        user = request.user
         if not user:
             return Response({"error": "Invalid client ID"}, status=status.HTTP_401_UNAUTHORIZED)
 
-        version = get_object_or_404(DocumentVersion, id=version_id)
+        version = get_scoped_or_404(request.user, DocumentVersion, "file", id=version_id)
 
         if version.is_archived:
             archive_record = version.archive_records.first()
@@ -391,9 +386,13 @@ class RetentionPolicyView(APIView):
         if not all([client_id, client_secret, project_id]):
             return Response({"error": "Missing required parameters"}, status=status.HTTP_400_BAD_REQUEST)
 
-        user = get_user_from_client_id(client_id)
+        user = request.user
         if not user:
             return Response({"error": "Invalid client ID"}, status=status.HTTP_401_UNAUTHORIZED)
+
+        # A project's policy is visible to people who hold documents in that project.
+        if not accessible_files(request.user).filter(project_id=project_id).exists():
+            return Response({"error": "No retention policy found for this project."}, status=status.HTTP_404_NOT_FOUND)
 
         policy = VersionRetentionPolicy.objects.filter(project_id=project_id).first()
         if not policy:
@@ -424,9 +423,13 @@ class RetentionPolicyView(APIView):
         if not all([client_id, client_secret, project_id]):
             return Response({"error": "Missing required parameters"}, status=status.HTTP_400_BAD_REQUEST)
 
-        user = get_user_from_client_id(client_id)
+        user = request.user
         if not user:
             return Response({"error": "Invalid client ID"}, status=status.HTTP_401_UNAUTHORIZED)
+
+        if not is_tenant_admin(request.user) or not accessible_files(request.user).filter(project_id=project_id).exists():
+            return Response({"error": "Only an organisation admin can change a project's retention policy."},
+                            status=status.HTTP_403_FORBIDDEN)
 
         policy, created = VersionRetentionPolicy.objects.update_or_create(
             project_id=project_id,
@@ -469,11 +472,11 @@ class VersionManifestView(APIView):
         if not all([client_id, client_secret, version_id]):
             return Response({"error": "Missing required parameters"}, status=status.HTTP_400_BAD_REQUEST)
 
-        user = get_user_from_client_id(client_id)
+        user = request.user
         if not user:
             return Response({"error": "Invalid client ID"}, status=status.HTTP_401_UNAUTHORIZED)
 
-        version = get_object_or_404(DocumentVersion, id=version_id)
+        version = get_scoped_or_404(request.user, DocumentVersion, "file", id=version_id)
 
         if version.file.user != user:
             raise PermissionDenied("You are not authorized to view manifests for this file.")
@@ -510,11 +513,11 @@ class ArchiveVersionView(APIView):
         if not all([client_id, client_secret, version_id]):
             return Response({"error": "Missing required parameters"}, status=status.HTTP_400_BAD_REQUEST)
 
-        user = get_user_from_client_id(client_id)
+        user = request.user
         if not user:
             return Response({"error": "Invalid client ID"}, status=status.HTTP_401_UNAUTHORIZED)
 
-        version = get_object_or_404(DocumentVersion, id=version_id)
+        version = get_scoped_or_404(request.user, DocumentVersion, "file", id=version_id)
 
         if version.file.user != user:
             raise PermissionDenied("You are not authorized to archive this version.")
@@ -561,11 +564,11 @@ class RestoreVersionView(APIView):
         if not all([client_id, client_secret, version_id]):
             return Response({"error": "Missing required parameters"}, status=status.HTTP_400_BAD_REQUEST)
 
-        user = get_user_from_client_id(client_id)
+        user = request.user
         if not user:
             return Response({"error": "Invalid client ID"}, status=status.HTTP_401_UNAUTHORIZED)
 
-        version = get_object_or_404(DocumentVersion, id=version_id)
+        version = get_scoped_or_404(request.user, DocumentVersion, "file", id=version_id)
 
         if version.file.user != user:
             raise PermissionDenied("You are not authorized to restore this version.")
@@ -609,11 +612,11 @@ class LockVersionView(APIView):
         if not all([client_id, client_secret, version_id]):
             return Response({"error": "Missing required parameters"}, status=status.HTTP_400_BAD_REQUEST)
 
-        user = get_user_from_client_id(client_id)
+        user = request.user
         if not user:
             return Response({"error": "Invalid client ID"}, status=status.HTTP_401_UNAUTHORIZED)
 
-        version = get_object_or_404(DocumentVersion, id=version_id)
+        version = get_scoped_or_404(request.user, DocumentVersion, "file", id=version_id)
 
         if version.file.user != user:
             raise PermissionDenied("You are not authorized to lock this version.")

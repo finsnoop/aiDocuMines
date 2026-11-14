@@ -18,12 +18,6 @@ from .tasks import compute_insights_task
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Header helper (same idea as your core.views)
-def get_user_from_client_id(client_id: str):
-    try:
-        app = Application.objects.get(client_id=client_id)
-        return app.user
-    except Application.DoesNotExist:
-        return None
 
 # Swagger params (mirror your style)
 client_id_param = openapi.Parameter(
@@ -77,7 +71,7 @@ class InsightsView(APIView):
         if not access_token:
             return Response({"error": "Authorization token missing"}, status=status.HTTP_401_UNAUTHORIZED)
 
-        user = get_user_from_client_id(client_id)
+        user = request.user
         if not user:
             return Response({"error": "Invalid client ID"}, status=status.HTTP_401_UNAUTHORIZED)
 
@@ -130,7 +124,7 @@ class InsightsTaskStatusView(APIView):
         access_token = request.headers.get("Authorization", "").split("Bearer ")[-1]
         if not access_token:
             return Response({"error": "Authorization token missing"}, status=status.HTTP_401_UNAUTHORIZED)
-        if not get_user_from_client_id(client_id):
+        if not request.user:
             return Response({"error": "Invalid client ID"}, status=status.HTTP_401_UNAUTHORIZED)
 
         data = cache.get(f"insights_task:{task_id}")

@@ -70,13 +70,6 @@ file_id_param = openapi.Parameter(
 )
 
 
-def get_user_from_client_id(client_id):
-    """Retrieve the User associated with a given client_id from OAuth2 Application."""
-    try:
-        application = Application.objects.get(client_id=client_id)
-        return application.user
-    except Application.DoesNotExist:
-        return None
 
 def health_check(request):
     return JsonResponse({"status": "ok"}, status=200)
@@ -112,7 +105,7 @@ class FileUploadView(APIView):
         if not access_token:
             return Response({"error": "Authorization token missing"}, status=401)
 
-        user = get_user_from_client_id(client_id)
+        user = request.user
         if not user:
             return Response({"error": "Invalid client ID"}, status=401)
 
@@ -363,17 +356,6 @@ def queue_post_upload_processing(user, run, fresh, project_id, service_id):
 
 
 # ── helper utilities (keep near the view or in utils.py) ─────────────────────
-'''
-def _link_to_folder(file_obj, user, project_id, service_id):
-    folder, _ = Folder.objects.get_or_create(
-        name=project_id,
-        user=user,
-        project_id=project_id,
-        service_id=service_id,
-        defaults={"created_at": timezone.now()},
-    )
-    FileFolderLink.objects.get_or_create(file=file_obj, folder=folder)
-'''
 
 def _link_to_folder(file_obj, user, project_id, service_id):
     from document_operations.utils import get_or_create_folder_tree, link_file_to_folder
@@ -534,7 +516,7 @@ class UniversalTaskStatusView(APIView):
         if not access_token_string:
             return Response({"error": "Authorization token missing"}, status=status.HTTP_401_UNAUTHORIZED)
 
-        user = get_user_from_client_id(client_id)
+        user = request.user
         if not user:
             return Response({"error": "Invalid client ID"}, status=status.HTTP_401_UNAUTHORIZED)
 
@@ -542,7 +524,12 @@ class UniversalTaskStatusView(APIView):
             return Response({"error": "Missing run_id parameter"}, status=status.HTTP_400_BAD_REQUEST)
 
         # ✅ Fetch task status
-        response_entry = EndpointResponseTable.objects.filter(run__run_id=run_id).order_by("-created_at").first()
+        from core.access import scope_by_owner
+        try:
+            response_entry = scope_by_owner(request.user, EndpointResponseTable.objects.all(), "run__user") \
+                .filter(run__run_id=run_id).order_by("-created_at").first()
+        except Exception:  # malformed run id
+            response_entry = None
 
         if not response_entry:
             return Response({"error": "No status found for the provided run_id."}, status=status.HTTP_404_NOT_FOUND)
@@ -625,65 +612,16 @@ class FileDownloadView(APIView):
         if not os.path.exists(real_path):
             return Response({"error": "File not found on disk"}, status=404)
 
-        # Try to guess the content type from the filename
-        content_type, _ = mimetypes.guess_type(real_path)
-        if not content_type:
-            content_type = "application/octet-stream"  # Fallback for unknown types
-
-        filename = os.path.basename(real_path)
-
-        # Support ?inline=true for rendering (docx-viewer, pptx-renderer) to avoid browser auto-download
-        as_attachment = request.query_params.get("inline", "false").lower() != "true"
-
+        # inline=true is honoured only for types the browser displays safely (core/file_responses.py).
+        # The in-app Word preview reads the bytes in the background, so an attachment is fine for it.
+        from core.file_responses import download_response
+        inline = request.query_params.get("inline", "false").lower() == "true"
         try:
-            return FileResponse(
-                open(real_path, "rb"),
-                as_attachment=as_attachment,
-                filename=filename,
-                content_type=content_type
-            )
-        except Exception as e:
-            return Response({"error": f"Failed to read file: {str(e)}"}, status=500)
+            return download_response(real_path, os.path.basename(real_path), inline=inline)
+        except OSError:
+            return Response({"error": "The file could not be read."}, status=500)
 
 
-'''
-class FileDownloadView(APIView):
-    """
-    ✅ Download a file using file_id
-    """
-    authentication_classes = [OAuth2Authentication]
-    permission_classes = [TokenHasReadWriteScope]
-
-    @swagger_auto_schema(
-        operation_description="Download a file using file_id.",
-        tags=["Core Application: File Download"],
-        manual_parameters=[client_id_param, file_id_param],
-        responses={200: "Success", 404: "File Not Found"},
-    )
-
-    def get(self, request):
-        file_id = request.query_params.get("file_id")
-        if not file_id:
-            return Response({"error": "Missing file_id"}, status=400)
-
-        try:
-            file = File.objects.get(id=file_id)
-        except File.DoesNotExist:
-            return Response({"error": "File not found"}, status=404)
-
-        real_path = file.filepath.replace("/app/", "")  # Map container path to host
-        if not os.path.exists(real_path):
-            return Response({"error": "File not found on disk"}, status=404)
-
-        return FileResponse(
-            open(real_path, "rb"),
-            as_attachment=True,
-            filename=os.path.basename(real_path),
-            content_type="application/pdf"
-        )
-
-
-    '''
 
 
 @method_decorator(csrf_exempt, name="dispatch")
@@ -708,7 +646,7 @@ class BulkFolderUploadView(APIView):
         if not access_token_string:
             return Response({"error": "Authorization token missing"}, status=status.HTTP_401_UNAUTHORIZED)
 
-        user = get_user_from_client_id(client_id)
+        user = request.user
         if not user:
             return Response({"error": "Invalid client ID"}, status=status.HTTP_401_UNAUTHORIZED)
 
@@ -1005,7 +943,7 @@ class ClientSummaryView(APIView):
     )
     def get(self, request):
         client_id = request.headers.get("X-Client-ID")
-        user = get_user_from_client_id(client_id)
+        user = request.user
         if not user:
             return Response({"error": "Invalid client ID"}, status=401)
 
@@ -1075,7 +1013,7 @@ class ProjectSummaryView(APIView):
     def get(self, request):
         client_id = request.headers.get("X-Client-ID")
         project_id = request.query_params.get("project_id")
-        user = get_user_from_client_id(client_id)
+        user = request.user
 
         if not project_id:
             return Response({"error": "Missing project_id"}, status=400)
@@ -1112,7 +1050,7 @@ class ServiceSummaryView(APIView):
     def get(self, request):
         client_id = request.headers.get("X-Client-ID")
         service_id = request.query_params.get("service_id")
-        user = get_user_from_client_id(client_id)
+        user = request.user
 
         if not service_id:
             return Response({"error": "Missing service_id"}, status=400)
@@ -1139,7 +1077,7 @@ class ProjectListView(APIView):
         responses={200: "Success"},
     )
     def get(self, request):
-        user = get_user_from_client_id(request.headers.get("X-Client-ID"))
+        user = request.user
         if not user:
             return Response({"error": "Invalid client"}, status=400)
 
@@ -1166,12 +1104,12 @@ class ProjectListView(APIView):
                 .values_list('service_id', flat=True).distinct()
             )
 
-            file_count = FileFolderLink.objects.filter(file__project_id=pid_str).count()
+            file_count = FileFolderLink.objects.filter(file__project_id=pid_str, file__user=user).count()
             folder_count = Folder.objects.filter(user=user, project_id=pid_str).count()
 
             # Active = has at least one non-trashed folder or file visible in the sidebar
             active_folders = Folder.objects.filter(user=user, project_id=pid_str, is_trashed=False).exists()
-            active_files = FileFolderLink.objects.filter(file__project_id=pid_str, is_trashed=False).exists()
+            active_files = FileFolderLink.objects.filter(file__project_id=pid_str, file__user=user, is_trashed=False).exists()
             is_active = active_folders or active_files
 
             project_list.append({
@@ -1205,7 +1143,7 @@ class ProjectCreateView(APIView):
         responses={201: "Created"},
     )
     def post(self, request):
-        user = get_user_from_client_id(request.headers.get("X-Client-ID"))
+        user = request.user
         if not user:
             return Response({"error": "Invalid client"}, status=400)
         project_name = request.data.get("project_name")
@@ -1229,7 +1167,7 @@ class UserPreferenceView(APIView):
         responses={200: "Success"},
     )
     def get(self, request):
-        user = get_user_from_client_id(request.headers.get("X-Client-ID"))
+        user = request.user
         if not user:
             return Response({"error": "Invalid client"}, status=400)
         prefs, _ = UserPreference.objects.get_or_create(user=user)
@@ -1248,7 +1186,7 @@ class UserPreferenceView(APIView):
         responses={200: "Updated"},
     )
     def patch(self, request):
-        user = get_user_from_client_id(request.headers.get("X-Client-ID"))
+        user = request.user
         if not user:
             return Response({"error": "Invalid client"}, status=400)
         prefs, _ = UserPreference.objects.get_or_create(user=user)

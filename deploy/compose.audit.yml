@@ -1,0 +1,107 @@
+# Isolated localhost stack. No host database ports and no production network.
+# docker compose --env-file .env.audit -f deploy/compose.audit.yml up -d
+name: aidoc-local-audit
+x-api: &api
+  image: aidoc-audit-production
+  working_dir: /app
+  entrypoint: []
+  env_file: ../.env.audit
+  environment: &api-env
+    POSTGRES_HOST: database
+    POSTGRES_PORT: "5432"
+    REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379/1
+    CELERY_BROKER_URL: redis://:${REDIS_PASSWORD}@redis:6379/0
+    CELERY_RESULT_BACKEND: redis://:${REDIS_PASSWORD}@redis:6379/0
+    ELASTICSEARCH_URL: http://elasticsearch:9200
+    ELASTICSEARCH_PASSWORD: ${ELASTICSEARCH_PASSWORD}
+    MILVUS_HOST: milvus
+    SPA_REDIRECT_URIS: http://localhost:4300/sign_in,http://127.0.0.1:4300/sign_in
+    FRONTEND_URL: http://localhost:4300
+    CORS_EXTRA_ORIGINS: http://localhost:4300,http://127.0.0.1:4300
+    ALLOWED_HOSTS: localhost,127.0.0.1,api,testserver
+    NODE_BACKEND_URL: http://node:7000
+    EMAIL_BACKEND: django.core.mail.backends.console.EmailBackend
+  volumes:
+    - ../:/app
+    - audit_postgres_ca:/run/pg-ca:ro
+  mem_limit: 3g
+  depends_on:
+    database: {condition: service_healthy}
+    redis: {condition: service_healthy}
+services:
+  database:
+    image: aidoc-audit-postgres:16
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.postgres
+      args: {POSTGRES_BASE: postgres:16-alpine}
+    command: [postgres, -c, config_file=/etc/postgresql/postgresql.conf]
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_INITDB_ARGS: --auth-host=scram-sha-256
+    volumes:
+      - audit_database:/var/lib/postgresql/data
+      - audit_postgres_tls:/var/lib/postgresql/tls
+      - audit_postgres_ca:/var/lib/postgresql/ca
+      - ../postgresql.conf:/etc/postgresql/postgresql.conf:ro
+      - ../pg_hba.conf:/etc/postgresql/pg_hba.conf:ro
+    mem_limit: 768m
+    healthcheck: {test: [CMD-SHELL, "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"], interval: 5s, timeout: 3s, retries: 20}
+  redis:
+    image: redis:7-alpine
+    environment: {REDISCLI_AUTH: "${REDIS_PASSWORD}"}
+    command: [redis-server, --requirepass, "${REDIS_PASSWORD}", --maxmemory, 192mb, --maxmemory-policy, volatile-lru]
+    mem_limit: 256m
+    healthcheck: {test: [CMD, redis-cli, ping], interval: 5s, timeout: 3s, retries: 20}
+  api:
+    <<: *api
+    command: [python, manage.py, runserver, "0.0.0.0:8020", --noreload]
+    ports: ["127.0.0.1:8030:8020"]
+  worker:
+    <<: *api
+    command: [celery, -A, aiDocuMines.celery_app, worker, --loglevel=info, --concurrency=1, -Q, "ai_documines,ai_documines_fast"]
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.19.25
+    environment:
+      discovery.type: single-node
+      xpack.security.enabled: "true"
+      ELASTIC_PASSWORD: ${ELASTICSEARCH_PASSWORD}
+      xpack.ml.enabled: "false"
+      ES_JAVA_OPTS: -Xms384m -Xmx384m
+    mem_limit: 768m
+  milvus:
+    image: milvusdb/milvus:v2.6.17
+    command: [milvus, run, standalone]
+    environment:
+      DEPLOY_MODE: STANDALONE
+      ETCD_USE_EMBED: "true"
+      ETCD_DATA_DIR: /var/lib/milvus/etcd
+      ETCD_CONFIG_PATH: /milvus/configs/embedEtcd.yaml
+      COMMON_STORAGETYPE: local
+    volumes:
+      - ./milvus/embedEtcd.yaml:/milvus/configs/embedEtcd.yaml:ro
+    mem_limit: 2g
+    security_opt: [seccomp:unconfined]
+  node:
+    image: aidoc-audit-node
+    environment:
+      DB_SSL: "true"
+      DB_SSL_CA: /run/pg-ca/server.crt
+      DB_HOST: database
+      DB_PORT: "5432"
+      DB_NAME: ${POSTGRES_DB}
+      DB_USER: ${POSTGRES_USER}
+      DB_PASSWORD: ${POSTGRES_PASSWORD}
+      API_LAYER_URL: http://api:8020
+      CORS_ORIGINS: http://localhost:4300,http://127.0.0.1:4300
+      PORT: "7000"
+    volumes: [audit_postgres_ca:/run/pg-ca:ro]
+    ports: ["127.0.0.1:7030:7000"]
+    depends_on: {database: {condition: service_healthy}}
+    mem_limit: 256m
+volumes:
+  audit_postgres_tls:
+  audit_postgres_ca:
+  audit_database:

@@ -1,3 +1,4 @@
+import hashlib
 """
 Context assistant: answers only from documents the caller may read, never leaks
 across organisations or to non-shared colleagues, and only the question goes to
@@ -22,7 +23,7 @@ URL = "/api/v1/core/assistant/ask/"
 def make_doc(owner, name, text, project="Atlas", service="matter"):
     run = Run.objects.create(user=owner, status="Completed")
     return File.objects.create(filename=name, filepath=f"/x/{owner.id}/{name}", user=owner, run=run,
-                               project_id=project, service_id=service, md5_hash=f"{owner.id}-{name}", content=text)
+                               project_id=project, service_id=service, md5_hash=hashlib.md5(f"{owner.id}-{name}".encode()).hexdigest(), content=text)
 
 
 def ask(user, context, question="What is the notice period?", **extra):

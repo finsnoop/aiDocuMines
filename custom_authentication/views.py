@@ -75,7 +75,7 @@ from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
 from django.contrib.auth import get_user_model
-from django.db import connection
+from django.db import connection, transaction
 import os
 import logging
 
@@ -88,26 +88,6 @@ EMAIL_FROM = "no-reply@aidocumines.com"
 
 
 # Path to store OAuth secrets
-SECRETS_FILE_PATH = "logs/.superuser_secrets.json"
-
-def store_client_secret(client_id, client_secret):
-    """Store client secrets before hashing."""
-    secrets = {}
-
-    if os.path.exists(SECRETS_FILE_PATH):
-        with open(SECRETS_FILE_PATH, "r") as file:
-            try:
-                secrets = json.load(file)
-            except json.JSONDecodeError:
-                secrets = {}
-
-    secrets[client_id] = client_secret  # Store client_secret before hashing
-
-    with open(SECRETS_FILE_PATH, "w") as file:
-        json.dump(secrets, file, indent=4)
-
-
-
 # ✅ Define Swagger parameters
 client_id_param = openapi.Parameter(
     "X-Client-ID", openapi.IN_HEADER, type=openapi.TYPE_STRING, required=True, description="Client ID provided at signup"
@@ -147,13 +127,6 @@ use_case_param = openapi.Parameter(
 )
 
 
-def get_user_from_client_id(client_id):
-    """Retrieves the User associated with a given `client_id` from OAuth2 Application."""
-    try:
-        application = Application.objects.get(client_id=client_id)
-        return application.user
-    except Application.DoesNotExist:
-        return None
 
 
 
@@ -176,9 +149,71 @@ def _can_grant_platform_roles(request):
     return is_platform_superuser(request.user)
 
 
+from rest_framework.throttling import AnonRateThrottle
+
+
+class AuthBurstThrottle(AnonRateThrottle):
+    """Sign-in, sign-up, password reset and token refresh, per IP address."""
+    scope = "auth"
+
+    def allow_request(self, request, view):
+        try:
+            return super().allow_request(request, view)
+        except Exception:  # cache (Redis) unavailable: let people sign in
+            logger.warning("Auth throttle unavailable; allowing request", exc_info=True)
+            return True
+
+
+def _login_locked(email):
+    """True while an account has too many recent failed sign-ins (cache-backed, per account)."""
+    from django.core.cache import cache
+    try:
+        return int(cache.get(f"auth:fail:{email}") or 0) >= getattr(settings, "AUTH_MAX_FAILED_LOGINS", 10)
+    except Exception:
+        return False  # never lock everyone out because the cache is down
+
+
+def _login_failed(email):
+    from django.core.cache import cache
+    key = f"auth:fail:{email}"
+    try:
+        cache.add(key, 0, timeout=getattr(settings, "AUTH_LOCKOUT_SECONDS", 900))
+        cache.incr(key)
+    except Exception:
+        pass
+
+
+def _login_succeeded(email):
+    from django.core.cache import cache
+    try:
+        cache.delete(f"auth:fail:{email}")
+    except Exception:
+        pass
+
+
+def _application_for(client_id, client_secret, user=None):
+    """The OAuth application for these credentials, or None. The secret is always verified."""
+    from django.contrib.auth.hashers import check_password as _check
+    qs = Application.objects.filter(client_id=client_id)
+    if user is not None:
+        qs = qs.filter(user=user)
+    app = qs.first()
+    if app is None or not client_secret:
+        return None
+    stored = app.client_secret or ""
+    try:
+        ok = _check(client_secret, stored)
+    except Exception:
+        ok = False
+    if not ok:
+        ok = secrets.compare_digest(str(client_secret), stored)  # legacy rows stored unhashed
+    return app if ok else None
+
+
 class SignupView(APIView):
     authentication_classes = []
     permission_classes = [AllowAny]
+    throttle_classes = [AuthBurstThrottle]
 
     # ✅ Define the request body schema
     signup_request_schema = openapi.Schema(
@@ -241,8 +276,15 @@ class SignupView(APIView):
         if User.objects.filter(email=email).exists():
             return Response({"error": "Email is already registered"}, status=status.HTTP_400_BAD_REQUEST)
 
-        # ✅ Get or create the client object
-        client, _ = Client.objects.get_or_create(name=organisation)
+        # SECURITY: signing up with the name of an existing organisation must never place a
+        # stranger inside that organisation. People join an existing organisation only when
+        # one of its admins invites them.
+        organisation = str(organisation).strip()
+        if Client.objects.filter(name__iexact=organisation).exists():
+            return Response(
+                {"error": "This organisation is already registered. Ask one of its administrators to invite you."},
+                status=status.HTTP_400_BAD_REQUEST)
+        client = Client.objects.create(name=organisation)
 
         try:
             # ✅ Create user with all fields
@@ -274,12 +316,7 @@ class SignupView(APIView):
             )
 
             # ✅ Send signup email asynchronously
-            send_signup_email_task.delay(
-                    user.id,
-                    password,
-                    application.client_id,
-                    raw_client_secret
-            )
+            send_signup_email_task.delay(user.id)
             # send_signup_email_task.delay(user.id,
             #    f"Your account has been created.\n\nClient ID: {application.client_id}\nClient Secret: {raw_client_secret}")
 
@@ -347,6 +384,7 @@ class SignupView(APIView):
 class LoginView(APIView):
     authentication_classes = []
     permission_classes = [AllowAny]
+    throttle_classes = [AuthBurstThrottle]
 
     @swagger_auto_schema(
         operation_description="Authenticate user and return an OAuth2 token. If 2FA is enabled, requires a 2FA code.",
@@ -367,25 +405,31 @@ class LoginView(APIView):
         if not email or not password:
             return Response({"error": "Email and password are required"}, status=status.HTTP_400_BAD_REQUEST)
 
+        email = str(email).strip().lower()
+        if _login_locked(email):
+            return Response({"error": "Too many failed sign-in attempts. Try again in a few minutes."},
+                            status=status.HTTP_429_TOO_MANY_REQUESTS)
+
         user = authenticate(email=email, password=password)
 
         if user is None:
+            _login_failed(email)
             return Response({"error": "Invalid email or password"}, status=status.HTTP_401_UNAUTHORIZED)
+
+        # The client secret is part of the credentials: verify it, do not just require it.
+        if _application_for(client_id, client_secret, user=user) is None:
+            _login_failed(email)
+            return Response({"error": "Invalid Client ID or Client Secret"}, status=status.HTTP_401_UNAUTHORIZED)
 
         # 🔐 If user has 2FA enabled, require a valid email-based 2FA code
         if user.is_2fa_enabled:
             if not twofa_code:
-                code = str(random.randint(100000, 999999))
+                code = f"{secrets.randbelow(900000) + 100000}"
                 TwoFactorCode.objects.filter(user=user, is_used=False).update(is_used=True)
                 TwoFactorCode.objects.create(user=user, code=code)
                 try:
-                    send_mail(
-                        subject="Your Verification Code",
-                        message=f"Your verification code is: {code}\n\nThis code expires in 5 minutes.",
-                        from_email=settings.DEFAULT_FROM_EMAIL,
-                        recipient_list=[user.email],
-                        fail_silently=False,
-                    )
+                    from .tasks import send_signin_code_task
+                    send_signin_code_task.delay(user.pk, code)
                 except Exception as e:
                     logger.warning(f"Failed to send 2FA email to {user.email}: {e}")
                 return Response({
@@ -398,10 +442,13 @@ class LoginView(APIView):
             ).first()
 
             if not valid_code or not valid_code.is_valid():
+                _login_failed(email)  # a six-digit code must not be guessable by retrying
                 return Response({"error": "Invalid or expired 2FA code"}, status=status.HTTP_401_UNAUTHORIZED)
 
             valid_code.is_used = True
             valid_code.save()
+
+        _login_succeeded(email)
 
         # ✅ Log user login activity
         log_activity(user, "LOGIN", {"ip": request.META.get("REMOTE_ADDR")})
@@ -468,6 +515,7 @@ class LogoutView(APIView):
 class PasswordResetRequestView(APIView):
     authentication_classes = []
     permission_classes = [AllowAny]
+    throttle_classes = [AuthBurstThrottle]
 
     @swagger_auto_schema(
         operation_description="Request a password reset token.",
@@ -480,73 +528,78 @@ class PasswordResetRequestView(APIView):
         if not email:
             return Response({"error": "Email is required"}, status=status.HTTP_400_BAD_REQUEST)
 
-        try:
-            user = User.objects.get(email=email)
-        except User.DoesNotExist:
-            return Response({"error": "User not found"}, status=status.HTTP_404_NOT_FOUND)
-
-        reset_token = PasswordResetToken.objects.create(user=user)
-
-        send_password_reset_email_task.delay(user.id, str(reset_token.token))
+        # SECURITY: the token goes to the account's mailbox ONLY. Returning it here let anyone
+        # reset anyone's password. The answer is the same whether or not the account exists.
+        user = User.objects.filter(email__iexact=str(email).strip(), is_active=True).first()
+        if user is not None:
+            PasswordResetToken.objects.filter(user=user, is_used=False).update(is_used=True)
+            reset_token = PasswordResetToken.objects.create(user=user)
+            try:
+                send_password_reset_email_task.delay(user.id, str(reset_token.token))
+            except Exception:
+                logger.exception("Could not queue the password reset email")
 
         return Response({
-            "message": "Password reset token sent to your email",
-            "reset_token": str(reset_token.token)
+            "message": "If that address has an account, a password reset token has been sent to it."
         }, status=status.HTTP_200_OK)
 
 
 
 
 class PasswordResetView(APIView):
+    authentication_classes = []
     permission_classes = [AllowAny]
+    throttle_classes = [AuthBurstThrottle]
 
+    @transaction.atomic
     def post(self, request):
+        from django.contrib.auth.password_validation import validate_password
+        from django.core.exceptions import ValidationError as DjangoValidationError
+
         token = request.data.get("token")
         new_password = request.data.get("new_password")
 
         try:
-            token_obj = PasswordResetToken.objects.get(token=token)
-        except PasswordResetToken.DoesNotExist:
+            token_obj = PasswordResetToken.objects.select_for_update().select_related("user").get(token=token)
+        except (PasswordResetToken.DoesNotExist, DjangoValidationError, ValueError, TypeError):
+            return Response({"error": "Invalid reset token"}, status=status.HTTP_400_BAD_REQUEST)
+
+        # One use, one hour.
+        if not token_obj.is_valid():
             return Response({"error": "Invalid reset token"}, status=status.HTTP_400_BAD_REQUEST)
 
         user = token_obj.user
+        if not new_password:
+            return Response({"error": "new_password is required"}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            validate_password(new_password, user)
+        except DjangoValidationError as exc:
+            return Response({"error": " ".join(exc.messages)}, status=status.HTTP_400_BAD_REQUEST)
+
         user.set_password(new_password)
         user.save()
 
         token_obj.is_used = True
         token_obj.save()
 
+        # Whoever held the old password must not stay signed in.
+        AccessToken.objects.filter(user=user).delete()
+        from oauth2_provider.models import Grant, RefreshToken
+        Grant.objects.filter(user=user).delete()
+        RefreshToken.objects.filter(user=user).delete()
+        _login_succeeded((user.email or "").lower())
+
         # ✅ Notify user via email
-        send_password_reset_success_email_task.delay(user.email)
+        transaction.on_commit(lambda: send_password_reset_success_email_task.delay(user.email), robust=True)
 
         return Response({"message": "Password reset successful"}, status=status.HTTP_200_OK)
 
-'''
-class PasswordResetView(APIView):
-    # authentication_classes = [OAuth2Authentication]
-    permission_classes = [AllowAny]
-
-    def post(self, request):
-        token = request.data.get("token")
-        new_password = request.data.get("new_password")
-
-        try:
-            token_obj = PasswordResetToken.objects.get(token=token)
-        except PasswordResetToken.DoesNotExist:
-            return Response({"error": "Invalid reset token"}, status=status.HTTP_400_BAD_REQUEST)
-
-        token_obj.user.set_password(new_password)
-        token_obj.user.save()
-        token_obj.is_used = True
-        token_obj.save()
-
-        return Response({"message": "Password reset successful"}, status=status.HTTP_200_OK)
-'''
 
 
 class RefreshTokenView(APIView):
     authentication_classes = []
     permission_classes = [AllowAny]
+    throttle_classes = [AuthBurstThrottle]
 
     @swagger_auto_schema(
         operation_description="Refresh an expired access token using a refresh token.",
@@ -562,9 +615,13 @@ class RefreshTokenView(APIView):
             return Response({"error": "Missing required fields"}, status=status.HTTP_400_BAD_REQUEST)
 
         try:
-            application = Application.objects.get(client_id=client_id)
+            application = _application_for(client_id, client_secret)
+            if application is None:
+                raise Application.DoesNotExist
             user = application.user
-            token = AccessToken.objects.get(token=refresh_token, user=user)
+            if not user.is_active:
+                raise Application.DoesNotExist
+            token = AccessToken.objects.get(token=refresh_token, user=user, application=application)
 
             if token.expires < now():
                 return Response({"error": "Refresh token has expired"}, status=status.HTTP_401_UNAUTHORIZED)
@@ -576,6 +633,7 @@ class RefreshTokenView(APIView):
                 expires=now() + timedelta(days=1),
                 scope="read write",
             )
+            token.delete()  # rotation: the exchanged token stops working
 
             return Response({
                 "access_token": new_access_token.token,
@@ -847,8 +905,12 @@ class RevokeAPIKeyView(APIView):
             if not client_id:
                 return Response({"error": "Client ID is required"}, status=status.HTTP_400_BAD_REQUEST)
 
-            # ✅ Find and delete the application
-            app = Application.objects.get(client_id=client_id)
+            # Your own key, or (for admins) the key of someone you administer. Anything else
+            # looks exactly like a key that does not exist.
+            from core.access import can_manage_user
+            app = Application.objects.select_related("user").get(client_id=client_id)
+            if app.user_id != request.user.id and not can_manage_user(request.user, app.user):
+                raise Application.DoesNotExist
             app.delete()
 
             return Response({"message": "API key revoked successfully"}, status=status.HTTP_200_OK)
@@ -879,7 +941,7 @@ class AdminResetUserPasswordView(APIView):
             user.set_password(new_password)
             user.save()
 
-            send_admin_password_reset_email_task.delay(user.id, new_password)
+            send_admin_password_reset_email_task.delay(user.id)
 
             # ✅ Log activity
             log_activity(user, "PASSWORD_RESET", {"admin_id": request.user.id})
@@ -903,36 +965,6 @@ class AdminResetUserPasswordView(APIView):
 
 
 
-'''
-class AdminResetUserPasswordView(APIView):
-    authentication_classes = [OAuth2Authentication]
-    permission_classes = [IsAdminOrSuperUser]
-
-    @swagger_auto_schema(
-        operation_description="Admin resets a user's password.",
-        tags=["Admin"],
-    )
-    def post(self, request, user_id):
-        if not request.user.is_staff:
-            return Response({"error": "Admin access required"}, status=status.HTTP_403_FORBIDDEN)
-
-        # user_id = request.data.get("user_id")
-
-        new_password = request.data.get("new_password")
-
-        try:
-            user = _get_managed_user(request, user_id)
-            user.set_password(new_password)
-            user.save()
-
-            # ✅ Log password reset event
-            log_activity(user, "PASSWORD_RESET", {"admin_id": request.user.id})
-
-            return Response({"message": "User password reset successfully"}, status=status.HTTP_200_OK)
-
-        except User.DoesNotExist:
-            return Response({"error": "User not found"}, status=status.HTTP_404_NOT_FOUND)
-'''
 
 
 class PromoteUserToAdminView(APIView):
@@ -1180,7 +1212,7 @@ class CreateUserView(APIView):
         role_name = data.get("role", "Guest")  # Default to "Guest"
 
         # ✅ Generate a secure temporary password
-        temp_password = uuid.uuid4().hex[:12]  # Generates a 12-character password
+        temp_password = secrets.token_urlsafe(12)
 
         # ✅ Fix: Remove password from required fields
         if not email or not organisation or not contact_name or not contact_phone:
@@ -1196,7 +1228,16 @@ class CreateUserView(APIView):
             if organisation.lower() != admin_client.name.lower():
                 return Response({"error": "You can only create users within your own organisation."}, status=status.HTTP_403_FORBIDDEN)
 
-        client, _ = Client.objects.get_or_create(name=organisation)
+        # SECURITY: the role must be one the acting admin may grant. Without this an
+        # organisation admin could create a "SuperAdmin" account and read every organisation.
+        from custom_authentication.views_admin import _grantable_roles
+        if role_name not in set(_grantable_roles(request.user)):
+            return Response({"error": "You cannot grant that role."}, status=status.HTTP_403_FORBIDDEN)
+
+        if request.user.is_superuser:
+            client = Client.objects.filter(name__iexact=str(organisation).strip()).first()                 or Client.objects.create(name=str(organisation).strip())
+        else:
+            client = request.user.client  # always the admin's own organisation
 
         try:
             # ✅ Create user with a temporary password
@@ -1231,15 +1272,9 @@ class CreateUserView(APIView):
             app.save()
 
             # ✅ Store raw secret securely
-            store_client_secret(app.client_id, raw_client_secret)
 
             # ✅ Trigger Celery email task
-            send_signup_email_task.delay(
-                user.id,
-                temp_password,
-                app.client_id,
-                raw_client_secret
-            )
+            send_signup_email_task.delay(user.id)
 
             # ✅ Trigger Nextcloud auto-provisioning
             provision_nextcloud_user.delay(user.id)
@@ -1289,6 +1324,11 @@ class RetrieveClientSecretsView(APIView):
         Retrieve OAuth2 client application credentials for a specific user (Admin-Only).
         Includes stored client_secret (from secrets file) if available.
         """
+        try:
+            _get_managed_user(request, user_id)  # same organisation only (404 otherwise)
+        except CustomUser.DoesNotExist:
+            return Response({"error": "No OAuth credentials found for this user"},
+                            status=status.HTTP_404_NOT_FOUND)
         applications = Application.objects.filter(user_id=user_id)
 
         if not applications.exists():
@@ -1297,22 +1337,8 @@ class RetrieveClientSecretsView(APIView):
                 status=status.HTTP_404_NOT_FOUND
             )
 
-        # Attempt to load stored client secrets from JSON
-        try:
-            with open(SECRETS_FILE_PATH, "r") as file:
-                stored_secrets = json.load(file)
-        except (FileNotFoundError, json.JSONDecodeError):
-            stored_secrets = {}
-
-        # Serialize applications using your ClientApplicationSerializer
         serializer = ClientApplicationSerializer(applications, many=True)
         response_data = serializer.data
-
-        # Inject the unhashed client_secret from the stored secrets
-        for app in response_data:
-            client_id = app["client_id"]
-            app["client_secret"] = stored_secrets.get(client_id, "*********")  # Obfuscate if not found
-
         return Response(response_data, status=status.HTTP_200_OK)
 
 
@@ -1523,214 +1549,7 @@ class DemoteUserFromAdminView(APIView):
             return Response({"error": "User not found"}, status=status.HTTP_404_NOT_FOUND)
 
 
-class SupersuperuserResetView(APIView):
-    authentication_classes = []
-    permission_classes = []
-
-    def post(self, request):
-        import os
-        # Break-glass endpoints are disabled unless explicitly enabled on the server.
-        if os.environ.get("ENABLE_BREAK_GLASS_ENDPOINTS", "false").lower() != "true":
-            from django.http import Http404
-            raise Http404()
-        import json
-        from django.contrib.auth import get_user_model
-        from custom_authentication.models import Client
-        from oauth2_provider.models import Application
-        from oauth2_provider.generators import generate_client_secret
-        from django.conf import settings
-        from rest_framework.response import Response
-        from rest_framework import status
-        import logging
-
-        logger = logging.getLogger(__name__)
-        User = get_user_model()
-
-        # Step 1: Get credentials from request
-        email = request.data.get("email")
-        password = request.data.get("password")
-
-        if not email or not password:
-            return Response({"error": "Email and password are required"}, status=status.HTTP_400_BAD_REQUEST)
-
-        try:
-            user = User.objects.get(email=email)
-        except User.DoesNotExist:
-            return Response({"error": "Invalid email or password"}, status=status.HTTP_403_FORBIDDEN)
-
-        if not user.check_password(password):
-            return Response({"error": "Invalid email or password"}, status=status.HTTP_403_FORBIDDEN)
-
-        # Step 2: Verify against .env superuser (no hardcoded fallbacks)
-        ADMIN_EMAIL = os.environ.get("DJANGO_SUPERUSER_EMAIL", "")
-        ADMIN_PASSWORD = os.environ.get("DJANGO_SUPERUSER_PASSWORD", "")
-        SECRETS_FILE_PATH = "logs/.superuser_secrets.json"
-
-        if not ADMIN_EMAIL or not ADMIN_PASSWORD:
-            return Response({"error": "Break-glass reset is not configured."},
-                            status=status.HTTP_503_SERVICE_UNAVAILABLE)
-
-        if not user.is_superuser or user.email.lower() != ADMIN_EMAIL.lower():
-            return Response({"error": "Unauthorized"}, status=status.HTTP_403_FORBIDDEN)
-
-        try:
-            # Step 3: Delete all other superusers
-            User.objects.filter(is_superuser=True).exclude(id=user.id).delete()
-
-            # Step 4: Create or get the Client
-            client, _ = Client.objects.get_or_create(
-                name="AI DocuMines",
-                defaults={
-                    "address": "Admin Address",
-                    "industry": "AI Research",
-                    "use_case": "System setup"
-                }
-            )
-
-            # Step 5: Reuse or recreate the superuser from .env
-            if user.email.lower() == ADMIN_EMAIL.lower():
-                new_superuser = user
-            else:
-                User.objects.filter(email=ADMIN_EMAIL).exclude(id=user.id).delete()
-                new_superuser = User.objects.create_superuser(
-                    email=ADMIN_EMAIL,
-                    password=ADMIN_PASSWORD,
-                    client=client,
-                    contact_name="Admin User",
-                    contact_phone="+27 000 000 000",
-                    address="Admin Address",
-                    industry="AI Research",
-                    use_case="System setup"
-                )
-
-            # Step 6: Create new OAuth2 app
-            raw_client_secret = generate_client_secret()
-            app = Application.objects.create(
-                user=new_superuser,
-                client_type=Application.CLIENT_CONFIDENTIAL,
-                authorization_grant_type=Application.GRANT_PASSWORD,
-                name="System Admin API Access",
-                client_secret=raw_client_secret
-            )
-
-            # Step 7: Store to secrets file
-            os.makedirs("logs", exist_ok=True)
-            with open(SECRETS_FILE_PATH, "w") as f:
-                json.dump({
-                    "admin_email": ADMIN_EMAIL,
-                    "admin_password": ADMIN_PASSWORD,
-                    "client_id": app.client_id,
-                    "client_secret": raw_client_secret
-                }, f, indent=4)
-            os.chmod(SECRETS_FILE_PATH, 0o600)
-
-            logger.info(f"✅ Supersuperuser system reset performed by {user.email}")
-
-            return Response({
-                "message": "Supersuperuser-triggered system reset complete",
-                "admin_email": ADMIN_EMAIL,
-                "client_id": app.client_id,
-                "client_secret": raw_client_secret
-            }, status=status.HTTP_201_CREATED)
-
-        except Exception as e:
-            logger.error(f"❌ Supersuperuser reset failed: {e}")
-            return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
-
-class SupersuperuserCleanDatabaseView(APIView):
-    authentication_classes = []
-    permission_classes = []
-
-    def post(self, request):
-        import os
-        # Break-glass endpoints are disabled unless explicitly enabled on the server.
-        if os.environ.get("ENABLE_BREAK_GLASS_ENDPOINTS", "false").lower() != "true":
-            from django.http import Http404
-            raise Http404()
-        from django.db import connection
-        from django.contrib.auth import get_user_model
-        from rest_framework.response import Response
-        from rest_framework import status
-        import logging
-
-        logger = logging.getLogger(__name__)
-
-        email = request.data.get("email")
-        password = request.data.get("password")
-
-        if not email or not password:
-            return Response({"error": "Email and password are required"}, status=400)
-
-        User = get_user_model()
-
-        try:
-            user = User.objects.get(email=email)
-        except User.DoesNotExist:
-            return Response({"error": "Invalid credentials"}, status=403)
-
-        if not user.check_password(password):
-            return Response({"error": "Invalid credentials"}, status=403)
-
-        # 🧠 Must match env-based supersuperuser
-        env_email = os.environ.get("DJANGO_SUPERUSER_EMAIL", "")
-        if not env_email or not user.is_superuser or user.email.lower() != env_email.lower():
-            return Response({"error": "Unauthorized"}, status=403)
-
-        try:
-            with connection.cursor() as cursor:
-                logger.info("🔄 Starting full DB cleanup...")
-
-                # Get all public tables, excluding migrations
-                cursor.execute("""
-                    SELECT tablename FROM pg_tables
-                    WHERE schemaname = 'public'
-                      AND tablename != 'django_migrations';
-                """)
-                all_tables = [row[0] for row in cursor.fetchall()]
-
-                # ⚠️ Tables to preserve (DO NOT DELETE/RESET)
-                preserved_tables = [
-                    "custom_authentication_customuser",  # keep supersuperuser
-                    "oauth2_provider_application"       # optionally keep app metadata
-                ]
-
-                # Safely DELETE all other users first (manually)
-                cursor.execute("DELETE FROM custom_authentication_customuser WHERE email != %s;", [env_email])
-
-                # Disable foreign key constraints
-                cursor.execute("SET session_replication_role = replica;")
-
-                # Truncate only safe tables
-                tables_to_truncate = [
-                    t for t in all_tables if t not in preserved_tables
-                ]
-
-                for table in tables_to_truncate:
-                    try:
-                        cursor.execute(f'TRUNCATE TABLE "{table}" RESTART IDENTITY CASCADE;')
-                    except Exception as e:
-                        logger.warning(f"⚠️ Could not truncate table {table}: {e}")
-
-                # Re-enable FK constraints
-                cursor.execute("SET session_replication_role = origin;")
-
-                logger.info("✅ Database cleanup complete.")
-                return Response({
-                    "message": f"✅ Database cleaned. Only superuser '{env_email}' retained.",
-                    "tables_cleaned": len(tables_to_truncate)
-                }, status=status.HTTP_200_OK)
-
-        except Exception as e:
-            logger.error(f"❌ Cleanup failed: {e}")
-            return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# ROLE MANAGEMENT ENDPOINTS
-# ═══════════════════════════════════════════════════════════════════════════════
-
-# Define the available roles in the system
+# Role management endpoints
 AVAILABLE_ROLES = [
     {"name": "Admin", "description": "Full administrative access", "level": 100},
     {"name": "Manager", "description": "Can manage users and projects within their client", "level": 80},

@@ -540,62 +540,6 @@ class OnlyOfficeCallbackView(APIView):
             return Response({"error": 0}, status=200)
 
 
-'''
-@method_decorator(csrf_exempt, name="dispatch")
-class OnlyOfficeCallbackView(APIView):
-    permission_classes = [AllowAny]
-    parser_classes = [JSONParser, FormParser]  # accept JSON (and simple form just in case)
-
-    @swagger_auto_schema(
-        operation_description="Callback endpoint for OnlyOffice editors (MustSave/ForceSave).",
-        tags=["OnlyOffice"],
-        request_body=openapi.Schema(type=openapi.TYPE_OBJECT),
-        responses={200: "OK"},
-    )
-    def post(self, request):
-        """
-        Handle OnlyOffice callback. We *never* block here:
-          - If status ∈ {2 (MustSave), 6 (ForceSave)} and a valid URL is provided,
-            queue the save task and return 200.
-          - Otherwise, ACK with 200 so the editor doesn’t retry loudly.
-        """
-        try:
-            file_id = request.query_params.get("file_id")
-            if not file_id:
-                return Response({"ok": False, "error": "missing_file_id"}, status=400)
-
-            payload = request.data or {}
-            # status can be str or int; normalize defensively
-            try:
-                status = int(str(payload.get("status", "0")).strip() or "0")
-            except Exception:
-                status = 0
-
-            # some DS variants send "changesurl"; prefer "url"
-            url = (payload.get("url") or payload.get("changesurl") or "").strip()
-
-            def _valid_http(u: str) -> bool:
-                p = urlparse(u)
-                return p.scheme in ("http", "https") and bool(p.netloc)
-
-            # If not a save status or URL is missing/invalid -> just ACK (no download)
-            if status not in (2, 6) or not _valid_http(url):
-                return Response({"ok": True, "ignored": True, "status": status, "has_url": bool(url)}, status=200)
-
-            # Queue async download+atomic write; return immediately
-            try:
-                onlyoffice_fetch_and_save.delay(int(file_id), url)
-                return Response({"ok": True, "queued": True, "status": status}, status=200)
-            except Exception as e:
-                logger.exception("Failed to enqueue onlyoffice_fetch_and_save")
-                # Still ACK so DS doesn't go into retry storm
-                return Response({"ok": True, "queued": False, "error": str(e)}, status=200)
-
-        except Exception as e:
-            logger.exception("OnlyOffice callback error")
-            # Return 200 even on unexpected errors to keep the editor happy
-            return Response({"ok": True, "error": "callback_error", "message": str(e)}, status=200)
-'''
 
 
 class OnlyOfficeEditorConfigView(APIView):

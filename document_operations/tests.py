@@ -4,6 +4,7 @@ from unittest.mock import MagicMock, patch
 import os
 
 from document_operations.models import Folder, FileFolderLink
+from custom_authentication.models import Client
 from document_operations.utils import get_or_create_folder_tree, register_file_folder_link
 
 
@@ -16,6 +17,7 @@ class GetOrCreateFolderTreeTestCase(TestCase):
     def setUp(self):
         """Create test user for all tests"""
         self.user = User.objects.create_user(
+            client=Client.objects.create(name="Folder tests"),
             email="test@example.com",
             password="testpass123"
         )

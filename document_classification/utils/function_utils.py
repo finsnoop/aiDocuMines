@@ -355,6 +355,8 @@ Respond in JSON format only:
                 max_tokens=200,
                 temperature=0.1,
             )
+            from home_dash_analytics.agents.usage import record_response as _record_ai
+            _record_ai(response, provider='openai', model=getattr(response, 'model', ''), task='classification')
             content = response.choices[0].message.content.strip()
             # Extract JSON from response (handle markdown-wrapped JSON)
             if '```json' in content:
@@ -418,6 +420,8 @@ Respond in JSON format:
                 response_format={"type": "json_object"},
                 max_tokens=200
             )
+            from home_dash_analytics.agents.usage import record_response as _record_ai
+            _record_ai(response, provider='openai', model=getattr(response, 'model', ''), task='classification')
 
             result = json.loads(response.choices[0].message.content)
             descriptions[cluster_id] = {

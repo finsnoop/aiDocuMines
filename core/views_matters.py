@@ -397,6 +397,9 @@ class MatterRunView(APIView):
         svc = SERVICES_BY_TYPE.get(service_type)
         if not svc:
             return Response({"error": "Choose a service from the catalogue."}, status=400)
+        from system_settings.verticals import service_enabled
+        if not service_enabled(request.user, svc):
+            return Response({"error": "This service is not enabled for your organisation."}, status=403)
         job_type = svc.get("handler_job_type")
         if not job_type or not get_bulk_handler(job_type):
             return Response({"error": f"'{svc.get('display_name')}' cannot be run on a set of documents yet."}, status=400)

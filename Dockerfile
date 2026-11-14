@@ -1,4 +1,5 @@
-FROM python:3.12.9-slim
+ARG PYTHON_BASE_IMAGE=python:3.12.16-slim-bookworm
+FROM ${PYTHON_BASE_IMAGE} AS dependencies
 
 ENV PYTHONPATH="/app" \
     PYTHONDONTWRITEBYTECODE=1 \
@@ -47,6 +48,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     supervisor \
     openjdk-17-jre-headless \
     libreoffice-writer \
+    pandoc \
     fonts-liberation \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/* /tmp/*
@@ -56,15 +58,17 @@ RUN mkdir -p /etc/supervisor/conf.d
 COPY supervisor/supervisord.conf /etc/supervisor/conf.d/supervisord.conf
 
 # Upgrade pip and install build tools
-RUN pip install --no-cache-dir --upgrade pip setuptools wheel numpy
+RUN pip install --no-cache-dir pip==26.3 setuptools==81.0.0 wheel==0.46.3
 
-COPY production_requirements.txt /app/
+COPY production_requirements.lock /app/
 
-RUN pip install --no-cache-dir --prefer-binary -r production_requirements.txt gunicorn
+RUN pip install --no-cache-dir --prefer-binary --require-hashes -r production_requirements.lock
 
 # Install spaCy model deterministically (avoid runtime/build-time downloads)
-RUN pip install --no-cache-dir \
+RUN python -c "import en_core_web_lg; assert en_core_web_lg.__version__ == '3.8.0'" 2>/dev/null || pip install --no-cache-dir \
   https://github.com/explosion/spacy-models/releases/download/en_core_web_lg-3.8.0/en_core_web_lg-3.8.0-py3-none-any.whl
+
+FROM dependencies AS runtime
 
 RUN mkdir -p /app/media /app/logs && chown -R www-data:www-data /app/media
 
@@ -87,9 +91,13 @@ RUN mkdir -p /app/logs /app/media && chown -R www-data:www-data /app/media
 
 # RUN python manage.py collectstatic --noinput
 
-ENV SKIP_NLP_INIT=1
-RUN python manage.py collectstatic --noinput
-ENV SKIP_NLP_INIT=0
+# Build-time credentials are temporary and never become runtime environment defaults.
+RUN openssl genrsa -out /tmp/build-oidc.pem 2048 2>/dev/null && \
+    SECRET_KEY=build-static-only SKIP_NLP_INIT=1 \
+    OIDC_RSA_PRIVATE_KEY_PATH=/tmp/build-oidc.pem \
+    FIELD_ENCRYPTION_KEY=ZHVtbXkta2V5LWZvci10ZXN0cy1vbmx5LTAwMDAwMDA= \
+    ENCRYPTION_SECRET_KEY=ZHVtbXkta2V5LWZvci10ZXN0cy1vbmx5LTAwMDAwMDA= \
+    python manage.py collectstatic --noinput && rm /tmp/build-oidc.pem
 
 
 EXPOSE 8020

@@ -67,7 +67,8 @@ class AnonymizationService:
         if self.nlp is not None:
             return
         try:
-            self.nlp = spacy.load(self._spacy_model)
+            shared_nlp = getattr(self.analyzer.nlp_engine, 'nlp', {}).get('en')
+            self.nlp = shared_nlp if shared_nlp is not None and shared_nlp.meta.get('name') == self._spacy_model.removeprefix('en_') else spacy.load(self._spacy_model)
             logger.info(f"✅ spaCy model loaded: {self._spacy_model}")
         except OSError as e:
             logger.error(
@@ -490,6 +491,7 @@ def export_to_docx(json_path):
 
 
 def compute_global_anonymization_stats(
+    user_id,
     client_name=None,
     project_id=None,
     service_id=None,
@@ -515,7 +517,10 @@ def compute_global_anonymization_stats(
     if date_to:
         filters &= Q(updated_at__date__lte=date_to)
 
-    queryset = Anonymize.objects.filter(filters)
+    from django.contrib.auth import get_user_model
+    from core.access import scope_by_file
+    user = get_user_model().objects.get(pk=user_id)
+    queryset = scope_by_file(user, Anonymize.objects.filter(filters), "original_file")
 
     files_with_entities = 0
     files_without_entities = 0

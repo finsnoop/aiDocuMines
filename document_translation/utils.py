@@ -7,9 +7,8 @@ from datetime import datetime, timedelta
 from azure.storage.blob import (
     BlobServiceClient, generate_container_sas, ContainerSasPermissions
 )
-from azure.ai.translation.document import (
-    DocumentTranslationClient, DocumentTranslationInput, TranslationTarget
-)
+from azure.ai.translation.document import DocumentTranslationClient
+from azure.ai.translation.document.models import DocumentTranslationInput, TranslationTarget
 from azure.core.credentials import AzureKeyCredential
 from django.utils.timezone import now
 from core.models import File
@@ -42,9 +41,8 @@ import uuid
 from datetime import datetime, timedelta
 from dotenv import load_dotenv
 from azure.core.credentials import AzureKeyCredential
-from azure.ai.translation.document import (
-    DocumentTranslationClient, DocumentTranslationInput, TranslationTarget
-)
+from azure.ai.translation.document import DocumentTranslationClient
+from azure.ai.translation.document.models import DocumentTranslationInput, TranslationTarget
 from azure.storage.blob import (
     BlobServiceClient, generate_container_sas, ContainerSasPermissions
 )
@@ -72,18 +70,20 @@ class AzureBlobService:
         self.blob_service_client = BlobServiceClient.from_connection_string(self.connection_string)
 
     def load_config(self):
-        """Securely loads Azure storage configurations."""
+        """Use deployment settings; a missing optional service cannot prevent API startup."""
         config_obj = configparser.ConfigParser()
         config_file = os.path.join(os.path.dirname(__file__), 'config.ini')
-        if not os.path.exists(config_file):
-            raise FileNotFoundError("❌ Configuration file 'config.ini' not found.")
         config_obj.read(config_file)
-        client_name = "devtests"
-        return {
-            "storage_account_name": config_obj[client_name].get("storage_account_name"),
-            "storage_url": config_obj[client_name].get("storage_url").rstrip('/'),
-            "translator_document_endpoint": config_obj[client_name].get("translator_document_endpoint")
+        legacy = config_obj["devtests"] if config_obj.has_section("devtests") else {}
+        values = {
+            "storage_account_name": os.getenv("STORAGE_ACCOUNT_NAME") or legacy.get("storage_account_name"),
+            "storage_url": os.getenv("STORAGE_URL") or legacy.get("storage_url"),
+            "translator_document_endpoint": os.getenv("TRANSLATOR_DOCUMENT_ENDPOINT") or legacy.get("translator_document_endpoint"),
         }
+        if not all(values.values()) or not os.getenv("CONNECTION_STRING"):
+            raise RuntimeError("Document translation storage is not configured. Set the Azure storage and translator environment variables.")
+        values["storage_url"] = values["storage_url"].rstrip("/")
+        return values
 
     def ensure_container_exists(self, container_name):
         """Ensures a container exists, retrying if Azure is still deleting it."""
@@ -256,69 +256,6 @@ class TranslationService:
 
 
 
-'''
-class TranslationService:
-    """Handles document translation via Azure Document Translation API."""
-
-    def __init__(self):
-        self.azure_service = AzureBlobService()
-        self.translator_document_key = os.getenv("TRANSLATOR_DOCUMENT_KEY")
-        self.translator_document_endpoint = self.azure_service.config["translator_document_endpoint"]
-        self.client = DocumentTranslationClient(
-            self.translator_document_endpoint, AzureKeyCredential(self.translator_document_key)
-        )
-    
-    def translate_file(self, file_id, run_id, source_language, target_language):
-        """Translates a document using Azure Document Translation API."""
-        original_file = File.objects.get(id=file_id)
-        translation_run = TranslationRun.objects.get(id=run_id)
-    
-        translation_run.status = "Translating"
-        translation_run.save()
-    
-        # Define Azure containers
-        source_container = f"translation-source-{uuid.uuid4()}"
-        target_container = f"translation-target-{uuid.uuid4()}"
-    
-        self.azure_service.ensure_container_exists(source_container)
-        self.azure_service.ensure_container_exists(target_container)
-        self.azure_service.upload_file_if_not_exists(source_container, original_file.filepath)
-    
-        source_sas_url = self.azure_service.generate_sas_url(source_container)
-        target_sas_url = self.azure_service.generate_sas_url(target_container)
-    
-        translation_input = DocumentTranslationInput(
-            source_url=source_sas_url,
-            targets=[TranslationTarget(target_url=target_sas_url, language=target_language)]
-        )
-        self.client.begin_translation(inputs=[translation_input]).wait()
-    
-        # Store the translated file using the original filename
-        translated_folder = os.path.join(os.path.dirname(original_file.filepath), "translations", target_language)
-        os.makedirs(translated_folder, exist_ok=True)
-    
-        self.azure_service.download_files(target_container, translated_folder)
-    
-        # ✅ Preserve original filename
-        translated_filename = os.path.basename(original_file.filepath)  # Keep original filename
-        translated_filepath = os.path.join(translated_folder, translated_filename)
-    
-        # ✅ Update TranslationFile Model
-        TranslationFile.objects.create(
-            run=translation_run,
-            original_file=original_file,
-            translated_filepath=translated_filepath,
-            status="Completed"
-        )
-    
-        translation_run.status = "Completed"
-        translation_run.save()
-    
-        self.azure_service.force_delete_container(source_container)
-        self.azure_service.force_delete_container(target_container)
-    
-        return {"file_id": file_id, "translated_file": translated_filepath, "status": "Completed"}
-'''    
 
 def load_translation_languages():
     """

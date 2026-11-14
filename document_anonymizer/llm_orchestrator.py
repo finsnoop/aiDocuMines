@@ -21,6 +21,8 @@ def query_model(blocks, element_ids, model="phi-2", api_key=None):
                 model=model,
                 messages=[{"role": "user", "content": f"Summarize the following:\n\n{prompt}"}]
             )
+            from home_dash_analytics.agents.usage import record_response as _record_ai
+            _record_ai(response, provider='openai', model=getattr(response, 'model', ''), task='anonymisation')
             return response.choices[0].message.content.strip()
         except Exception as e:
             return f"OpenAI API error: {str(e)}"

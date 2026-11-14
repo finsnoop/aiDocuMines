@@ -4,7 +4,7 @@ from rest_framework import serializers
 from .models import SystemSettings, PlatformGlobalSettings
 from custom_authentication.models import Client
 
-SECRET_FIELDS = ("openai_api_key", "azure_storage_key", "oauth_client_secret")
+SECRET_FIELDS = ("openai_api_key", "azure_storage_key", "oauth_client_secret", "slack_webhook")
 SECRET_MASK = "********"
 
 class SystemSettingsSerializer(serializers.ModelSerializer):
@@ -71,6 +71,7 @@ class SystemSettingsSerializer(serializers.ModelSerializer):
             'updated_at'
         ]
         read_only_fields = ['id', 'updated_at', 'client_name']
+        extra_kwargs = {field: {'max_length': 512} for field in SECRET_FIELDS}
 
     def to_representation(self, instance):
         data = super().to_representation(instance)

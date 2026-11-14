@@ -7,7 +7,7 @@ import hashlib
 import fitz  # PyMuPDF
 import pandas as pd
 from datetime import datetime
-from PyPDF2 import PdfReader, PdfWriter, PdfMerger
+from pypdf import PdfReader, PdfWriter
 from django.conf import settings
 from django.utils.timezone import now
 from django.db import transaction
@@ -132,7 +132,7 @@ class OCRService:
                 process = subprocess.run(cmd, capture_output=True, text=True)
 
             elif ocr_option.lower() == "advanced-ocr":
-                # Advanced OCR using Tesseract via ImageMagick and PyPDF2
+                # Advanced OCR using Tesseract via ImageMagick and pypdf
                 output_image_pattern = file_path.replace('.pdf', '_page_%d.png')
                 cmd_convert = [
                     'magick',
@@ -190,7 +190,7 @@ class OCRService:
             logger.info(f"🔄 Found {len(ocr_output_files)} PDFs to merge.")
 
             # Merge PDFs using PdfMerger
-            merger = PdfMerger()
+            merger = PdfWriter()
             for pdf in ocr_output_files:
                 logger.info(f"🔹 Adding {pdf} to the merger.")
                 merger.append(pdf)
@@ -296,7 +296,7 @@ class OCRService:
             logger.info(f"🔄 Found {len(ocr_output_files)} PDFs to merge.")
 
             # Merge PDFs using PdfMerger
-            merger = PdfMerger()
+            merger = PdfWriter()
             for pdf in ocr_output_files:
                 logger.info(f"🔹 Adding {pdf} to the merger.")
                 merger.append(pdf)

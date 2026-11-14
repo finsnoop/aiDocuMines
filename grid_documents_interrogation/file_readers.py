@@ -145,157 +145,11 @@ def perform_ocr_on_pdf(file_path):
 
 
 
-'''
-def perform_ocr_on_pdf(file_path):
-    """
-    Perform lightweight OCR on scanned PDF, with cache per file (by path hash).
-    """
-    cache_path = compute_ocr_cache_path(file_path)
-
-    # Use cache if it exists and is not empty
-    if os.path.exists(cache_path):
-        with open(cache_path, "r", encoding="utf-8") as f:
-            cached_text = f.read()
-            if cached_text.strip():
-                print(f"[OCR] Using cached OCR from {cache_path}")
-                return cached_text
-            else:
-                print(f"[⚠️ OCR] Cache found but is empty. Re-attempting OCR...")
-
-    print(f"[OCR] Starting OCR on {file_path}")
-    try:
-        doc = fitz.open(file_path)
-        extracted_text = []
-
-        for i, page in enumerate(doc):
-            print(f"[OCR] Rendering page {i + 1}/{len(doc)}")
-            try:
-                pix = page.get_pixmap(dpi=96)
-                with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as img_temp:
-                    pix.save(img_temp.name)
-                    image = Image.open(img_temp.name)
-
-                    # Safety checks
-                    if image.size[0] * image.size[1] > 178_956_970:
-                        print(f"[⚠️ Skipping page {i+1}] Too large, possible decompression bomb")
-                        continue
-                    if image.size[0] > 2000 or image.size[1] > 2000:
-                        print(f"[⚠️ Resizing large image {image.size}]")
-                        image = image.resize((int(image.width / 2), int(image.height / 2)))
-
-                    text = pytesseract.image_to_string(image)
-                    extracted_text.append(text)
-                    os.remove(img_temp.name)
-
-            except Exception as page_err:
-                print(f"[⚠️ Skipping page {i + 1}] Reason: {page_err}")
-                continue
-
-        full_text = "\n".join(extracted_text)
-        print(f"[OCR] OCR complete. Extracted {len(full_text)} characters.")
-
-        # Cache the result
-        with open(cache_path, "w", encoding="utf-8") as f:
-            f.write(full_text)
-
-        return full_text
-
-    except Exception as e:
-        print(f"[❌ OCR ERROR] Failed completely: {e}")
-        return ""
-'''
 
 
 
-'''
-def perform_ocr_on_pdf(file_path):
-    """
-    Safer OCR using PyMuPDF + Tesseract with throttled DPI and decompression bomb handling.
-    """
-    print(f"[OCR] Starting lightweight OCR on {file_path}")
-    try:
-        doc = fitz.open(file_path)
-        extracted_text = []
-
-        for page_number in range(len(doc)):
-            print(f"[OCR] Rendering page {page_number + 1}/{len(doc)}")
-            tmp_img_path = None
-
-            try:
-                # Use low DPI to reduce image size
-                pix = doc.load_page(page_number).get_pixmap(dpi=96)
-
-                with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as img_temp:
-                    pix.save(img_temp.name)
-                    tmp_img_path = img_temp.name
-
-                image = Image.open(tmp_img_path)
-
-                # Optional: resize if too large
-                max_size = (2000, 2000)
-                if image.width > max_size[0] or image.height > max_size[1]:
-                    print(f"[⚠️ Resizing large image {image.size}]")
-                    image.thumbnail(max_size)
-
-                text = pytesseract.image_to_string(image)
-                extracted_text.append(text)
-
-            except Exception as page_err:
-                print(f"[⚠️ Skipping page {page_number + 1}] Reason: {page_err}")
-            finally:
-                if tmp_img_path and os.path.exists(tmp_img_path):
-                    os.remove(tmp_img_path)
-
-        full_text = "\n".join(extracted_text)
-        print(f"[OCR] OCR complete. Extracted {len(full_text)} characters.")
-        return full_text
-
-    except Exception as e:
-        print(f"[❌ OCR ERROR] Failed completely: {e}")
-        return ""
-'''
 
 
-'''
-def perform_ocr_on_pdf(file_path):
-    try:
-        output_img_pattern = file_path.replace('.pdf', '_page_%d.png')
-
-        # Step 1: Convert PDF pages to images
-        subprocess.run(['magick', '-density', '300', file_path, output_img_pattern], check=True)
-
-        # Step 2: OCR each image to individual PDFs
-        ocr_pdfs = []
-        for img in sorted(glob.glob(output_img_pattern.replace('%d', '*'))):
-            ocr_pdf = img.replace('.png', '.pdf')
-            subprocess.run([
-                'tesseract',
-                img,
-                ocr_pdf.replace('.pdf', ''),
-                '--oem', '1',
-                '--psm', '3',
-                'pdf'
-            ], check=True)
-            ocr_pdfs.append(ocr_pdf)
-
-        # Step 3: Merge OCR PDFs
-        merged_pdf = file_path.replace('.pdf', '_OCRed.pdf')
-        with open(merged_pdf, 'wb') as out:
-            for f in ocr_pdfs:
-                with open(f, 'rb') as inp:
-                    out.write(inp.read())
-
-        # Step 4: Cleanup temp images and intermediate PDFs
-        for f in glob.glob(output_img_pattern.replace('%d', '*')) + ocr_pdfs:
-            os.remove(f)
-
-        shutil.move(merged_pdf, file_path)
-        return file_path
-
-    except Exception as e:
-        print(f"Advanced OCR failed: {e}")
-        return file_path
-'''
 
 
 def _pdf_text_layer(file_path):
@@ -334,16 +188,6 @@ def read_pdf_file(file_path):
         print(f"[PDF READ ERROR] {e}")
         return text
 
-'''
-def read_pdf_file(file_path):
-    try:
-        file_path = perform_ocr_on_pdf(file_path)
-        doc = fitz.open(file_path)
-        return "\n".join(page.get_text() for page in doc)
-    except Exception as e:
-        print(f"Error reading PDF: {e}")
-        return None
-'''
 
 
 def read_file(file_path):

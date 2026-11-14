@@ -3,6 +3,7 @@ from django.db import models
 from django.conf import settings
 from core.models import Run
 from custom_authentication.models import Client
+from core.fields.encrypted_char import EncryptedCharField
 
 
 class SystemSettings(models.Model):
@@ -37,11 +38,11 @@ class SystemSettings(models.Model):
     notify_enabled = models.BooleanField(default=True)
 
     # INTEGRATIONS
-    openai_api_key = models.CharField(max_length=512, blank=True, null=True)
-    azure_storage_key = models.CharField(max_length=512, blank=True, null=True)
-    slack_webhook = models.URLField(blank=True, null=True)
+    openai_api_key = EncryptedCharField(max_length=1024, blank=True, null=True)
+    azure_storage_key = EncryptedCharField(max_length=1024, blank=True, null=True)
+    slack_webhook = EncryptedCharField(max_length=1024, blank=True, null=True)
     oauth_client_id = models.CharField(max_length=255, blank=True, null=True)
-    oauth_client_secret = models.CharField(max_length=512, blank=True, null=True)
+    oauth_client_secret = EncryptedCharField(max_length=1024, blank=True, null=True)
 
     # BACKUP
     backup_frequency = models.CharField(max_length=10, choices=[("daily", "Daily"), ("weekly", "Weekly"), ("monthly", "Monthly")], default="daily")
@@ -151,3 +152,32 @@ class SystemSettingsAuditTrail(models.Model):
     def __str__(self):
         return f"Audit for {self.client.name} at {self.timestamp}"
 
+
+
+class VerticalSetting(models.Model):
+    """
+    Switches for industry verticals and for individual services/features (system_settings/verticals.py).
+
+    key      "<vertical>" (e.g. class_actions) or "service:<service_type>" (e.g. service:ca-pii-redaction)
+    tenant   NULL = the platform default for every organisation; X = organisation X (set by platform
+             superusers at onboarding). The most specific setting wins:
+             organisation+service > organisation+vertical > platform+service > platform+vertical > on.
+    So a client can have whole verticals off and still get hand-picked features from them.
+    Nothing is deleted by switching off: services are hidden and their APIs refuse requests.
+    """
+    tenant = models.ForeignKey(Client, on_delete=models.CASCADE, null=True, blank=True, related_name='vertical_settings')
+    key = models.CharField(max_length=160)
+    enabled = models.BooleanField(default=True)
+    updated_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True,
+                                   related_name='+')
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=['tenant', 'key'], name='uniq_feature_switch_per_tenant'),
+            models.UniqueConstraint(fields=['key'], condition=models.Q(tenant__isnull=True),
+                                    name='uniq_feature_switch_platform'),
+        ]
+
+    def __str__(self):
+        return f"{self.key} {'on' if self.enabled else 'off'} ({self.tenant_id or 'platform'})"

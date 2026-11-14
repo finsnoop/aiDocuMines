@@ -20,7 +20,7 @@ def extract_document_text(file_path: str) -> str:
     try:
         # Placeholder text extraction
         # In a real implementation, this would use libraries like:
-        # - PyPDF2 or pdfplumber for PDFs
+        # - pypdf or pdfplumber for PDFs
         # - python-docx for Word documents
         # - openpyxl for Excel files
         # - etc.

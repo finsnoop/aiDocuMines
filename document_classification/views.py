@@ -47,13 +47,16 @@ def health_check(request):
     return JsonResponse({"status": "ok", "service": "document_classification"}, status=200)
 
 
-def get_user_from_client_id(client_id):
-    """Get user from OAuth2 client ID."""
-    try:
-        application = Application.objects.get(client_id=client_id)
-        return application.user
-    except Application.DoesNotExist:
-        return None
+
+
+def _may_see_run(user, run):
+    """The person who started a clustering run, their organisation's admin, or a platform superuser."""
+    from core.access import is_platform_superuser, is_tenant_admin, same_tenant
+    if is_platform_superuser(user):
+        return True
+    if run.user_id is None:
+        return False  # a run without an owner is nobody's, not everybody's
+    return run.user_id == user.id or (is_tenant_admin(user) and same_tenant(user, run.user))
 
 
 def get_client_from_user(user):
@@ -166,12 +169,12 @@ class ClusteringStatusAPIView(APIView):
             return Response({"error": "run_id is required"}, status=status.HTTP_400_BAD_REQUEST)
 
         client_id = request.headers.get("X-Client-ID")
-        user = get_user_from_client_id(client_id)
+        user = request.user
 
         run = get_object_or_404(ClusteringRun, id=run_id)
 
         # Verify ownership
-        if run.user and str(run.user.id) != str(user.id):
+        if not _may_see_run(request.user, run):
             raise PermissionDenied("You are not authorized to view this run")
 
         file_count = run.cluster_files.count()
@@ -210,12 +213,12 @@ class ClusteringResultsAPIView(APIView):
             return Response({"error": "run_id is required"}, status=status.HTTP_400_BAD_REQUEST)
 
         client_id = request.headers.get("X-Client-ID")
-        user = get_user_from_client_id(client_id)
+        user = request.user
 
         run = get_object_or_404(ClusteringRun, id=run_id)
 
         # Verify ownership
-        if run.user and str(run.user.id) != str(user.id):
+        if not _may_see_run(request.user, run):
             raise PermissionDenied("You are not authorized to view this run")
 
         serializer = ClusteringRunSerializer(run)
@@ -244,9 +247,9 @@ class ClusteringRunListAPIView(generics.ListAPIView):
 
     def get_queryset(self):
         client_id = self.request.headers.get("X-Client-ID")
-        user = get_user_from_client_id(client_id)
+        user = self.request.user
 
-        qs = ClusteringRun.objects.filter(user=user).order_by('-created_at')
+        qs = ClusteringRun.objects.filter(user=self.request.user).order_by('-created_at')
 
         project_id = self.request.query_params.get("project_id")
         service_id = self.request.query_params.get("service_id")
@@ -284,11 +287,11 @@ class ClusterDetailsAPIView(APIView):
             return Response({"error": "run_id and cluster_id are required"}, status=status.HTTP_400_BAD_REQUEST)
 
         client_id = request.headers.get("X-Client-ID")
-        user = get_user_from_client_id(client_id)
+        user = request.user
 
         run = get_object_or_404(ClusteringRun, id=run_id)
 
-        if run.user and str(run.user.id) != str(user.id):
+        if not _may_see_run(request.user, run):
             raise PermissionDenied("You are not authorized to view this run")
 
         cluster_result = get_object_or_404(ClusterResult, run=run, cluster_id=int(cluster_id))
@@ -329,7 +332,7 @@ class SubClusterAPIView(APIView):
 
         # Verify run exists and belongs to user
         run = get_object_or_404(ClusteringRun, id=run_id)
-        if run.user and str(run.user.id) != str(user.id):
+        if not _may_see_run(request.user, run):
             raise PermissionDenied("You are not authorized to sub-cluster this run")
 
         # Create sub-cluster run
@@ -368,11 +371,11 @@ class SubClusterAPIView(APIView):
             return Response({"error": "sub_run_id is required"}, status=status.HTTP_400_BAD_REQUEST)
 
         client_id = request.headers.get("X-Client-ID")
-        user = get_user_from_client_id(client_id)
+        user = request.user
 
         sub_run = get_object_or_404(SubClusterRun, id=sub_run_id)
 
-        if sub_run.parent_run.user and str(sub_run.parent_run.user.id) != str(user.id):
+        if not _may_see_run(request.user, sub_run.parent_run):
             raise PermissionDenied("You are not authorized to view this sub-cluster run")
 
         serializer = SubClusterRunSerializer(sub_run)

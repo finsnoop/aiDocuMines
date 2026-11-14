@@ -21,22 +21,6 @@ def load_superuser_secrets():
     except Exception as e:
         raise RuntimeError(f"Failed to load superuser secrets: {e}")
 
-'''
-def load_superuser_secrets():
-    """
-    Securely load superuser secrets from a protected file using sudo.
-    """
-    try:
-        result = subprocess.run(
-            ["sudo", "cat", SUPERUSER_SECRET_PATH],
-            capture_output=True,
-            text=True,
-            check=True,
-        )
-        return json.loads(result.stdout)
-    except Exception as e:
-        raise ImproperlyConfigured(f"Failed to load superuser secrets: {e}")
-'''
 
 def get_or_create_nextcloud_oidc_user(user):
     """
@@ -66,12 +50,9 @@ def generate_nextcloud_oidc_url(user) -> str:
     Construct the full Nextcloud OIDC login URL.
     Nextcloud handles state/nonce internally via its stored provider config.
     """
-    secrets = load_superuser_secrets()
-
-    client_id = secrets.get("client_id")
-    if not client_id:
-        raise ImproperlyConfigured("Missing 'client_id' in superuser secrets.")
-
+    # Nextcloud builds the authorisation request from its own stored provider configuration,
+    # so no credentials are needed here. (This used to read the platform superuser's secrets
+    # file, never used the result, and failed wherever that file was absent.)
     nextcloud_base = os.getenv(
         "NEXTCLOUD_URL",
         "https://nextcloud.apps.datasqan.com"

@@ -1,3 +1,4 @@
+from core.task_access import register_task, require_task_owner
 import time
 import logging
 
@@ -242,6 +243,7 @@ class DocumentClassificationView(APIView):
                 file_obj.id, dd_run.id, request.user.id,
                 project_id=project_id, service_id=service_id, datetime_folder=datetime_folder
             )
+            register_task(request.user, task, "private_equity")
             task_ids.append(task.id)
 
         return Response({
@@ -359,6 +361,7 @@ class RiskClauseExtractionView(APIView):
                 file_obj.id, dd_run.id, request.user.id,
                 project_id=project_id, service_id=service_id, datetime_folder=datetime_folder
             )
+            register_task(request.user, task, "private_equity")
             task_ids.append(task.id)
 
         return Response({
@@ -461,6 +464,7 @@ class IssueSpottingView(APIView):
                 file_obj.id, dd_run.id, request.user.id,
                 project_id=project_id, service_id=service_id, datetime_folder=datetime_folder
             )
+            register_task(request.user, task, "private_equity")
             task_ids.append(task.id)
 
         return Response({
@@ -658,6 +662,7 @@ class FindingsReportView(APIView):
             datetime_folder=datetime_folder  # ✅ Pass datetime_folder to task
         )
 
+        register_task(request.user, task, "private_equity")
         return Response({
             "message": "Findings report generation started",
             "task_id": task.id,
@@ -749,6 +754,7 @@ class SyncDataRoomView(APIView):
         # Trigger the sync task
         try:
             task = sync_data_room_task.delay(connector.id, request.user.id, folder_path)
+            register_task(request.user, task, "private_equity")
 
             return Response({
                 "message": "Data room sync started",
@@ -2253,6 +2259,7 @@ class PETaskStatusView(APIView):
                 status=status.HTTP_400_BAD_REQUEST
             )
 
+        require_task_owner(request.user, task_id, "private_equity")
         try:
             result = AsyncResult(task_id)
             task_status = result.status

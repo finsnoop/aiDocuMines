@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from celery import shared_task
+from .intelligence import build_intelligence  # Register the bounded dashboard agent task.
 from django.utils import timezone
 from datetime import datetime
 from typing import Optional
@@ -21,7 +22,7 @@ def compute_home_analytics(self, user_id: int, since_iso: Optional[str] = None):
         except Exception:
             since = None
 
-    payload = gather_user_dashboard_metrics(user_id, since)
+    payload = gather_user_dashboard_metrics(user_id=user_id, since=since_iso)
     obj, _ = HomeAnalyticsSnapshot.objects.update_or_create(
         user_id=user_id,
         window_since=since,

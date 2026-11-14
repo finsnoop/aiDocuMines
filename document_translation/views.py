@@ -62,13 +62,6 @@ def health_check(request):
     from django.http import JsonResponse
     return JsonResponse({"status": "ok"}, status=200)
 
-def get_user_from_client_id(client_id):
-    """Retrieves the User associated with a given `client_id` from OAuth2 Application."""
-    try:
-        application = Application.objects.get(client_id=client_id)
-        return application.user
-    except Application.DoesNotExist:
-        return None
 
 
 ### **🔹 Submit Translation**
@@ -98,7 +91,7 @@ class SubmitTranslationAPIView(ClientScopedViewMixin):
             return Response({"error": "Missing required parameters"}, status=status.HTTP_400_BAD_REQUEST)
 
         # ✅ Get user from client_id
-        user = get_user_from_client_id(client_id)
+        user = request.user
         if not user:
             return Response({"error": "Invalid client ID"}, status=status.HTTP_401_UNAUTHORIZED)
 
@@ -164,7 +157,7 @@ class CheckTranslationStatusAPIView(ClientScopedViewMixin):
         self.get_object_by_client(TranslationRun.objects.all(), id=translation_run_id)
 
         # ✅ Fetch translation status asynchronously
-        result = check_translation_status_task.delay(translation_run_id).get()
+        result = check_translation_status_task.apply(args=[translation_run_id]).get()
 
         return Response(result, status=status.HTTP_200_OK if result["status"] == "Completed" else status.HTTP_202_ACCEPTED)
 
@@ -193,7 +186,7 @@ class DownloadTranslatedFileAPIView(ClientScopedViewMixin):
         self.get_object_by_client(File.objects.all(), id=file_id)
 
         # ✅ Fetch translated file path asynchronously
-        result = download_translated_file_task.delay(file_id).get()
+        result = download_translated_file_task.apply(args=[file_id]).get()
 
         if "error" in result:
             return Response(result, status=status.HTTP_404_NOT_FOUND)
@@ -400,7 +393,7 @@ class TranslationClientSummaryView(APIView):
     )
     def get(self, request):
         client_id = request.headers.get("X-Client-ID")
-        user = get_user_from_client_id(client_id)
+        user = request.user
         if not user:
             return Response({"error": "Invalid client ID"}, status=401)
 

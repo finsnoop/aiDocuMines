@@ -12,6 +12,9 @@ class CoreConfig(AppConfig):
         Creates the default Elasticsearch connection using settings
         and loads signals for indexing documents.
         """
+        from core.ai_cache import configure_ai_cache
+        configure_ai_cache()
+
         es_settings = settings.ELASTICSEARCH_DSL.get('default', {})
 
         try:
@@ -36,11 +39,3 @@ class CoreConfig(AppConfig):
             import logging
             logging.getLogger(__name__).warning(f"Bulk handler registration failed: {exc}")
 
-
-'''
-from django.apps import AppConfig
-
-class CoreConfig(AppConfig):
-    default_auto_field = "django.db.models.BigAutoField"
-    name = "core"
-'''

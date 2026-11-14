@@ -1,12 +1,30 @@
+# aiDocuMines API stack.
+#
+# Staying up on a small server:
+#   * every container has a memory cap (mem_limit). When one service runs away, the kernel
+#     stops THAT container, Docker starts it again (restart: unless-stopped), and the other
+#     services are not touched. Without caps the whole server ran out of memory and the
+#     kernel killed containers at random, including the database.
+#   * health checks are cheap and honest; deploy/watchdog.sh (installed as a systemd timer by
+#     deploy/install-watchdog.sh) restarts anything unhealthy or stopped.
+#   * caps and worker counts are tunable in .env (see .env.example, "Capacity").
 services:
   aidocumines_api_layer_database:
-    image: postgres:15
+    build: {context: ., dockerfile: deploy/Dockerfile.postgres}
+    image: aidocumines-postgres-tls:15
     container_name: aidocumines_api_layer_db
     restart: unless-stopped
-    user: postgres
+    mem_limit: ${DB_MEM_LIMIT:-2g}
+    shm_size: 256m
+    stop_grace_period: 1m
+    oom_score_adj: -500        # the database is the last thing the kernel should stop
+    logging: &logging { driver: json-file, options: { max-size: "20m", max-file: "5" } }
     volumes:
       - postgres_data:/var/lib/postgresql/data
-      - ./postgresql.conf:/etc/postgresql/postgresql.conf
+      - ./postgresql.conf:/etc/postgresql/postgresql.conf:ro
+      - ./pg_hba.conf:/etc/postgresql/pg_hba.conf:ro
+      - postgres_tls:/var/lib/postgresql/tls
+      - postgres_ca:/var/lib/postgresql/ca
     env_file:
       - .env
     networks: [captain-overlay-network]
@@ -17,12 +35,32 @@ services:
       retries: 5
     command: postgres -c config_file=/etc/postgresql/postgresql.conf
 
+  # Redis is the task queue and the cache.
+  #   * REDIS_PASSWORD (set it in .env): Redis has no published port, but it sits on a network
+  #     shared with other apps; without a password any of them could read or empty the queue.
+  #   * maxmemory + volatile-lru: cached data and old results (which have an expiry) are
+  #     dropped first under pressure; queued tasks (no expiry) are never dropped silently.
+  #   * the queue is kept on a volume, so it also survives the container being recreated.
   redis:
-    image: redis:alpine
+    image: redis:7-alpine
     container_name: aidocumines_redis
     restart: unless-stopped
-    command: redis-server --appendonly yes --save 60 1 --loglevel warning --protected-mode no
+    mem_limit: ${REDIS_MEM_LIMIT:-1g}
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?Set REDIS_PASSWORD in .env}
+      REDISCLI_AUTH: ${REDIS_PASSWORD:?Set REDIS_PASSWORD in .env}
+    command:
+      - sh
+      - -c
+      - >-
+        exec redis-server --appendonly yes --save 300 10 --loglevel warning --protected-mode no
+        --maxmemory ${REDIS_MAXMEMORY:-768mb} --maxmemory-policy volatile-lru
+        --tcp-keepalive 60 --timeout 0
+        $${REDIS_PASSWORD:+--requirepass "$$REDIS_PASSWORD"}
+    volumes:
+      - redis_data:/data
     networks: [captain-overlay-network]
+    logging: *logging
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 10s
@@ -33,6 +71,10 @@ services:
     image: python:3.11-slim
     container_name: aidocumines_redis_watchdog
     restart: unless-stopped
+    mem_limit: 128m
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?Set REDIS_PASSWORD in .env}
+    logging: *logging
     depends_on:
       redis: { condition: service_healthy }
     command: >
@@ -46,6 +88,8 @@ services:
     image: ollama/ollama:latest          # pin latest or a specific version
     container_name: aidocumines_ollama
     restart: unless-stopped
+    mem_limit: ${OLLAMA_MEM_LIMIT:-4g}
+    logging: *logging
     ports: ["127.0.0.1:11435:11434"]
     environment:
       # bind to localhost unless you *need* LAN/Internet access
@@ -80,6 +124,8 @@ services:
     image: ghcr.io/berriai/litellm:main-stable
     container_name: aidocumines_litellm
     restart: unless-stopped
+    mem_limit: ${LITELLM_MEM_LIMIT:-1g}
+    logging: *logging
     command: ["--config", "/app/config.yaml", "--port", "4000", "--num_workers", "2"]
     ports: ["127.0.0.1:4000:4000"]
     volumes:
@@ -102,9 +148,9 @@ services:
     command: /app/entrypoint.sh
     depends_on:
       aidocumines_api_layer_database: { condition: service_healthy }
-    volumes: [".:/app"]
+    volumes: [".:/app", "postgres_ca:/run/pg-ca:ro"]
     env_file: [".env"]
-    environment: { SERVICE_NAME: db_prepare }
+    environment: { SERVICE_NAME: db_prepare, POSTGRES_SSLMODE: verify-full, POSTGRES_SSLROOTCERT: /run/pg-ca/server.crt }
     networks: [captain-overlay-network]
 
   web:
@@ -112,103 +158,167 @@ services:
     image: aidocumines-app:latest
     container_name: aidocumines_web
     restart: unless-stopped
+    mem_limit: ${WEB_MEM_LIMIT:-3g}
+    stop_grace_period: 40s
+    logging: *logging
     command: /app/entrypoint.sh
     volumes:
       - .:/app
+      - postgres_ca:/run/pg-ca:ro
       - ./media:/app/media
       - ./static:/app/static
     env_file: [".env"]
     environment:
       SERVICE_NAME: web
+      # gunicorn reuses a fixed pool of threads, so connections can be kept (seconds).
+      POSTGRES_CONN_MAX_AGE: "60"
+      POSTGRES_SSLMODE: verify-full
+      POSTGRES_SSLROOTCERT: /run/pg-ca/server.crt
       MILVUS_HOST: aidocumines_milvus
       MILVUS_PORT: 19530
       # Own Redis by container name: on the shared CapRover network "redis" can be another app's.
-      CELERY_BROKER_URL: redis://aidocumines_redis:6379/0
-      CELERY_RESULT_BACKEND: redis://aidocumines_redis:6379/0
-      REDIS_URL: redis://aidocumines_redis:6379/1
+      CELERY_BROKER_URL: redis://:${REDIS_PASSWORD:?Set REDIS_PASSWORD in .env}@aidocumines_redis:6379/0
+      CELERY_RESULT_BACKEND: redis://:${REDIS_PASSWORD:?Set REDIS_PASSWORD in .env}@aidocumines_redis:6379/0
+      REDIS_URL: redis://:${REDIS_PASSWORD:?Set REDIS_PASSWORD in .env}@aidocumines_redis:6379/1
     depends_on:
       db_prepare: { condition: service_completed_successfully }
       redis: { condition: service_healthy }
     networks: [captain-overlay-network]
     healthcheck:
-      test: ["CMD-SHELL", "curl -f http://0.0.0.0:8020/api/v1/health/ || exit 1"]
-      interval: 10s
-      timeout: 5s
-      retries: 3
+      test: ["CMD-SHELL", "curl -fsS -m 8 http://127.0.0.1:8020/api/v1/health/ >/dev/null || exit 1"]
+      interval: 20s
+      timeout: 10s
+      retries: 4
+      start_period: 180s
 
   celery:
     build: { context: ., dockerfile: Dockerfile }
     image: aidocumines-app:latest
     container_name: aidocumines_celery
     restart: unless-stopped
+    mem_limit: ${CELERY_MEM_LIMIT:-6g}
+    stop_grace_period: 2m
+    logging: *logging
     command: /app/entrypoint.sh
-    volumes: [".:/app"]
+    volumes: [".:/app", "postgres_ca:/run/pg-ca:ro"]
     env_file: [".env"]
     environment:
       SERVICE_NAME: celery
+      POSTGRES_SSLMODE: verify-full
+      POSTGRES_SSLROOTCERT: /run/pg-ca/server.crt
+      # Long-running document work only. Short interactive work goes to celery_fast.
+      CELERY_QUEUES: ai_documines
       MILVUS_HOST: aidocumines_milvus
       MILVUS_PORT: 19530
       # Own Redis by container name: on the shared CapRover network "redis" can be another app's.
-      CELERY_BROKER_URL: redis://aidocumines_redis:6379/0
-      CELERY_RESULT_BACKEND: redis://aidocumines_redis:6379/0
-      REDIS_URL: redis://aidocumines_redis:6379/1
+      CELERY_BROKER_URL: redis://:${REDIS_PASSWORD:?Set REDIS_PASSWORD in .env}@aidocumines_redis:6379/0
+      CELERY_RESULT_BACKEND: redis://:${REDIS_PASSWORD:?Set REDIS_PASSWORD in .env}@aidocumines_redis:6379/0
+      REDIS_URL: redis://:${REDIS_PASSWORD:?Set REDIS_PASSWORD in .env}@aidocumines_redis:6379/1
     depends_on:
       db_prepare: { condition: service_completed_successfully }
       redis: { condition: service_healthy }
       milvus: { condition: service_healthy }
     networks: [captain-overlay-network]
     healthcheck:
-      test: ["CMD-SHELL", "celery -A aiDocuMines inspect ping"]
+      test: ["CMD-SHELL", "find /tmp/celery_worker_alive -mmin -2 2>/dev/null | grep -q ."]
       interval: 30s
       timeout: 10s
-      retries: 5
+      retries: 4
+      start_period: 300s
+
+  # Fast lane: emails, sign-in codes, chat answers people are waiting for, file moves.
+  # It has its own worker so it is never stuck behind hours of OCR or translation.
+  celery_fast:
+    build: { context: ., dockerfile: Dockerfile }
+    image: aidocumines-app:latest
+    container_name: aidocumines_celery_fast
+    restart: unless-stopped
+    mem_limit: ${CELERY_FAST_MEM_LIMIT:-3g}
+    stop_grace_period: 1m
+    logging: *logging
+    command: /app/entrypoint.sh
+    volumes: [".:/app", "postgres_ca:/run/pg-ca:ro"]
+    env_file: [".env"]
+    environment:
+      SERVICE_NAME: celery
+      POSTGRES_SSLMODE: verify-full
+      POSTGRES_SSLROOTCERT: /run/pg-ca/server.crt
+      CELERY_QUEUES: ai_documines_fast
+      CELERY_POOL: threads
+      CELERY_CONCURRENCY: ${CELERY_FAST_CONCURRENCY:-8}
+      CELERY_WORKER_NAME: fast
+      MILVUS_HOST: aidocumines_milvus
+      MILVUS_PORT: 19530
+      CELERY_BROKER_URL: redis://:${REDIS_PASSWORD:?Set REDIS_PASSWORD in .env}@aidocumines_redis:6379/0
+      CELERY_RESULT_BACKEND: redis://:${REDIS_PASSWORD:?Set REDIS_PASSWORD in .env}@aidocumines_redis:6379/0
+      REDIS_URL: redis://:${REDIS_PASSWORD:?Set REDIS_PASSWORD in .env}@aidocumines_redis:6379/1
+    depends_on:
+      db_prepare: { condition: service_completed_successfully }
+      redis: { condition: service_healthy }
+    networks: [captain-overlay-network]
+    healthcheck:
+      test: ["CMD-SHELL", "find /tmp/celery_worker_alive -mmin -2 2>/dev/null | grep -q ."]
+      interval: 30s
+      timeout: 10s
+      retries: 4
+      start_period: 300s
 
   celery_beat:
     build: { context: ., dockerfile: Dockerfile }
     image: aidocumines-app:latest
     container_name: aidocumines_celery_beat
     restart: unless-stopped
+    mem_limit: ${BEAT_MEM_LIMIT:-1g}
+    logging: *logging
     command: /app/entrypoint.sh
-    volumes: [".:/app"]
+    volumes: [".:/app", "postgres_ca:/run/pg-ca:ro"]
     env_file: [".env"]
     environment:
       SERVICE_NAME: celery_beat
+      POSTGRES_SSLMODE: verify-full
+      POSTGRES_SSLROOTCERT: /run/pg-ca/server.crt
       MILVUS_HOST: aidocumines_milvus
       MILVUS_PORT: 19530
       # Own Redis by container name: on the shared CapRover network "redis" can be another app's.
-      CELERY_BROKER_URL: redis://aidocumines_redis:6379/0
-      CELERY_RESULT_BACKEND: redis://aidocumines_redis:6379/0
-      REDIS_URL: redis://aidocumines_redis:6379/1
+      CELERY_BROKER_URL: redis://:${REDIS_PASSWORD:?Set REDIS_PASSWORD in .env}@aidocumines_redis:6379/0
+      CELERY_RESULT_BACKEND: redis://:${REDIS_PASSWORD:?Set REDIS_PASSWORD in .env}@aidocumines_redis:6379/0
+      REDIS_URL: redis://:${REDIS_PASSWORD:?Set REDIS_PASSWORD in .env}@aidocumines_redis:6379/1
     depends_on:
       db_prepare: { condition: service_completed_successfully }
       redis: { condition: service_healthy }
       milvus: { condition: service_healthy }
     networks: [captain-overlay-network]
     healthcheck:
-      test: ["CMD-SHELL", "celery -A aiDocuMines inspect ping"]
+      test: ["CMD-SHELL", "pgrep -f 'celery.*beat' >/dev/null"]
       interval: 30s
       timeout: 10s
-      retries: 5
+      retries: 4
+      start_period: 180s
 
   file_monitor:
     build: { context: ., dockerfile: Dockerfile }
     image: aidocumines-app:latest
     container_name: aidocumines_file_monitor
     restart: unless-stopped
+    mem_limit: ${FILE_MONITOR_MEM_LIMIT:-1500m}
+    logging: *logging
     command: /usr/bin/supervisord -c /etc/supervisor/conf.d/supervisord.conf
     volumes:
       - .:/app
+      - postgres_ca:/run/pg-ca:ro
       - ./media:/app/media
       - ./logs/supervisor:/var/log
     env_file: [".env"]
     environment:
       SERVICE_NAME: file_monitor
+      POSTGRES_SSLMODE: verify-full
+      POSTGRES_SSLROOTCERT: /run/pg-ca/server.crt
       MILVUS_HOST: aidocumines_milvus
       MILVUS_PORT: 19530
       # Own Redis by container name: on the shared CapRover network "redis" can be another app's.
-      CELERY_BROKER_URL: redis://aidocumines_redis:6379/0
-      CELERY_RESULT_BACKEND: redis://aidocumines_redis:6379/0
-      REDIS_URL: redis://aidocumines_redis:6379/1
+      CELERY_BROKER_URL: redis://:${REDIS_PASSWORD:?Set REDIS_PASSWORD in .env}@aidocumines_redis:6379/0
+      CELERY_RESULT_BACKEND: redis://:${REDIS_PASSWORD:?Set REDIS_PASSWORD in .env}@aidocumines_redis:6379/0
+      REDIS_URL: redis://:${REDIS_PASSWORD:?Set REDIS_PASSWORD in .env}@aidocumines_redis:6379/1
     depends_on:
       db_prepare: { condition: service_completed_successfully }
     networks: [captain-overlay-network]
@@ -220,6 +330,8 @@ services:
     container_name: aidocumines_milvus
     command: ["milvus", "run", "standalone"]
     restart: unless-stopped
+    mem_limit: ${MILVUS_MEM_LIMIT:-4g}
+    logging: *logging
     environment:
       ETCD_USE_EMBED: "true"
       ETCD_DATA_DIR: /var/lib/milvus/etcd
@@ -241,16 +353,22 @@ services:
     networks: [captain-overlay-network]
 
   elasticsearch:
-    image: docker.elastic.co/elasticsearch/elasticsearch:7.10.0
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.19.25
     container_name: aidocumines_elasticsearch
+    mem_limit: ${ES_MEM_LIMIT:-2g}
+    logging: *logging
     environment:
       - discovery.type=single-node
-      - ELASTIC_PASSWORD=changeme
+      # Fixed heap (half the container cap): without it Elasticsearch sizes itself from the
+      # whole server's memory.
+      - ES_JAVA_OPTS=-Xms${ES_HEAP:-1g} -Xmx${ES_HEAP:-1g}
+      - ELASTIC_PASSWORD=${ELASTICSEARCH_PASSWORD:?Set ELASTICSEARCH_PASSWORD in .env}
+      - xpack.security.enabled=true
     ports: ["127.0.0.1:9200:9200", "127.0.0.1:9300:9300"]
-    volumes: [ "elasticsearch_data:/usr/share/elasticsearch/data" ]
+    volumes: [ "elasticsearch8_data:/usr/share/elasticsearch/data" ]
     networks: [captain-overlay-network]
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:9200/_cluster/health?wait_for_status=yellow&timeout=90s"]
+      test: ["CMD-SHELL", 'curl -fsS -u "elastic:$$ELASTIC_PASSWORD" "http://localhost:9200/_cluster/health?wait_for_status=yellow&timeout=5s" >/dev/null']
       interval: 10s
       retries: 5
     restart: unless-stopped
@@ -262,6 +380,8 @@ services:
     image: postgres:13
     container_name: onlyoffice-db
     restart: unless-stopped
+    mem_limit: 512m
+    logging: *logging
     environment:
       POSTGRES_DB:       ${OO_POSTGRES_DB}
       POSTGRES_USER:     ${OO_POSTGRES_USER}
@@ -280,6 +400,8 @@ services:
     image: onlyoffice/documentserver:latest
     container_name: onlyoffice
     restart: unless-stopped
+    mem_limit: ${ONLYOFFICE_MEM_LIMIT:-3g}
+    logging: *logging
     # Expose if you want public access directly; otherwise omit and reverse-proxy elsewhere.
     ports: ["127.0.0.1:8085:80"]
     environment:
@@ -307,7 +429,11 @@ services:
     networks: [captain-overlay-network]
 
 volumes:
+  postgres_tls:
+  postgres_ca:
+  elasticsearch8_data:
   postgres_data:
+  redis_data:
   ollama-data:
   milvus-data:
   elasticsearch_data:
@@ -319,3 +445,5 @@ networks:
   captain-overlay-network:
     external: true
 
+
+# Keep the old 7.x data volume for rollback; reindex into this new 8.x volume.

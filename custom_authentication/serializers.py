@@ -35,7 +35,12 @@ class SignupSerializer(serializers.ModelSerializer):
         password = validated_data.pop("password")
         organisation_name = validated_data.pop("organisation")
 
-        client, _ = Client.objects.get_or_create(name=organisation_name)
+        # An existing organisation is joined by invitation only, never by typing its name.
+        from .models import Client
+        if Client.objects.filter(name__iexact=str(organisation_name).strip()).exists():
+            raise serializers.ValidationError(
+                {"organisation": "This organisation is already registered. Ask one of its administrators to invite you."})
+        client = Client.objects.create(name=str(organisation_name).strip())
 
         user = User.objects.create_user(client=client, **validated_data)
         user.set_password(password)

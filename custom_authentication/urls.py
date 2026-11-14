@@ -1,3 +1,4 @@
+from .browser_auth import BrowserAuthorizeView
 from django.urls import path
 from .views import (
     SignupView, LoginView, LogoutView, PasswordResetRequestView, PasswordResetView,
@@ -7,7 +8,6 @@ from .views import (
     PromoteUserToAdminView, DemoteUserFromAdminView, UserActivityLogView, UserOwnActivityLogView,
     CreateAdminUserView, CreateUserView,
     WhoAmIView, LogoutAllView, RetrieveUserView, RetrieveClientSecretsView, RetrieveClientView,
-    SupersuperuserResetView, SupersuperuserCleanDatabaseView,
     TwoFASetupView, TwoFAVerifyView, TwoFADisableView, TwoFAStatusView, TwoFARotateSecretView,
     DeleteUserView, AdminAuditLogView, ListClientsView, CreateClientView, UpdateClientView,
     # Role Management
@@ -19,6 +19,7 @@ from .views_activity import MyActivityView
 from . import views_admin
 
 urlpatterns = [
+    path("browser/authorize/", BrowserAuthorizeView.as_view(), name="browser_authorize"),
     # 🔐 AUTHENTICATION ENDPOINTS
     path("signup/", SignupView.as_view(), name="auth_signup"),
     path("login/", LoginView.as_view(), name="auth_login"),
@@ -92,10 +93,8 @@ urlpatterns = [
 
     # 👑 SUPERUSER / ADMIN BOOTSTRAP
     path("admin/initialize/", CreateAdminUserView.as_view(), name="admin_initialize_first_user"),
-    path("admin/supersuperuser-reset/", SupersuperuserResetView.as_view(), name="admin_supersuperuser_reset"),
     
     # SUPERSUPER USER DB CLEANING 
-    path("admin/supersuperuser-clean-db/", SupersuperuserCleanDatabaseView.as_view(), name="admin_supersuperuser_clean_db"),
 
     # 2FA
     path("2fa/setup/", TwoFASetupView.as_view(), name="2fa_setup"),

@@ -75,16 +75,19 @@ if [ "${SERVICE_NAME:-}" = "db_prepare" ]; then
 
     echo "👤 Ensuring superuser exists..."
     python manage.py shell <<EOF
-import json
+import json, os
 from django.contrib.auth import get_user_model
+from django.contrib.auth.models import Group
 from oauth2_provider.models import Application
 from oauth2_provider.generators import generate_client_secret
 from custom_authentication.models import Client
 
 User = get_user_model()
-email = "$DJANGO_SUPERUSER_EMAIL"
-password = "$DJANGO_SUPERUSER_PASSWORD"
-outfile = "/app/logs/.superuser_secrets.json"
+email = os.environ.get("DJANGO_SUPERUSER_EMAIL", "").strip().lower()
+password = os.environ.get("DJANGO_SUPERUSER_PASSWORD", "")
+if not email or not password:
+    print("DJANGO_SUPERUSER_EMAIL / DJANGO_SUPERUSER_PASSWORD not set: skipping superuser bootstrap")
+    raise SystemExit(0)
 
 client, _ = Client.objects.get_or_create(
     name="AI DocuMines",
@@ -104,22 +107,20 @@ else:
 user.is_2fa_enabled = True
 user.two_factor_enabled = True
 user.save()
-secret = generate_client_secret()
-app = Application.objects.create(
-    user=user,
-    client_type=Application.CLIENT_CONFIDENTIAL,
-    authorization_grant_type=Application.GRANT_PASSWORD,
-    name="System Admin",
-    client_secret=secret
-)
-with open(outfile, "w") as f:
-    json.dump({
-        "email": email,
-        "password": password,
-        "client_id": app.client_id,
-        "client_secret": secret
-    }, f, indent=2)
-print("✅ Superuser created")
+# One "System Admin" application, created once. (Every start used to add another one and
+# rewrite the secrets file, including the superuser's password in clear text.)
+if not Application.objects.filter(user=user, name="System Admin").exists():
+    secret = generate_client_secret()
+    app = Application.objects.create(
+        user=user,
+        client_type=Application.CLIENT_CONFIDENTIAL,
+        authorization_grant_type=Application.GRANT_PASSWORD,
+        name="System Admin",
+        client_secret=secret
+    )
+    print("✅ Superuser application created")
+else:
+    print("✅ Superuser present")
 EOF
 
     touch /app/logs/migrations_complete
@@ -150,19 +151,42 @@ else:
     print(f'✅ Files: {File.objects.count()}, VectorChunks: {VectorChunk.objects.count()} — no indexing needed.')
 " 2>&1 | grep -v -E "(UserWarning|PyMilvusDeprecation|pk_resources|RequestDeprecat|tika|nlp_engine|Created NLP|registry|Loaded recognizer|Recognizer not|spaCy|140 object)" | grep -v "^\s*$" | tail -5
 
-    echo "🌍 Starting Gunicorn..."
+    # Several workers, each with threads: one slow request (a large upload, a chat answer,
+    # an email that is slow to send) no longer blocks sign-in and everything else. Workers
+    # are replaced after a number of requests so memory does not creep up.
+    echo "🌍 Starting Gunicorn (${WEB_CONCURRENCY:-2} workers x ${WEB_THREADS:-8} threads)..."
     exec gunicorn aiDocuMines.wsgi:application \
         --bind 0.0.0.0:8020 \
-        --timeout 120 \
-        --log-level debug
+        --worker-class gthread \
+        --workers "${WEB_CONCURRENCY:-2}" \
+        --threads "${WEB_THREADS:-8}" \
+        --timeout "${WEB_TIMEOUT:-120}" \
+        --graceful-timeout 30 \
+        --keep-alive 5 \
+        --max-requests "${WEB_MAX_REQUESTS:-1000}" \
+        --max-requests-jitter 100 \
+        --worker-tmp-dir /dev/shm \
+        --access-logfile - \
+        --log-level "${WEB_LOG_LEVEL:-info}"
 fi
 
 ########################################
 # CELERY
 ########################################
 if [ "${SERVICE_NAME:-}" = "celery" ]; then
-    echo "🚀 Starting Celery worker..."
-    exec celery -A aiDocuMines worker --loglevel=info --concurrency=4
+    # CELERY_QUEUES: which lanes this worker serves (default: both, so a single worker
+    # still does everything). CELERY_POOL=threads suits the fast lane (short, I/O-bound).
+    QUEUES="${CELERY_QUEUES:-ai_documines,ai_documines_fast}"
+    POOL="${CELERY_POOL:-prefork}"
+    echo "🚀 Starting Celery worker (queues=${QUEUES} pool=${POOL} concurrency=${CELERY_CONCURRENCY:-2})..."
+    exec celery -A aiDocuMines worker \
+        --loglevel="${CELERY_LOG_LEVEL:-info}" \
+        --queues="${QUEUES}" \
+        --pool="${POOL}" \
+        --concurrency="${CELERY_CONCURRENCY:-2}" \
+        --hostname="${CELERY_WORKER_NAME:-worker}@%h" \
+        --without-gossip --without-mingle \
+        -O fair
 fi
 
 if [ "${SERVICE_NAME:-}" = "celery_beat" ]; then

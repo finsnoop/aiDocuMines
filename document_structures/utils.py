@@ -22,7 +22,9 @@ logger = logging.getLogger(__name__)
 logger = logging.getLogger(__name__)
 
 # Load once for efficiency if embeddings enabled
-EMBEDDING_MODEL = SentenceTransformer("all-MiniLM-L6-v2")
+from django.utils.functional import SimpleLazyObject
+from document_search.utils import _get_model
+EMBEDDING_MODEL = SimpleLazyObject(_get_model)
 
 
 def safe_metadata_to_dict(obj):
@@ -229,43 +231,6 @@ def aggregate_comparison_results(results):
 
 
 
-'''
-def aggregate_comparison_results(results):
-    lexical_scores = []
-    semantic_scores = []
-    deviations = []
-
-    for r in results:
-        if "error" in r:
-            deviations.append({
-                "pair_id": r["pair_id"],
-                "error": r["error"]
-            })
-            continue
-
-        if r["lexical_similarity"] < 0.8 or r["semantic_similarity"] < 0.8:
-            deviations.append({
-                "pair_id": r["pair_id"],
-                "element_type": r["element_type"],
-                "text1": r["text1"][:250] if r["text1"] else None,
-                "text2": r["text2"][:250] if r["text2"] else None,
-                "lexical_similarity": r["lexical_similarity"],
-                "semantic_similarity": r["semantic_similarity"],
-                "note": r.get("note"),
-            })
-
-        lexical_scores.append(r["lexical_similarity"])
-        semantic_scores.append(r["semantic_similarity"])
-
-    avg_lexical = round(float(np.mean(lexical_scores)), 4) if lexical_scores else 0.0
-    avg_semantic = round(float(np.mean(semantic_scores)), 4) if semantic_scores else 0.0
-
-    return {
-        "avg_lexical": avg_lexical,
-        "avg_semantic": avg_semantic,
-        "deviations": deviations,
-    }
-'''
 
 
 @transaction.atomic

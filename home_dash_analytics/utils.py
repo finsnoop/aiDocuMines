@@ -37,6 +37,7 @@ from platform_data_insights.models import UserInsights
 from system_settings.models import SystemSettings
 
 from django.contrib.admin.models import LogEntry as AdminLogEntry
+from core.access import accessible_files, tenant_id
 
 
 # ── Constants ─────────────────────────────────────────────────────────────────
@@ -44,15 +45,6 @@ DEFAULT_WINDOW_DAYS = 30
 
 
 # ── Security helper ───────────────────────────────────────────────────────────
-def get_user_from_client_id(client_id: str):
-    """Resolve OAuth client_id → owner user."""
-    try:
-        app = Application.objects.get(client_id=client_id)
-        return app.user
-    except Application.DoesNotExist:
-        return None
-
-
 # ── Time helpers ──────────────────────────────────────────────────────────────
 def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
@@ -125,7 +117,7 @@ def section_user(*, user: CustomUser, since: Optional[str] = None, **_):
 
 
 def _file_base_qs(user: CustomUser, project_id: Optional[str], service_id: Optional[str]):
-    qs = File.objects.filter(user_id=user.id)
+    qs = accessible_files(user, 'view', File.objects.filter(user__client_id=tenant_id(user)))
     if project_id:
         qs = qs.filter(project_id=project_id)
     if service_id:
@@ -141,7 +133,7 @@ def section_files(*, user: CustomUser, project_id: Optional[str] = None, service
         "total": files_qs.count(),
         "new_in_window": files_qs.filter(created_at__gte=since_dt).count() if since_dt else None,
         "storage_bytes": _sum_bigint(files_qs, "file_size"),
-        "versions_total": FileVersion.objects.filter(file__user_id=user.id).count(),
+        "versions_total": FileVersion.objects.filter(file__in=files_qs).count(),
         "doc_type_distribution": list(
             files_qs.values("document_type").annotate(count=Count("id")).order_by("-count")[:15]
         ),
@@ -618,7 +610,7 @@ def build_timeseries(user: CustomUser, range: Optional[str] = None,
 def build_top_files(user: CustomUser, limit: int = 10):
     """Top files by size (fallback to latest if size ties)."""
     return list(
-        File.objects.filter(user_id=user.id)
+        _file_base_qs(user, None, None)
         .values("id", "filename", "file_size", "created_at")
         .order_by("-file_size", "-created_at")[: int(limit)]
     )
@@ -636,6 +628,7 @@ def build_top_searches(user: CustomUser, limit: int = 10):
 from typing import Optional, Dict, Any  # (redundant if already imported above)
 
 def gather_user_dashboard_metrics(
+    *,
     user: Optional[CustomUser] = None,
     user_id: Optional[int] = None,
     client_id: Optional[str] = None,
@@ -645,7 +638,7 @@ def gather_user_dashboard_metrics(
     **_,
 ) -> Dict[str, Any]:
     """
-    Resolve the user (by object, user_id, or OAuth client_id) and build the
+    Resolve the user from a trusted object or worker-supplied user_id and build the
     full dashboard metrics payload. This wrapper exists so Celery can import
     a single symbol without pulling in the Celery app (avoids circulars).
     """
@@ -653,8 +646,6 @@ def gather_user_dashboard_metrics(
     if user is None:
         if user_id is not None:
             user = CustomUser.objects.filter(id=user_id).first()
-        elif client_id:
-            user = get_user_from_client_id(client_id)
         else:
             return {
                 "error": "MISSING_USER",

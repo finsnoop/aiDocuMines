@@ -8,27 +8,16 @@ from django.template.loader import render_to_string
 from django.core.mail import send_mail, EmailMultiAlternatives
 
 @shared_task
-def send_signup_email_task(user_id, temporary_password, client_id, client_secret):
+def send_signup_email_task(user_id):
     """Celery task to send a signup confirmation email asynchronously."""
     try:
         user = CustomUser.objects.get(id=user_id)
-        send_signup_email(user, temporary_password, client_id, client_secret)
+        send_signup_email(user)
         return f"Signup email sent to {user.email}"
     except CustomUser.DoesNotExist:
         return f"User with ID {user_id} not found"
 
 
-'''
-@shared_task
-def send_signup_email_task(user_id, temporary_password):
-    """Celery task to send a signup confirmation email asynchronously."""
-    try:
-        user = CustomUser.objects.get(id=user_id)
-        send_signup_email(user, temporary_password)
-        return f"Signup email sent to {user.email}"
-    except CustomUser.DoesNotExist:
-        return f"User with ID {user_id} not found"
-'''
 
 @shared_task
 def send_password_reset_email_task(user_id, token_str):
@@ -55,37 +44,12 @@ def cleanup_expired_tokens():
 
 
 @shared_task
-def send_admin_password_reset_email_task(user_id, new_password):
-    """Send email to notify user that admin reset their password."""
+def send_admin_password_reset_email_task(user_id):
     try:
         user = CustomUser.objects.get(id=user_id)
-        subject = "Your aiDocuMines Password Has Been Reset"
-        from_email = EMAIL_FROM
-        to_email = [user.email]
-
-        context = {
-            "user": user,
-            "new_password": new_password
-        }
-
-        html_content = render_to_string("email/admin_password_reset_email.html", context)
-        text_content = (
-            f"Dear {user.email},\n\n"
-            f"Your password has been reset by an administrator.\n\n"
-            f"New Password: {new_password}\n\n"
-            f"Please log in and change it as soon as possible.\n\n"
-            f"If you did not request this, contact support.\n\n"
-            f"Best regards,\n"
-            f"aiDocuMines Support Team"
-        )
-
-        msg = EmailMultiAlternatives(subject, text_content, from_email, to_email)
-        msg.attach_alternative(html_content, "text/html")
-        msg.send(fail_silently=False)
-
-        return f"Admin password reset email sent to {user.email}"
+        send_signup_email(user, subject="Set a new aiDocuMines password")
     except CustomUser.DoesNotExist:
-        return f"User with ID {user_id} not found"
+        return "User no longer exists"
 
 
 @shared_task
@@ -120,3 +84,11 @@ def send_password_reset_success_email_task(user_email):
     msg.send(fail_silently=False)
     return f"Password reset confirmation email sent to {user_email}"
 
+
+
+@shared_task(time_limit=30, soft_time_limit=20)
+def send_signin_code_task(user_id, code):
+    from django.conf import settings
+    user = CustomUser.objects.get(pk=user_id)
+    send_mail("Your Verification Code", f"Your verification code is: {code}. It expires in 5 minutes.",
+              settings.DEFAULT_FROM_EMAIL, [user.email], fail_silently=False)

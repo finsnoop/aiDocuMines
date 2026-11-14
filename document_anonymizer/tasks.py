@@ -21,7 +21,8 @@ User = get_user_model()
 
 logger = logging.getLogger(__name__)
 # service = AnonymizationService()
-service = get_shared_anonymization_service() 
+from django.utils.functional import SimpleLazyObject
+service = SimpleLazyObject(get_shared_anonymization_service)
 
 @shared_task
 def anonymize_document_task(file_id, file_type="plain", run_id=None):
@@ -390,6 +391,7 @@ def compute_risk_score_task(file_id):
 
 @shared_task
 def compute_anonymization_stats_task(
+    user_id,
     client_name=None,
     project_id=None,
     service_id=None,
@@ -399,6 +401,7 @@ def compute_anonymization_stats_task(
     logger.info(f"📊 Computing anonymization stats...")
 
     result = compute_global_anonymization_stats(
+        user_id=user_id,
         client_name=client_name,
         project_id=project_id,
         service_id=service_id,

@@ -88,10 +88,6 @@ urlpatterns = [
     # Platform Data Insights
     path("api/v1/insights/", include("platform_data_insights.urls")),
 
-    # Swagger API Documentation URLs
-    re_path(r"^api/v1/swagger(?P<format>\.json|\.yaml)$", schema_view.without_ui(cache_timeout=0), name="schema-json"),
-    path("api/v1/swagger/", schema_view.with_ui("swagger", cache_timeout=0), name="schema-swagger-ui"),
-    path("api/v1/redoc/", schema_view.with_ui("redoc", cache_timeout=0), name="schema-redoc"),
 
     # 🔥 Add this line FIRST
     path("o/.well-known/openid-configuration", CustomOIDCMetadataView.as_view(), name="custom-oidc-metadata"),
@@ -139,6 +135,15 @@ urlpatterns = [
     path('api/v1/versioning/', include('document_versioning.urls')),
 
 ]
+
+# Swagger / ReDoc list every endpoint and parameter of the platform. They are served only
+# when ENABLE_API_DOCS is on (default: development only).
+if getattr(settings, "ENABLE_API_DOCS", False):
+    urlpatterns += [
+        re_path(r"^api/v1/swagger(?P<format>\.json|\.yaml)$", schema_view.without_ui(cache_timeout=0), name="schema-json"),
+        path("api/v1/swagger/", schema_view.with_ui("swagger", cache_timeout=0), name="schema-swagger-ui"),
+        path("api/v1/redoc/", schema_view.with_ui("redoc", cache_timeout=0), name="schema-redoc"),
+    ]
 
 # Serve static files for Swagger UI
 urlpatterns += staticfiles_urlpatterns()

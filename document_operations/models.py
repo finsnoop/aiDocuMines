@@ -72,29 +72,6 @@ class FileVersion(models.Model):
     def __str__(self):
         return f"{self.file.filename} - v{self.version_number}"
 
-'''
-class FileAuditLog(models.Model):
-    ACTION_CHOICES = [
-        ('created', 'Created'),
-        ('updated', 'Updated'),
-        ('deleted', 'Deleted'),
-        ('renamed', 'Renamed'),
-        ('downloaded', 'Downloaded'),
-        ('shared', 'Shared'),
-        ('restored', 'Restored'),
-    ]
-
-    file = models.ForeignKey(File, on_delete=models.CASCADE, related_name='audit_logs')
-    user = models.ForeignKey(User, on_delete=models.SET_NULL, null=True)
-    action = models.CharField(max_length=50, choices=ACTION_CHOICES)
-    timestamp = models.DateTimeField(auto_now_add=True)
-    notes = models.TextField(blank=True, null=True)
-    # ✅ Add this field
-    extra = models.JSONField(null=True, blank=True)
-
-    def __str__(self):
-        return f"{self.user.email if self.user else 'System'} - {self.file.filename} - {self.action} at {self.timestamp}"
-'''
 
 class FileAuditLog(models.Model):
     ACTION_CHOICES = [
@@ -126,28 +103,6 @@ class FileAuditLog(models.Model):
         return f"{self.user.email if self.user else 'System'} - {self.file.filename} - {self.action} at {self.timestamp}"
 
 
-'''
-class FileAccessEntry(models.Model):
-    """
-    Granular access entry: maps a user to a FileFolderLink with a specific access level.
-    Useful for distinguishing 'read' vs 'write' vs 'owner' permissions.
-    """
-    file_link = models.ForeignKey(FileFolderLink, on_delete=models.CASCADE, related_name="access_entries")
-    user = models.ForeignKey(User, on_delete=models.CASCADE)
-    access_level = models.CharField(max_length=10, choices=[
-        ("read", "Read"),
-        ("write", "Write"),
-        ("owner", "Owner"),
-    ])
-    granted_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, related_name="access_grants")
-    granted_at = models.DateTimeField(auto_now_add=True)
-
-    class Meta:
-        unique_together = ("file_link", "user")
-
-    def __str__(self):
-        return f"{self.user.email} -> {self.file_link.file.filename} [{self.access_level}]"
-'''
 
 
 class FileAccessEntry(models.Model):

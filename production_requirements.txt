@@ -9,7 +9,7 @@ drf-spectacular
 
 # Authentication
 oauthlib
-requests
+requests>=2.33.0
 requests-oauthlib
 jwcrypto
 
@@ -27,7 +27,6 @@ PyMySQL
 alembic
 
 # File Handling and Processing
-PyPDF2
 pymupdf
 ocrmypdf
 pytesseract
@@ -37,7 +36,7 @@ python-docx
 python-pptx
 XlsxWriter
 openpyxl
-pdfservices-sdk
+# Adobe SDK is optional and pins vulnerable requests; use the bundled Pandoc fallback.
 pikepdf
 python-magic
 
@@ -237,7 +236,7 @@ python-dotenv
 pytz
 PyYAML
 regex
-requests
+requests>=2.33.0
 safetensors
 scikit-learn
 scipy
@@ -268,9 +267,9 @@ markdown
 rich
 fonttools
 
-elasticsearch==7.17.12
+elasticsearch==7.17.13
 elasticsearch-dsl==7.4.1
-urllib3==1.26.20
+urllib3>=2.8.0
 
 
 
@@ -278,3 +277,9 @@ tika
 striprtf
 extract-msg
 python-pptx
+
+# Required by INSTALLED_APPS; previously missing from production installs.
+django-elasticsearch-dsl==7.4
+
+# PDF partitioning imports pi_heif and pdfplumber at runtime.
+unstructured[pdf]

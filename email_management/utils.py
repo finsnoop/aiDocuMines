@@ -56,17 +56,6 @@ def render_template(tpl_obj, ctx: dict[str, object]):
 
 
 
-'''
-def render_template(template: EmailTemplate, context: dict) -> Tuple[str, str, str]:
-    """
-    Render subject/text/html with Django template engine.
-    """
-    ctx = Context(context or {})
-    subject = Template(template.subject_template).render(ctx).strip()
-    body_text = Template(template.body_text_template or "").render(ctx)
-    body_html = Template(template.body_html_template or "").render(ctx)
-    return subject, body_text, body_html
-'''
 
 def _default_from() -> str:
     return getattr(settings, "DEFAULT_FROM_EMAIL", "no-reply@localhost")

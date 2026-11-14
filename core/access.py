@@ -485,3 +485,76 @@ def scope_by_owner(user, queryset, owner_field: str = "user"):
     if is_tenant_admin(user) and tenant_id(user) is not None:
         q |= Q(**{f"{owner_field}__client_id": tenant_id(user)})
     return queryset.filter(q)
+
+
+# ---------------------------------------------------------------------------
+# Folders and file links (document_operations)
+# ---------------------------------------------------------------------------
+
+def can_access_folder(user, folder, action: str = "view") -> bool:
+    """
+    Folders belong to one person. The owner, an admin of the owner's organisation and
+    platform superusers may act on them. Other colleagues may only *view* a folder they
+    were explicitly granted.
+    """
+    if folder is None or not _is_authenticated(user):
+        return False
+    if is_platform_superuser(user) or folder.user_id == user.id:
+        return True
+    tid = tenant_id(user)
+    if tid is None or getattr(folder.user, "client_id", None) != tid:
+        return False  # never across organisations
+    if is_tenant_admin(user):
+        return True
+    if action == "view":
+        from document_operations.models import EffectiveAccess
+        return EffectiveAccess.objects.filter(user=user, folder=folder, can_download=True).exists()
+    return False
+
+
+def get_folder_for_user(user, folder_id, action: str = "view"):
+    """Fetch a Folder the user may act on, or raise Http404 (never 403: ids must not be probeable)."""
+    from document_operations.models import Folder
+
+    try:
+        folder = Folder.objects.select_related("user").get(pk=folder_id)
+    except Exception as exc:
+        if exc.__class__.__name__ in ("DoesNotExist", "ValueError", "ValidationError", "TypeError"):
+            raise Http404("Folder not found.")
+        raise
+    if not can_access_folder(user, folder, action):
+        raise Http404("Folder not found.")
+    return folder
+
+
+def get_file_link_for_user(user, link_id, action: str = "view"):
+    """Fetch a FileFolderLink whose file the user may perform `action` on, or raise Http404."""
+    from document_operations.models import FileFolderLink
+
+    try:
+        link = FileFolderLink.objects.select_related("file", "file__user", "folder").get(pk=link_id)
+    except Exception as exc:
+        if exc.__class__.__name__ in ("DoesNotExist", "ValueError", "ValidationError", "TypeError"):
+            raise Http404("File not found.")
+        raise
+    if not can_access_file(user, link.file, action):
+        raise Http404("File not found.")
+    return link
+
+
+def get_file_links_for_user(user, link_ids: Iterable, action: str = "view"):
+    """All-or-nothing variant for bulk operations: one inaccessible id fails the whole request."""
+    ids = list(dict.fromkeys(link_ids or []))
+    return [get_file_link_for_user(user, lid, action) for lid in ids]
+
+
+def safe_filename(name) -> str:
+    """A single path component: no directories, no traversal, no control characters."""
+    import os
+    import re
+
+    name = os.path.basename(str(name or "").replace("\\", "/")).strip()
+    name = re.sub(r"[\x00-\x1f]", "", name)
+    if name in ("", ".", ".."):
+        raise ValueError("Invalid name.")
+    return name[:255]

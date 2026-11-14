@@ -195,13 +195,8 @@ class VectorChunkListView(generics.ListAPIView):
     permission_classes = [HasPermission('search.advanced')]
 
     def get_queryset(self):
-        user = self.request.user
-        qs = VectorChunk.objects.select_related("file")
-        if user.is_superuser:
-            return qs
-        if hasattr(user, "client") and user.client:
-            return qs.filter(file__user__client=user.client)
-        return qs.filter(file__user=user)
+        # Chunks hold document text: only for files the caller can open (not the whole organisation).
+        return scope_by_file(self.request.user, VectorChunk.objects.select_related("file"), "file")
 
 
 class TriggerVectorIndexingView(APIView):
@@ -247,6 +242,9 @@ class BulkReindexMissingView(APIView):
     permission_classes = [HasPermission('search.advanced')]
 
     def post(self, request):
+        from core.access import is_platform_superuser
+        if not is_platform_superuser(request.user):
+            return Response({"error": "Only a platform administrator can rebuild the shared search index."}, status=403)
         task = bulk_reindex.delay()
         cache.set(f"task_owner:{task.id}", request.user.id, timeout=3600)
         return Response(

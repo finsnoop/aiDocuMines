@@ -36,12 +36,6 @@ run_1_param = openapi.Parameter("run_1", openapi.IN_QUERY, type=openapi.TYPE_STR
 run_2_param = openapi.Parameter("run_2", openapi.IN_QUERY, type=openapi.TYPE_STRING, required=True, description="UUID of second DocumentStructureRun")
 
 
-def get_user_from_client_id(client_id):
-    try:
-        application = Application.objects.get(client_id=client_id)
-        return application.user
-    except Application.DoesNotExist:
-        return None
 
 
 class SubmitDocumentPartitionAPIView(APIView):
@@ -77,7 +71,7 @@ class SubmitDocumentPartitionAPIView(APIView):
         if not all([client_id, client_secret, file_id]):
             return Response({"error": "Missing required parameters"}, status=status.HTTP_400_BAD_REQUEST)
 
-        user = get_user_from_client_id(client_id)
+        user = request.user
         if not user:
             return Response({"error": "Invalid client ID"}, status=status.HTTP_403_FORBIDDEN)
 
@@ -157,7 +151,7 @@ class DocumentStructureRunStatusAPIView(APIView):
         if not all([client_id, client_secret, ds_run_id]):
             return Response({"error": "Missing required parameters"}, status=status.HTTP_400_BAD_REQUEST)
 
-        user = get_user_from_client_id(client_id)
+        user = request.user
         if not user:
             return Response({"error": "Invalid client ID"}, status=status.HTTP_403_FORBIDDEN)
 
@@ -201,7 +195,7 @@ class SubmitDocumentComparisonAPIView(APIView):
         if not all([client_id, client_secret, run_1_id, run_2_id]):
             return Response({"error": "Missing required parameters"}, status=status.HTTP_400_BAD_REQUEST)
 
-        user = get_user_from_client_id(client_id)
+        user = request.user
         if not user:
             return Response({"error": "Invalid client ID"}, status=status.HTTP_403_FORBIDDEN)
 
@@ -263,7 +257,7 @@ class DocumentComparisonStatusAPIView(APIView):
         if not all([client_id, client_secret, comparison_id]):
             return Response({"error": "Missing required parameters"}, status=status.HTTP_400_BAD_REQUEST)
 
-        user = get_user_from_client_id(client_id)
+        user = request.user
         if not user:
             return Response({"error": "Invalid client ID"}, status=status.HTTP_403_FORBIDDEN)
 

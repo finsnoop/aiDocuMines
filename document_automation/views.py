@@ -58,12 +58,6 @@ def health_check(request):
     return JsonResponse({"status": "ok"}, status=200)
 
 
-def get_user_from_client_id(client_id):
-    try:
-        application = Application.objects.get(client_id=client_id)
-        return application.user
-    except Application.DoesNotExist:
-        return None
 
 
 class AutomationTemplateListCreateView(generics.ListCreateAPIView):
@@ -133,7 +127,7 @@ class SubmitAutomationAPIView(APIView):
         if not all([client_id, client_secret, template_id]):
             return Response({"error": "Missing required parameters"}, status=status.HTTP_400_BAD_REQUEST)
 
-        user = get_user_from_client_id(client_id)
+        user = request.user
         if not user:
             return Response({"error": "Invalid client ID"}, status=status.HTTP_401_UNAUTHORIZED)
 
@@ -191,7 +185,8 @@ class CheckAutomationStatusAPIView(APIView):
         if not run_id:
             return Response({"error": "Missing `run_id` parameter"}, status=status.HTTP_400_BAD_REQUEST)
 
-        automation_run = get_object_or_404(AutomationRun, id=run_id)
+        from core.access import get_scoped_or_404
+        automation_run = get_scoped_or_404(request.user, AutomationRun, "template__file", id=run_id)
 
         result_data = {
             "run_id": str(automation_run.id),
@@ -237,7 +232,10 @@ class DownloadAutomationResultAPIView(APIView):
 
 
 class ClauseCategoryListCreateView(generics.ListCreateAPIView):
-    queryset = ClauseCategory.objects.all()
+    queryset = ClauseCategory.objects.none()
+
+    def perform_create(self, serializer):
+        serializer.save(client_name=self.request.user.username or self.request.user.email)
     serializer_class = ClauseCategorySerializer
     authentication_classes = [OAuth2Authentication]
     permission_classes = [TokenHasReadWriteScope]
@@ -259,7 +257,8 @@ class ClauseCategoryListCreateView(generics.ListCreateAPIView):
         return super().post(request, *args, **kwargs)
 
     def get_queryset(self):
-        qs = super().get_queryset()
+        from core.access import client_name_q
+        qs = ClauseCategory.objects.filter(client_name_q(self.request.user))
         project_id = self.request.query_params.get('project_id')
         if project_id:
             qs = qs.filter(project_id=project_id)
@@ -267,7 +266,15 @@ class ClauseCategoryListCreateView(generics.ListCreateAPIView):
 
 
 class ClauseListCreateView(generics.ListCreateAPIView):
-    queryset = Clause.objects.all()
+    queryset = Clause.objects.none()
+
+    def perform_create(self, serializer):
+        from core.access import client_name_q
+        category = serializer.validated_data.get("category")
+        if category is not None and not ClauseCategory.objects.filter(
+                pk=category.pk).filter(client_name_q(self.request.user)).exists():
+            raise PermissionDenied("Category not found.")
+        serializer.save(client_name=self.request.user.username or self.request.user.email)
     serializer_class = ClauseSerializer
     authentication_classes = [OAuth2Authentication]
     permission_classes = [TokenHasReadWriteScope]
@@ -289,7 +296,8 @@ class ClauseListCreateView(generics.ListCreateAPIView):
         return super().post(request, *args, **kwargs)
 
     def get_queryset(self):
-        qs = super().get_queryset()
+        from core.access import client_name_q
+        qs = Clause.objects.filter(client_name_q(self.request.user))
         category_id = self.request.query_params.get('category')
         project_id = self.request.query_params.get('project_id')
         service_id = self.request.query_params.get('service_id')
@@ -303,7 +311,11 @@ class ClauseListCreateView(generics.ListCreateAPIView):
 
 
 class ClauseDetailView(generics.RetrieveUpdateDestroyAPIView):
-    queryset = Clause.objects.all()
+    queryset = Clause.objects.none()
+
+    def get_queryset(self):
+        from core.access import client_name_q
+        return Clause.objects.filter(client_name_q(self.request.user))
     serializer_class = ClauseSerializer
     authentication_classes = [OAuth2Authentication]
     permission_classes = [TokenHasReadWriteScope]
@@ -348,7 +360,8 @@ class TemplateFieldExtractView(APIView):
         if not template_id:
             return Response({"error": "Missing `template_id` parameter"}, status=status.HTTP_400_BAD_REQUEST)
 
-        template = get_object_or_404(AutomationTemplate, id=template_id)
+        from core.access import get_scoped_or_404
+        template = get_scoped_or_404(request.user, AutomationTemplate, "file", id=template_id)
         fields = TemplateField.objects.filter(template=template).order_by('order')
         serializer = TemplateFieldSerializer(fields, many=True)
 
@@ -381,7 +394,7 @@ class BulkSubmitAutomationAPIView(APIView):
         if not isinstance(bulk_data, list) or len(bulk_data) == 0:
             return Response({"error": "`bulk_data` must be a non-empty array"}, status=status.HTTP_400_BAD_REQUEST)
 
-        user = get_user_from_client_id(client_id)
+        user = request.user
         if not user:
             return Response({"error": "Invalid client ID"}, status=status.HTTP_401_UNAUTHORIZED)
 

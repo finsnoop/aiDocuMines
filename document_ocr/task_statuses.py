@@ -40,13 +40,6 @@ run_id_param = openapi.Parameter(
     description="Unique `run_id` to track OCR."
 )
 
-def get_user_from_client_id(client_id):
-    """Retrieves the User associated with a given `client_id` from OAuth2 Application."""
-    try:
-        application = Application.objects.get(client_id=client_id)
-        return application.user
-    except Application.DoesNotExist:
-        return None
 
 class OCRTaskStatusView(APIView):
     """
@@ -74,7 +67,7 @@ class OCRTaskStatusView(APIView):
             return Response({"error": "Missing authentication parameters"}, status=400)
 
         # ✅ Validate client ID and retrieve user
-        user = get_user_from_client_id(client_id)
+        user = request.user
         if not user:
             return Response({"error": "Invalid client ID"}, status=403)
 
@@ -140,7 +133,8 @@ class OCRFileDownloadView(APIView):
     Download the processed OCR files.
     """
 
-    permission_classes = [AllowAny]  # Adjust permission as needed
+    authentication_classes = [OAuth2Authentication]
+    permission_classes = [TokenHasReadWriteScope]
 
     @swagger_auto_schema(
         operation_description="Download a specific OCR file by providing the `file_type` and `file_id`.",

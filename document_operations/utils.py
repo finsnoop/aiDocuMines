@@ -79,6 +79,8 @@ def restore_folder_recursive(folder):
 
 # 📄 File Operations
 def rename_file(file_id, new_name, actor=None):
+    from core.access import safe_filename
+    new_name = safe_filename(new_name)  # a name, never a path
     file = File.objects.get(id=file_id)
     old_path = file.filepath
     dir_path = os.path.dirname(old_path)
@@ -265,22 +267,6 @@ def has_file_access(user, file: File, level="read") -> bool:
     )
     return any(_entry_allows(entry, level, now) for entry in entries)
 
-'''
-def has_file_access(user, file: File, level="read") -> bool:
-    if file.user == user:
-        return True
-    try:
-        entry = FileAccessEntry.objects.get(file_link=file.folder_link, user=user)
-        if level == "read":
-            return entry.access_level in ["read", "write", "owner"]
-        if level == "write":
-            return entry.access_level in ["write", "owner"]
-        if level == "owner":
-            return entry.access_level == "owner"
-        return False
-    except FileAccessEntry.DoesNotExist:
-        return False
-'''
 
 def get_file_access_audit(file: File):
     file_link = getattr(file, "folder_link", None)
@@ -290,20 +276,8 @@ def get_file_access_audit(file: File):
     return FileAccessEntry.objects.filter(file_link=file_link).select_related("user", "granted_by")
 
 
-'''
-def get_user_accessible_file_ids(user):
-    owned = File.objects.filter(user=user).values_list("id", flat=True)
-    shared = FileFolderLink.objects.filter(shared_with=user).values_list("file_id", flat=True)
-    return list(set(owned).union(shared))
-'''
 
 
-'''
-def user_has_access(user, file_id, level='read') -> bool:
-    file = File.objects.filter(id=file_id, user=user).exists()
-    shared = FileFolderLink.objects.filter(file_id=file_id, shared_with=user).exists()
-    return file or shared
-'''
 
 def user_has_access(user, file_id, level="read") -> bool:
     try:
@@ -313,38 +287,6 @@ def user_has_access(user, file_id, level="read") -> bool:
     return has_file_access(user, file, level)
 
 
-'''
-def user_has_access(user, file_id, level="read") -> bool:
-    try:
-        file = File.objects.get(id=file_id)
-    except File.DoesNotExist:
-        return False
-
-    # Owner (uploader) has full access
-    if file.user == user:
-        return True
-
-    # Access entries define granular permissions
-    file_link = getattr(file, "folder_link", None)
-    if not file_link:
-        return False
-
-    try:
-        entry = FileAccessEntry.objects.get(file_link=file_link, user=user)
-
-        if entry.expires_at and entry.expires_at < timezone.now():
-            return False
-
-        if level == "read":
-            return entry.access_level in ["read", "write", "owner"]
-        if level == "write":
-            return entry.access_level in ["write", "owner"]
-        if level == "owner":
-            return entry.access_level == "owner"
-        return False
-    except FileAccessEntry.DoesNotExist:
-        return False
-'''
 
 # 🔄 Bulk Operations
 def move_files_to_trash(file_link_ids, actor=None):
@@ -591,7 +533,8 @@ def register_file_folder_link(file_obj):
         folder_parts = parts[4:-1]
         if folder_parts:
             folder = get_or_create_folder_tree(
-                folder_parts, user=file_obj.user, project_id=project_id, service_id=service_id
+                folder_parts, user=file_obj.user,
+                project_id=file_obj.project_id, service_id=file_obj.service_id
             )
             FileFolderLink.objects.create(file=file_obj, folder=folder)
 

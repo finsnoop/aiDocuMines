@@ -142,18 +142,32 @@ def list_models(provider: str, endpoint: Optional[str] = None, api_key: Optional
 # ── Choosing a chat model ─────────────────────────────────────────────────────
 NOT_CHAT = ("embed", "tts", "whisper", "audio", "realtime", "image", "dall-e", "moderation", "transcribe",
             "search", "instruct", "babbage", "davinci", "codex", "computer-use", "sora")
-PREFERRED = ("gpt-4o-mini", "gpt-4.1-mini", "gpt-4o", "gpt-4.1")
+# Default when no model is configured. Override per deployment with LLM_PREFERRED_MODELS (comma separated)
+# instead of editing code when a provider retires a model. Current OpenAI models first; the older ones
+# (deprecated by OpenAI in 2026) stay only as a last resort for gateways that still offer nothing newer.
+_DEFAULT_PREFERRED = ("gpt-5.6-terra", "gpt-5.5", "gpt-5.4-mini", "gpt-4.1-mini", "gpt-4o-mini")
+PREFERRED = tuple(m.strip() for m in os.getenv("LLM_PREFERRED_MODELS", "").split(",") if m.strip()) or _DEFAULT_PREFERRED
+
+
+def _platform_default_model() -> str:
+    """The default model platform administrators chose in Settings (it decides cost), or ''."""
+    try:
+        from system_settings.models import PlatformGlobalSettings
+        return (PlatformGlobalSettings.objects.filter(pk=1).values_list("default_llm_model", flat=True).first()
+                or "").strip()
+    except Exception:
+        return ""
 
 
 def pick_chat_model(ids, preferred=None):
     """
-    A model that answers chat completions: `preferred` if offered, else a sensible current
-    default. Gateways such as LiteLLM name models "<provider>/<model>" (openai/gpt-4o-mini),
-    so names are matched with or without that prefix.
+    A model that answers chat completions: `preferred` if offered, else the platform's configured
+    default model, else the first of PREFERRED on offer. Gateways such as LiteLLM name models
+    "<provider>/<model>" (openai/gpt-4o-mini), so names are matched with or without that prefix.
     """
     chat = [i for i in ids if i and "*" not in i and not any(w in i.lower() for w in NOT_CHAT)]
     bare = {i.split("/", 1)[-1]: i for i in chat}
-    for want in (preferred, *PREFERRED):
+    for want in (preferred, _platform_default_model(), *PREFERRED):
         if not want:
             continue
         if want in chat:

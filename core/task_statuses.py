@@ -92,7 +92,8 @@ class MetadataStatusView(APIView):
         file_id = request.query_params.get("file_id")
 
         # ✅ Fetch metadata entry for the given file_id
-        metadata_entry = get_object_or_404(Metadata, file_id=file_id)
+        from core.access import get_file_for_user
+        metadata_entry = get_object_or_404(Metadata, file=get_file_for_user(request.user, file_id))
 
         return Response(
             {

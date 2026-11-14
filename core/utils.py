@@ -17,7 +17,7 @@ from django.contrib.contenttypes.models import ContentType
 
 # Third-party libs
 from docx import Document
-import PyPDF2
+import pypdf
 import fitz  # PyMuPDF
 from pdfminer.pdfparser import PDFParser
 from pdfminer.pdfdocument import PDFDocument
@@ -257,10 +257,10 @@ def extract_pdf_metadata(pdf_path: str) -> dict:
     except Exception as e:
         metadata.setdefault("errors", []).append(f"PyMuPDF error: {e}")
 
-    # ✅ PyPDF2
+    # ✅ pypdf
     try:
         with open(pdf_path, "rb") as f:
-            reader = PyPDF2.PdfReader(f)
+            reader = pypdf.PdfReader(f)
             doc_info = reader.metadata or {}
             metadata.update({k.lower(): v for k, v in doc_info.items()})
             try:
@@ -276,7 +276,7 @@ def extract_pdf_metadata(pdf_path: str) -> dict:
                 if key in metadata:
                     metadata[key] = str_to_bool(metadata[key])
     except Exception as e:
-        metadata.setdefault("errors", []).append(f"PyPDF2 error: {e}")
+        metadata.setdefault("errors", []).append(f"pypdf error: {e}")
 
     # ✅ pdfminer.six
     try:

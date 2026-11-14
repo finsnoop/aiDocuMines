@@ -11,7 +11,8 @@ CHECK_INTERVAL = 30  # seconds
 
 def promote_if_replica():
     try:
-        r = redis.StrictRedis(host=REDIS_HOST, port=REDIS_PORT)
+        r = redis.StrictRedis(host=REDIS_HOST, port=REDIS_PORT, password=os.getenv("REDIS_PASSWORD") or None,
+                              socket_connect_timeout=5, socket_timeout=5)
         info = r.info("replication")
         role = info.get("role")
 

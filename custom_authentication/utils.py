@@ -37,73 +37,15 @@ from oauth2_provider.models import Application
 EMAIL_FROM = os.getenv("DEFAULT_FROM_EMAIL", "no-reply@example.com")
 
 
-def send_signup_email(user, temporary_password, client_id, client_secret):
-    """Sends a professional welcome email with OAuth credentials."""
-    subject = "Welcome to aiDocuMines - Your Access Credentials"
-    from_email = EMAIL_FROM
-    to_email = [user.email]
+def send_signup_email(user, subject="Welcome to aiDocuMines"):
+    """Send a one-use password-setting link, never passwords or OAuth secrets."""
+    from django.conf import settings
+    from urllib.parse import urlencode
+    token = PasswordResetToken.objects.create(user=user)
+    url = settings.FRONTEND_URL.rstrip("/") + "/set-password?" + urlencode({"token": str(token.token)})
+    send_mail(subject, f"Set your password using this link (valid for one hour):\n\n{url}",
+              EMAIL_FROM, [user.email], fail_silently=False)
 
-    # Context for HTML template
-    context = {
-        "user": user,
-        "temporary_password": temporary_password,
-        "client_id": client_id,
-        "client_secret": client_secret,
-    }
-
-    # Render HTML template
-    html_content = render_to_string("email/welcome_email.html", context)
-
-    # Fallback plain text version
-    text_content = (
-        f"Dear {user.email},\n\n"
-        f"Welcome to aiDocuMines!\n\n"
-        f"Username: {user.email}\n"
-        f"Temporary Password: {temporary_password}\n"
-        f"Client ID: {client_id}\n"
-        f"Client Secret: {client_secret}\n\n"
-        f"Please change your password immediately after login.\n\n"
-        f"Best Regards,\n"
-        f"aiDocuMines Support Team"
-    )
-
-    msg = EmailMultiAlternatives(subject, text_content, from_email, to_email)
-    msg.attach_alternative(html_content, "text/html")
-    msg.send(fail_silently=False)
-
-
-
-'''
-def send_signup_email(user, temporary_password):
-    """Sends a professional welcome email with OAuth credentials."""
-    subject = "Welcome to aiDocuMines - Your Access Credentials"
-    from_email = EMAIL_FROM
-    to_email = [user.email]
-
-    context = {
-        "user": user,
-        "temporary_password": temporary_password,
-        "client_id": user.client_id,
-        "client_secret": user.client_secret_plain,
-    }
-
-    html_content = render_to_string("email/welcome_email.html", context)
-    text_content = (
-        f"Dear {user.email},\n\n"
-        f"Welcome to aiDocuMines!\n\n"
-        f"Username: {user.email}\n"
-        f"Temporary Password: {temporary_password}\n"
-        f"Client ID: {user.client_id}\n"
-        f"Client Secret: {user.client_secret_plain}\n\n"
-        f"Please change your password immediately after login.\n\n"
-        f"Best Regards,\n"
-        f"aiDocuMines Support Team"
-    )
-
-    msg = EmailMultiAlternatives(subject, text_content, from_email, to_email)
-    msg.attach_alternative(html_content, "text/html")
-    msg.send(fail_silently=False)
-'''
 
 def send_password_reset_email(user, reset_token):
     """Sends a password reset email with a unique token."""

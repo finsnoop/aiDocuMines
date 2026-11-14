@@ -467,7 +467,8 @@ class ConnectorExportView(APIView):
 
             for file_id in file_ids:
                 try:
-                    ai_file = AiFile.objects.get(id=file_id)
+                    from core.access import get_file_for_user
+                    ai_file = get_file_for_user(user, file_id, "download")
                     file_path = ai_file.filepath
                     if not file_path or not os.path.isfile(file_path):
                         raise ValueError("File has no stored content")
@@ -538,7 +539,7 @@ class NextcloudRedirectView(LoginRequiredMixin, View):
                 status="error",
                 details=f"Redirect error: {str(e)}"
             )
-            return HttpResponseServerError(f"Nextcloud autologin failed: {str(e)}")
+            return HttpResponseServerError("Nextcloud sign-in is not available right now. Please try again later.")
 
 
 class NextcloudAutologinView(APIView):
@@ -593,9 +594,9 @@ class SyncUserToNextcloudView(APIView):
             return Response({"error": "user_id is required"}, status=status.HTTP_400_BAD_REQUEST)
 
         User = get_user_model()
-        try:
-            user = User.objects.get(id=user_id)
-        except User.DoesNotExist:
+        from core.access import can_manage_user
+        user = User.objects.filter(id=user_id).first()
+        if user is None or not can_manage_user(request.user, user):
             return Response({"error": "User not found"}, status=status.HTTP_404_NOT_FOUND)
 
         from .tasks import provision_nextcloud_user

@@ -5,7 +5,7 @@ from django.utils import timezone
 from django.db.models import Q
 from django.db import models
 from rest_framework.viewsets import ModelViewSet
-from rest_framework.permissions import IsAuthenticated
+from rest_framework.permissions import BasePermission, IsAuthenticated
 from rest_framework.filters import SearchFilter, OrderingFilter
 from rest_framework.decorators import action
 from rest_framework.response import Response
@@ -22,13 +22,20 @@ from .serializers import (
 from .tasks import send_outbox_email
 
 
+class IsPlatformSuperUser(BasePermission):
+    def has_permission(self, request, view):
+        from core.access import is_platform_superuser
+        return is_platform_superuser(request.user)
+
+
 class EmailTemplateViewSet(ModelViewSet):
     """
     CRUD for email templates.
     """
     queryset = EmailTemplate.objects.all().order_by("-created_at")
     serializer_class = EmailTemplateSerializer
-    permission_classes = [IsAuthenticated, IsClientOrAdminOrSuperUser]
+    # Templates are platform-wide (every organisation's mail is rendered from them).
+    permission_classes = [IsAuthenticated, IsPlatformSuperUser]
     filter_backends = [SearchFilter, OrderingFilter]
     search_fields = ["code", "name", "description"]
     ordering = ["-created_at"]
@@ -39,7 +46,9 @@ class OutboxEmailViewSet(ModelViewSet):
     Queue of emails to be rendered/sent via Celery.
     """
     queryset = OutboxEmail.objects.all().order_by("-created_at")
-    permission_classes = [IsAuthenticated, IsClientOrAdminOrSuperUser]
+    # The outbox contains password-reset tokens and sign-in details for every organisation,
+    # and can send mail as the platform: platform administrators only.
+    permission_classes = [IsAuthenticated, IsPlatformSuperUser]
     filter_backends = [SearchFilter, OrderingFilter]
     search_fields = ["subject", "email_type", "status", "message_id", "provider_id"]
     ordering = ["-created_at"]

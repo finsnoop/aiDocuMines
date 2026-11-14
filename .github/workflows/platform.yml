@@ -132,6 +132,11 @@ jobs:
           cache-from: type=gha,scope=api
           cache-to: type=gha,mode=max,scope=api
 
+      - name: Python vulnerability gate (exact mitigated exception documented)
+        run: |
+          docker run --rm --entrypoint sh aidocumines-api:ci -c \
+            "pip install --quiet pip-audit && python scripts/audit_python_dependencies.py"
+
       - name: Django check, migration drift, tenancy & RBAC tests
         run: |
           KEY=$(python -c 'import base64,os;print(base64.urlsafe_b64encode(os.urandom(32)).decode())')
@@ -140,11 +145,12 @@ jobs:
             -e FIELD_ENCRYPTION_KEY="$KEY" -e ENCRYPTION_SECRET_KEY="$KEY" \
             -e POSTGRES_HOST=127.0.0.1 -e POSTGRES_PORT=5432 \
             -e POSTGRES_DB=aidoc -e POSTGRES_USER=aidoc -e POSTGRES_PASSWORD=aidoc \
+            -e POSTGRES_SSLMODE=prefer \
             -e REDIS_URL=redis://127.0.0.1:6379/1 -e CELERY_BROKER_URL=redis://127.0.0.1:6379/0 \
             --entrypoint sh aidocumines-api:ci -c \
             "[ -f oidc-private-key.pem ] || openssl genrsa -out oidc-private-key.pem 2048 2>/dev/null; mkdir -p logs media && \
              python manage.py check && python manage.py makemigrations --check --dry-run && \
-             python manage.py test core.tests enquiries --noinput"
+             python manage.py test --noinput && python scripts/test_deployment_safety.py"
 
   test-backend:
     name: Node backend
@@ -164,8 +170,10 @@ jobs:
           ref: ${{ needs.refs.outputs.backend }}
           token: ${{ secrets.PLATFORM_REPOS_TOKEN }}
       - uses: actions/setup-node@v4
-        with: { node-version: "20", cache: npm }
+        with: { node-version: "24", cache: npm }
       - run: npm ci --omit=dev --no-audit --no-fund
+      - name: No known high or critical vulnerabilities in shipped packages
+        run: npm audit --omit=dev --audit-level=high
       - name: Syntax check
         run: for f in $(git ls-files 'src/*.js'); do node --check "$f"; done
       - name: Auth, tenancy and RBAC integration tests
@@ -183,13 +191,15 @@ jobs:
           ref: ${{ needs.refs.outputs.frontend }}
           token: ${{ secrets.PLATFORM_REPOS_TOKEN }}
       - uses: actions/setup-node@v4
-        with: { node-version: "20", cache: npm }
+        with: { node-version: "24", cache: npm }
       - run: npm ci --no-audit --no-fund
       - name: No secrets in the browser bundle config
         run: |
           if grep -nE "sk-(proj|live)-|APP_PASSWORD: '[^']+'" src/environments/*.ts; then
             echo "::error::Secrets found in src/environments"; exit 1
           fi
+      - name: No vulnerable frontend dependencies
+        run: npm audit --audit-level=low
       - name: Production build
         run: npx ng build --configuration production
 

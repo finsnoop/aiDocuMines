@@ -9,14 +9,14 @@ from rest_framework import status
 from django.shortcuts import get_object_or_404
 from oauth2_provider.contrib.rest_framework import TokenHasReadWriteScope
 from custom_authentication.authentication import ClientBoundOAuth2Authentication as OAuth2Authentication
-from custom_authentication.permissions import IsClientOrAdminOrSuperUser
+from custom_authentication.permissions import IsClientOrAdminOrSuperUser, IsAdminOrSuperUser
 from oauth2_provider.models import Application
 from drf_yasg.utils import swagger_auto_schema
 from drf_yasg import openapi
 from django.contrib.auth import get_user_model
 
 from .models import SystemSettings, SystemSettingsAuditTrail, PlatformGlobalSettings
-from .serializers import SystemSettingsSerializer, PlatformGlobalSettingsSerializer
+from .serializers import SystemSettingsSerializer, PlatformGlobalSettingsSerializer, SECRET_FIELDS, SECRET_MASK
 from .utils import get_default_settings_schema, get_default_settings_values
 
 from custom_authentication.models import Client
@@ -28,12 +28,6 @@ User = get_user_model()
 client_id_param = openapi.Parameter("X-Client-ID", openapi.IN_HEADER, type=openapi.TYPE_STRING, required=True)
 client_secret_param = openapi.Parameter("X-Client-Secret", openapi.IN_HEADER, type=openapi.TYPE_STRING, required=True)
 
-def get_user_from_client_id(client_id):
-    try:
-        app = Application.objects.get(client_id=client_id)
-        return app.user
-    except Application.DoesNotExist:
-        return None
 
 def get_client_from_user(user):
     try:
@@ -46,13 +40,19 @@ class SystemSettingsView(APIView):
     authentication_classes = [OAuth2Authentication]
     permission_classes = [TokenHasReadWriteScope, IsClientOrAdminOrSuperUser]
 
+    def get_permissions(self):
+        permissions = super().get_permissions()
+        if self.request.method not in ("GET", "HEAD", "OPTIONS"):
+            permissions.append(IsAdminOrSuperUser())
+        return permissions
+
     @swagger_auto_schema(manual_parameters=[client_id_param, client_secret_param])
     def get(self, request):
         client_id = request.headers.get("X-Client-ID")
         if not client_id:
             return Response({"error": "Missing client credentials"}, status=status.HTTP_400_BAD_REQUEST)
 
-        user = get_user_from_client_id(client_id)
+        user = request.user
         if not user:
             return Response({"error": "Invalid client credentials"}, status=status.HTTP_401_UNAUTHORIZED)
 
@@ -70,7 +70,7 @@ class SystemSettingsView(APIView):
         if not client_id:
             return Response({"error": "Missing client credentials"}, status=status.HTTP_400_BAD_REQUEST)
 
-        user = get_user_from_client_id(client_id)
+        user = request.user
         if not user:
             return Response({"error": "Invalid client credentials"}, status=status.HTTP_401_UNAUTHORIZED)
 
@@ -79,7 +79,9 @@ class SystemSettingsView(APIView):
             return Response({"error": "Client not found for user"}, status=status.HTTP_404_NOT_FOUND)
 
         instance, _ = SystemSettings.objects.get_or_create(client=client)
-        serializer = SystemSettingsSerializer(instance, data=request.data, partial=True)
+        # Organisation identity is taken from the token, never from editable form data.
+        data = {key: value for key, value in request.data.items() if key != 'client_id'}
+        serializer = SystemSettingsSerializer(instance, data=data, partial=True)
 
         if serializer.is_valid():
             updated_settings = serializer.save()
@@ -88,7 +90,8 @@ class SystemSettingsView(APIView):
             SystemSettingsAuditTrail.objects.create(
                 client=client,
                 run=None,  # Optional: attach run_id if available
-                changes=serializer.validated_data
+                changes={key: SECRET_MASK if key in SECRET_FIELDS else value
+                         for key, value in serializer.validated_data.items()}
             )
 
             return Response({"message": "Settings saved successfully", "settings": serializer.data})
@@ -97,7 +100,7 @@ class SystemSettingsView(APIView):
 
 class SystemSettingsResetView(APIView):
     authentication_classes = [OAuth2Authentication]
-    permission_classes = [TokenHasReadWriteScope, IsClientOrAdminOrSuperUser]
+    permission_classes = [TokenHasReadWriteScope, IsAdminOrSuperUser]
 
     @swagger_auto_schema(manual_parameters=[client_id_param, client_secret_param])
     def post(self, request):
@@ -105,7 +108,7 @@ class SystemSettingsResetView(APIView):
         if not client_id:
             return Response({"error": "Missing client credentials"}, status=status.HTTP_400_BAD_REQUEST)
 
-        user = get_user_from_client_id(client_id)
+        user = request.user
         if not user:
             return Response({"error": "Invalid client credentials"}, status=status.HTTP_401_UNAUTHORIZED)
 
@@ -138,7 +141,7 @@ class SystemSettingsAuditTrailView(APIView):
         if not client_id:
             return Response({"error": "Missing client credentials"}, status=status.HTTP_400_BAD_REQUEST)
 
-        user = get_user_from_client_id(client_id)
+        user = request.user
         if not user:
             return Response({"error": "Invalid client credentials"}, status=status.HTTP_401_UNAUTHORIZED)
 

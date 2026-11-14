@@ -55,6 +55,64 @@ DEMO_DOCUMENTS = [
          "SERVICE AGREEMENT. The Executive is entitled to twelve months notice. Good leaver provisions apply on a "
          "Change of Control."),
     ]),
+    # ── Fictional portfolio for the executive / operations dashboards (dates as of November 2026) ──
+    ("associate@harperlowe.demo", "Portfolio review", "contracts", "Commercial", [
+        ("SAMPLE Cloud Hosting Agreement - Nimbus.pdf",
+         "SAMPLE CLOUD HOSTING AGREEMENT between Harper & Lowe LLP and Nimbus Hosting (Pty) Ltd. "
+         "This Agreement commences on 1 December 2024 and expires on 5 December 2026 unless renewed. "
+         "The total contract value is ZAR 2 400 000 payable monthly. Either party must give written notice of "
+         "non-renewal no later than 30 November 2026. The Supplier's aggregate liability shall not exceed "
+         "ZAR 500 000. This Agreement renews automatically for twelve months unless notice is given."),
+        ("SAMPLE Office Lease - Riverside Towers.pdf",
+         "SAMPLE LEASE AGREEMENT for Floors 7 and 8, Riverside Towers. The lease commences on 1 February 2022 "
+         "and expires on 31 January 2027. The annual rental is ZAR 3 960 000 escalating at 7% per annum. "
+         "Early termination by the Tenant attracts a termination fee of ZAR 1 200 000."),
+        ("SAMPLE Software Licence - LexiCore.pdf",
+         "SAMPLE SOFTWARE LICENCE AGREEMENT between Harper & Lowe LLP and LexiCore Inc. Effective date: "
+         "1 July 2023. This licence expired on 30 June 2026. The licence fee is USD 180 000 per year. "
+         "The Licensor may terminate for convenience on 60 days notice. Liability is unlimited for breach of "
+         "confidentiality."),
+        ("SAMPLE Master Services Agreement - Atlas Consulting.pdf",
+         "SAMPLE MASTER SERVICES AGREEMENT between Harper & Lowe LLP and Atlas Consulting LLC. This Agreement "
+         "is effective from 15 March 2025 and ends on 14 March 2028. The contract value is USD 750 000. "
+         "Each party's liability shall not exceed USD 750 000. A change of control of the Supplier allows the "
+         "Customer to terminate immediately."),
+        ("SAMPLE Master Services Agreement - Atlas Consulting (v2).pdf",
+         "SAMPLE MASTER SERVICES AGREEMENT between Harper & Lowe LLP and Atlas Consulting LLC. This Agreement "
+         "is effective from 15 March 2025 and ends on 14 March 2028. The contract value is USD 790 000. "
+         "Each party's liability shall not exceed USD 750 000. A change of control of the Supplier allows the "
+         "Customer to terminate immediately."),
+    ]),
+    ("associate@harperlowe.demo", "Portfolio review", "finance", "Invoices and payroll", [
+        ("SAMPLE Tax Invoice INV-2026-0412.pdf",
+         "SAMPLE TAX INVOICE INV-2026-0412. Invoice date: 2 October 2026. Bill to: Harper & Lowe LLP. "
+         "Professional services subtotal ZAR 86 956.52. VAT (15%) amount ZAR 13 043.48. Total ZAR 100 000.00. "
+         "Amount paid ZAR 40 000.00. Balance due ZAR 60 000.00 by 1 November 2026. Interest of 2% per month "
+         "applies to overdue amounts."),
+        ("SAMPLE Tax Invoice INV-2026-0388.pdf",
+         "SAMPLE TAX INVOICE INV-2026-0388. Invoice date: 5 September 2026. Bill to: Harper & Lowe LLP. "
+         "VAT (15%) amount ZAR 6 521.74. Total ZAR 50 000.00. Amount paid ZAR 50 000.00 on 30 September 2026."),
+        ("SAMPLE Payslip October 2026 - T Mokoena.pdf",
+         "SAMPLE PAYSLIP. Employee: T Mokoena. Pay period: October 2026. Gross pay ZAR 64 500.00. "
+         "PAYE ZAR 16 240.00. Deductions ZAR 3 870.00. Net pay ZAR 44 390.00."),
+    ]),
+    ("manager@harperlowe.demo", "Global mobility - Rivera family", "immigration", "Applicant documents", [
+        ("SAMPLE Passport - A Rivera.pdf",
+         "SAMPLE PASSPORT. Passport No. X0000000. Surname: RIVERA. Given names: ANA. Nationality: Fictional "
+         "Republic. Date of birth: 4 April 1990. Date of issue: 10 May 2019. Date of expiry: 9 May 2029."),
+        ("SAMPLE Critical Skills Visa - A Rivera.pdf",
+         "SAMPLE VISA. Visa type: Critical Skills Work Visa. Number of entries: Multiple. Valid from 1 March 2024 "
+         "valid until 28 February 2027. Holder: Ana Rivera."),
+        ("SAMPLE Curriculum Vitae - A Rivera.pdf",
+         "SAMPLE CURRICULUM VITAE. Ana Rivera. Professional experience: Senior data engineer, 2016 to present. "
+         "Education: BSc Computer Science. Skills: Python, cloud platforms, data governance."),
+        ("SAMPLE Motivation Letter - A Rivera.pdf",
+         "SAMPLE MOTIVATION LETTER. Dear Sir or Madam, I am writing to apply for a critical skills work visa "
+         "renewal. I would welcome the opportunity to continue contributing my expertise."),
+        ("SAMPLE Proof of Address - A Rivera.pdf",
+         "SAMPLE PROOF OF RESIDENCE. Municipal account for Ana Rivera, residential address 14 Fictional Lane, "
+         "Cape Town. Statement date: 1 October 2026."),
+    ]),
     ("associate@northwind.demo", "Meridian v Halcyon", "litigation", "Pleadings", [
         ("Claim Form.pdf", "CLAIM FORM. The Claimant claims damages for breach of contract. CONFIDENTIAL TO NORTHWIND."),
         ("Witness Statement - J Park.pdf",

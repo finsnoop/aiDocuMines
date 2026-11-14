@@ -1,3 +1,4 @@
+from core.task_access import register_task, require_task_owner
 import os
 import json
 import logging
@@ -68,12 +69,6 @@ def health_check(request):
     from django.http import JsonResponse
     return JsonResponse({"status": "ok"}, status=200)
 
-def get_user_from_client_id(client_id):
-    try:
-        application = Application.objects.get(client_id=client_id)
-        return application.user
-    except Application.DoesNotExist:
-        return None
 
 
 def resolve_token_user(request):
@@ -184,72 +179,6 @@ class SubmitAnonymizationAPIView(ClientScopedViewMixin):
 
 
 
-'''
-class SubmitAnonymizationAPIView(APIView):
-    authentication_classes = [OAuth2Authentication]
-    permission_classes = [TokenHasReadWriteScope]
-
-    @swagger_auto_schema(
-        manual_parameters=[
-            client_id_param,
-            client_secret_param,
-            file_id_param,
-            project_id_param,
-            service_id_param,
-            file_type_param
-        ],
-        operation_description="Starts anonymization using the default Presidio ➝ spaCy pipeline. You can optionally specify the file_type (plain or structured)."
-    )
-    def post(self, request):
-        client_id = request.headers.get("X-Client-ID")
-        client_secret = request.headers.get("X-Client-Secret")
-        file_id = request.query_params.get("file_id")
-        project_id = request.query_params.get("project_id")
-        service_id = request.query_params.get("service_id")
-        file_type = request.query_params.get("file_type", "plain").lower()
-
-        if not all([client_id, client_secret, file_id, project_id, service_id]):
-            return Response({"error": "Missing required parameters"}, status=status.HTTP_400_BAD_REQUEST)
-
-        application = get_object_or_404(Application, client_id=client_id)
-        user = application.user
-        file_instance = get_object_or_404(File, id=file_id, project_id=project_id, service_id=service_id)
-
-        if str(file_instance.user.id) != str(user.id):
-            raise PermissionDenied("You are not authorized to process this file.")
-
-        if not os.path.exists(file_instance.filepath):
-            return Response({"error": "File not found."}, status=status.HTTP_404_NOT_FOUND)
-
-
-        anonymization_run = AnonymizationRun.objects.create(
-                id=str(uuid.uuid4()),  # force UUID for consistency
-                project_id=project_id,
-                service_id=service_id,
-                client=getattr(user, 'client', None),
-                client_name=user.username or user.email,
-                status="Processing",
-                anonymization_type="Presidio-Spacy"
-        )
-
-        anonymize_document_task.delay(file_id, file_type, str(anonymization_run.id))
-
-        # anonymization_run = AnonymizationRun.objects.create(
-        #     project_id=project_id,
-        #     service_id=service_id,
-        #     client_name=user.username or user.email,
-        #     status="Processing",
-        #     anonymization_type="Presidio-Spacy"
-        # )
-
-        # anonymize_document_task.delay(file_id, file_type)
-
-        return Response({
-            "anonymization_run_id": str(anonymization_run.id),
-            "file_id": str(file_instance.id),
-            "status": "Processing"
-        }, status=status.HTTP_202_ACCEPTED)
-        '''
 
 
 
@@ -278,7 +207,7 @@ class DownloadAnonymizedFileAPIView(ClientScopedViewMixin):
         if not all([client_id, client_secret, file_id, file_type]):
             return Response({"error": "Missing required parameters"}, status=400)
 
-        user = get_user_from_client_id(client_id)
+        user = request.user
         if not user:
             return Response({"error": "Invalid client ID"}, status=403)
 
@@ -547,7 +476,8 @@ class DocumentRiskScoreView(APIView):
             return Response({"error": "file_id is required"}, status=400)
 
         # Check if risk score already exists in DB or cache in future
-        task = compute_risk_score_task.delay(file_id)
+        get_file_for_user(request.user, file_id)
+        task = register_task(request.user, compute_risk_score_task.delay(file_id), "risk")
         return Response({"task_id": task.id, "status": "Risk analysis started"}, status=202)
 
 
@@ -566,6 +496,7 @@ class DocumentRiskScoreResultView(APIView):
         if not task_id:
             return Response({"error": "task_id is required"}, status=400)
 
+        require_task_owner(request.user, task_id, "risk")
         result = AsyncResult(task_id)
         if not result.ready():
             return Response({"status": "Pending"}, status=202)
@@ -653,13 +584,13 @@ class AnonymizationStatsView(APIView):
     )
     def get(self, request):
 
-        client_name = request.query_params.get("client_name")
+        client_name = request.user.username or request.user.email
         project_id = request.query_params.get("project_id")
         service_id = request.query_params.get("service_id")
         date_from = request.query_params.get("date_from")
         date_to = request.query_params.get("date_to")
 
-        cache_key = f"stats:{client_name}:{project_id}:{service_id}:{date_from}:{date_to}"
+        cache_key = f"stats:{request.user.pk}:{client_name}:{project_id}:{service_id}:{date_from}:{date_to}"
         cached_result = cache.get(cache_key)
         if cached_result:
             return Response({
@@ -669,12 +600,14 @@ class AnonymizationStatsView(APIView):
 
         # launch Celery task
         task = compute_anonymization_stats_task.delay(
+            user_id=request.user.pk,
             client_name=client_name,
             project_id=project_id,
             service_id=service_id,
             date_from=date_from,
             date_to=date_to,
         )
+        register_task(request.user, task, "anonymization_stats")
         return Response({
             "task_id": task.id,
             "status": "Computation started"
@@ -696,6 +629,7 @@ class AnonymizationStatsResultView(APIView):
         if not task_id:
             return Response({"error": "task_id is required"}, status=400)
 
+        require_task_owner(request.user, task_id, "anonymization_stats")
         result = AsyncResult(task_id)
         if not result.ready():
             return Response({"status": "Pending"}, status=202)
@@ -704,10 +638,6 @@ class AnonymizationStatsResultView(APIView):
             return Response({"status": "Failed", "error": str(result.result)}, status=500)
 
         stats_data = result.result
-
-        # Cache result for repeated queries
-        cache_key = f"stats:{stats_data.get('client_name')}:{stats_data.get('project_id')}:{stats_data.get('service_id')}:{stats_data.get('date_from')}:{stats_data.get('date_to')}"
-        cache.set(cache_key, stats_data, timeout=60 * 60)  # cache 1 hour
 
         return Response({
             "status": "Completed",
@@ -821,7 +751,7 @@ class RiskBucketDocumentsView(APIView):
     )
     def get(self, request):
         client_id = request.headers.get("X-Client-ID")
-        user = get_user_from_client_id(client_id)
+        user = request.user
         if not user:
             return Response({"error": "Invalid client ID"}, status=status.HTTP_403_FORBIDDEN)
 
@@ -919,6 +849,13 @@ class CheckAnonymizationResultsView(APIView):
         if not file_ids:
             return Response({"error": "file_ids is required"}, status=status.HTTP_400_BAD_REQUEST)
 
+        from core.access import accessible_files
+        try:
+            wanted = [int(f) for f in list(file_ids)[:1000]]
+        except (TypeError, ValueError):
+            return Response({"error": "file_ids must be a list of ids"}, status=status.HTTP_400_BAD_REQUEST)
+        # Only report on documents the caller can open.
+        file_ids = list(accessible_files(request.user).filter(id__in=wanted).values_list("id", flat=True))
         results = {}
         for fid in file_ids:
             anon = Anonymize.objects.filter(

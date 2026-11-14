@@ -7,6 +7,7 @@ from .views import (
     PlatformGlobalSettingsView,
     PlatformGlobalSettingsPublicView,
 )
+from .views_verticals import MyVerticalsView, VerticalAdminView
 
 urlpatterns = [
     path("auth/admin/system-settings/", SystemSettingsView.as_view(), name="system_settings_get"),
@@ -16,6 +17,9 @@ urlpatterns = [
     path("auth/admin/system-settings/schema/", SystemSettingsSchemaView.as_view(), name="system_settings_schema"),
     # Platform-wide global settings (superadmin only)
     path("auth/admin/platform-settings/", PlatformGlobalSettingsView.as_view(), name="platform_settings"),
+    # Industry verticals: the caller's organisation, and the superuser configuration (platform + per organisation)
+    path("verticals/", MyVerticalsView.as_view(), name="my_verticals"),
+    path("auth/admin/verticals/", VerticalAdminView.as_view(), name="vertical_admin"),
     # Public read-only endpoint for frontend bootstrap
     path("platform-settings/public/", PlatformGlobalSettingsPublicView.as_view(), name="platform_settings_public"),
 ]

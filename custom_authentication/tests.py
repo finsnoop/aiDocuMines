@@ -138,17 +138,19 @@ class SignupTests(TestCase):
         """Signup should create client if it doesn't exist."""
         from django.test import Client as TestClient
         c = TestClient()
-        response = c.post(
-            "/api/v1/auth/signup/",
-            {
-                "email": "newuser@signuporg.com",
-                "password": "Password#123",
-                "organisation": "SignupOrg",
-                "contact_name": "New User",
-                "contact_phone": "+1234567890",
-            },
-            content_type="application/json",
-        )
+        from unittest.mock import patch
+        with patch("celery.app.task.Task.delay"):
+            response = c.post(
+                "/api/v1/auth/signup/",
+                {
+                    "email": "newuser@signuporg.com",
+                    "password": "Password#123",
+                    "organisation": "NewSignupOrg",
+                    "contact_name": "New User",
+                    "contact_phone": "+1234567890",
+                },
+                content_type="application/json",
+            )
         self.assertEqual(response.status_code, 201)
         self.assertTrue(User.objects.filter(email="newuser@signuporg.com").exists())
 

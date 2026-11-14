@@ -146,39 +146,3 @@ class SearchQueryLog(models.Model):
         return f"Q<{self.id}> by {self.user} @ {self.created_at:%Y-%m-%d %H:%M}"
 
 
-'''
-class SearchQueryLog(models.Model):
-    """
-    Records each semantic search issued by a user.
-
-    This is optional but strongly recommended for:
-      • usage analytics
-      • adaptive caching / throttling
-      • debugging false positives / negatives
-    """
-    id = models.BigAutoField(primary_key=True)
-    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name="search_logs")
-    query_text = models.TextField()
-    top_k = models.PositiveIntegerField(default=5)
-    duration_ms = models.PositiveIntegerField(
-        null=True,
-        blank=True,
-        help_text="Server-measured latency for the query (ms).",
-    )
-    result_count = models.PositiveIntegerField(
-        null=True,
-        blank=True,
-        help_text="Number of hits returned to the client.",
-    )
-    created_at = models.DateTimeField(auto_now_add=True)
-
-    class Meta:
-        indexes = [
-            models.Index(fields=["user"]),
-            models.Index(fields=["created_at"]),
-        ]
-        ordering = ["-created_at"]
-
-    def __str__(self) -> str:  # pragma: no cover
-        return f"Q<{self.id}> by {self.user} @ {self.created_at:%Y-%m-%d %H:%M}"
-'''

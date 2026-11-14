@@ -138,41 +138,6 @@ class OAuth2SecuredAPIView(APIView):
 
         return None, Response({"error": "User-bound access token required"}, status=status.HTTP_403_FORBIDDEN)
 
-'''
-class OAuth2SecuredAPIView(APIView):
-    authentication_classes = [OAuth2Authentication]
-    permission_classes = [TokenHasReadWriteScope, IsClientOrAdminOrSuperUser]  # requires 'read' or 'write' scope
-
-    def _get_user(self, request):
-        """
-        Primary binding: request.user from access token (subject).
-        Optional: if X-Client-ID header is present, verify it matches token.application.
-        Fallback: for client-credentials tokens (no user), use application.user if present.
-        """
-        hdr_cid = request.headers.get("X-Client-ID")
-        token = getattr(request, "auth", None)
-        token_app = getattr(token, "application", None)
-
-        # 1) Normal user-bound tokens
-        if getattr(request, "user", None) and request.user.is_authenticated:
-            if hdr_cid and token_app and getattr(token_app, "client_id", None) != hdr_cid:
-                return None, Response(
-                    {"error": "X-Client-ID does not match access token’s client"},
-                    status=status.HTTP_403_FORBIDDEN,
-                )
-            return request.user, None
-
-        # 2) Client-credentials tokens (no user on token)
-        if token_app and getattr(token_app, "user", None):
-            if hdr_cid and getattr(token_app, "client_id", None) != hdr_cid:
-                return None, Response(
-                    {"error": "X-Client-ID does not match access token’s client"},
-                    status=status.HTTP_403_FORBIDDEN,
-                )
-            return token_app.user, None
-
-        return None, Response({"error": "Authentication required"}, status=status.HTTP_401_UNAUTHORIZED)
-'''
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Views

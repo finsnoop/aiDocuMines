@@ -21,7 +21,7 @@ from django.db.utils import IntegrityError
 from django.http import JsonResponse
 from .models import FileEventLog
 from core.models import File
-from core.views import get_user_from_client_id, file_id_param, client_id_param
+from core.views import file_id_param, client_id_param
 from core.access import get_file_for_user, get_scoped_or_404, get_run_for_user, scope_by_file, scope_by_owner
 
 logger = logging.getLogger(__name__)
@@ -45,7 +45,7 @@ class FileEventLogView(APIView):
         file_id = request.query_params.get("file_id")
 
         # ✅ Enforce OAuth2 authentication
-        user = get_user_from_client_id(client_id)
+        user = request.user
         if not user:
             return Response({"error": "Invalid client ID"}, status=status.HTTP_401_UNAUTHORIZED)
 

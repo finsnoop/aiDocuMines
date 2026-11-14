@@ -16,7 +16,7 @@ import uuid
 from core.utils import register_generated_file
 # from glob import glob
 import glob 
-from PyPDF2 import PdfMerger
+from pypdf import PdfWriter
 
 logger = logging.getLogger(__name__)
 
@@ -166,7 +166,7 @@ def merge_ocr_batches(results, ocr_file_id, bookmarks_list):
     try:
         final_pdf_path = os.path.join(final_pdf_dir, f"ocr-{uuid.uuid4()}.pdf")
         try:
-            merger = PdfMerger()
+            merger = PdfWriter()
             for pdf in pdf_files:
                 logger.info(f"🔹 Adding {pdf} to the merger.")
                 merger.append(pdf)

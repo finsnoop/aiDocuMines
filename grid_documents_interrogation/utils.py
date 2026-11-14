@@ -499,7 +499,8 @@ def _build_messages_for_openai(
     return messages
 
 
-def _openai_chat_completion(client, *, model, messages, max_tokens, temperature, timeout):
+def _openai_chat_completion(client, *, model, messages, max_tokens, temperature, timeout, response_format=None,
+                            usage_task='assistant.chat'):
     """Create a chat completion against an OpenAI-compatible endpoint, resilient
     to model-specific parameter restrictions.
 
@@ -517,9 +518,18 @@ def _openai_chat_completion(client, *, model, messages, max_tokens, temperature,
         "temperature": temperature,
         "timeout": timeout,
     }
+    if response_format is not None:
+        kwargs['response_format'] = response_format
+    import time
+    from home_dash_analytics.agents.usage import record_response
+    base = str(getattr(client, 'base_url', '') or '')
+    provider = 'openai' if 'api.openai.com' in base else 'litellm' if 'litellm' in base else 'openai-compatible'
+    started = time.monotonic()
     for _ in range(3):  # at most: drop temperature, then swap max_tokens
         try:
-            return client.chat.completions.create(**kwargs)
+            response = client.chat.completions.create(**kwargs)
+            record_response(response, provider=provider, model=model, task=usage_task, started=started)
+            return response
         except Exception as e:
             msg = str(e).lower()
             if "temperature" in msg and "temperature" in kwargs:
@@ -532,7 +542,9 @@ def _openai_chat_completion(client, *, model, messages, max_tokens, temperature,
                 continue
             raise
     # Final attempt (surfaces the real error if it still fails).
-    return client.chat.completions.create(**kwargs)
+    response = client.chat.completions.create(**kwargs)
+    record_response(response, provider=provider, model=model, task=usage_task, started=started)
+    return response
 
 
 def dispatch_to_llm(
@@ -754,51 +766,6 @@ def dispatch_to_llm(
 
 
 
-'''
-def dispatch_to_llm(query_text: str, chunk: str, llm_config: dict, previous_messages: Optional[List[dict]] = None):
-    provider = llm_config.get("provider", "openai")
-    model = llm_config.get("model", "gpt-3.5-turbo")
-    api_key = llm_config.get("api_key")
-    endpoint = llm_config.get("endpoint")  # used for ollama if provided
-
-    if provider == "openai":
-        client = OpenAI(api_key=api_key) if api_key else OpenAI()
-        messages = _build_messages_for_openai(previous_messages, chunk, query_text, model)
-        response = client.chat.completions.create(
-            model=model,
-            messages=messages,
-            max_tokens=1024,
-            temperature=0.2,
-        )
-        return response.choices[0].message.content
-        curl -L https://iterm2.com/shell_integration/install_shell_integration_and_utilities.sh | bash
-
-
-    elif provider == "ollama":
-        try:
-            base_url = endpoint or "http://ollama:11434"
-            chat = ChatOllama(model=model, base_url=base_url)
-            # Simple condensed context; you can mirror OpenAI structure if desired
-            context = ""
-            if previous_messages:
-                for msg in previous_messages[-10:]:
-                    role = msg.get("role", "user")
-                    content = msg.get("content", "")
-                    context += f"{role.capitalize()}: {content}\n"
-            context += f"\nDocument:\n{chunk}\n\nQuestion: {query_text}"
-            return chat.invoke(context)
-        except Exception as e:
-            raise RuntimeError(f"Ollama invocation failed: {e}")
-
-    elif provider == "langchain":
-        raise NotImplementedError("LangChain support is not yet implemented.")
-
-    elif provider == "mcp":
-        raise NotImplementedError("MCP provider not yet integrated.")
-
-    else:
-        raise ValueError(f"Unsupported provider: {provider}")
-'''
 
 # ───────────────────────── File path / id entrypoints ─────────────────────────
 

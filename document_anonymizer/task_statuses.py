@@ -25,12 +25,6 @@ file_id_param = openapi.Parameter("file_id", openapi.IN_QUERY, type=openapi.TYPE
 file_type_param = openapi.Parameter("file_type", openapi.IN_QUERY, type=openapi.TYPE_STRING, required=False)
 run_id_param = openapi.Parameter("run_id", openapi.IN_QUERY, type=openapi.TYPE_STRING, required=False)
 
-def get_user_from_client_id(client_id):
-    try:
-        application = Application.objects.get(client_id=client_id)
-        return application.user
-    except Application.DoesNotExist:
-        return None
 
 
 
@@ -73,7 +67,7 @@ class AnonymizationTaskStatusView(APIView):
         if not client_id or not client_secret or (not file_id and not run_id):
             return Response({"error": "Missing required parameters"}, status=400)
 
-        user = get_user_from_client_id(client_id)
+        user = request.user
         if not user:
             return Response({"error": "Invalid client ID"}, status=403)
 

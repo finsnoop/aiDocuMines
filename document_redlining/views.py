@@ -48,13 +48,6 @@ def health_check(request):
     return JsonResponse({"status": "ok"}, status=200)
 
 
-def get_user_from_client_id(client_id):
-    """Retrieves the User associated with a given `client_id` from OAuth2 Application."""
-    try:
-        application = Application.objects.get(client_id=client_id)
-        return application.user
-    except Application.DoesNotExist:
-        return None
 
 
 class SubmitRedliningAPIView(APIView):
@@ -81,7 +74,7 @@ class SubmitRedliningAPIView(APIView):
         if not all([client_id, client_secret, file_id, comparison_file_id]):
             return Response({"error": "Missing required parameters"}, status=status.HTTP_400_BAD_REQUEST)
 
-        user = get_user_from_client_id(client_id)
+        user = request.user
         if not user:
             return Response({"error": "Invalid client ID"}, status=status.HTTP_401_UNAUTHORIZED)
 
@@ -135,8 +128,20 @@ class CheckRedliningStatusAPIView(APIView):
         if not run_id:
             return Response({"error": "Missing `run_id` parameter"}, status=status.HTTP_400_BAD_REQUEST)
 
-        run = get_object_or_404(RedliningRun, id=run_id)
-        results = RedliningResult.objects.filter(run=run).first()
+        from core.access import accessible_files_q, client_name_q
+        try:
+            run = RedliningRun.objects.filter(id=run_id).first()
+        except Exception:
+            run = None
+        if run is None:
+            return Response({"error": "Not found."}, status=status.HTTP_404_NOT_FOUND)
+        results = RedliningResult.objects.filter(run=run).filter(
+            accessible_files_q(request.user, "view", prefix="original_file__")).first()
+        # A run is visible to whoever can open its source document; while it has no result
+        # yet, only to the person who started it (or their organisation's admin).
+        if results is None and (RedliningResult.objects.filter(run=run).exists()
+                                or not RedliningRun.objects.filter(id=run.id).filter(client_name_q(request.user)).exists()):
+            return Response({"error": "Not found."}, status=status.HTTP_404_NOT_FOUND)
 
         response_data = {
             "run_id": str(run.id),
@@ -177,7 +182,9 @@ class DownloadRedliningResultAPIView(APIView):
         if output_type not in ("html", "docx", "pdf"):
             return Response({"error": "Invalid output_type. Must be html, docx, or pdf."}, status=status.HTTP_400_BAD_REQUEST)
 
-        result = get_object_or_404(RedliningResult, original_file__id=file_id)
+        from core.access import get_scoped_or_404
+        result = get_scoped_or_404(request.user, RedliningResult.objects.order_by("-id"), "original_file",
+                                   original_file__id=file_id)
 
         if result.status != "Completed":
             return Response({"error": "Redlining result not yet completed."}, status=status.HTTP_202_ACCEPTED)

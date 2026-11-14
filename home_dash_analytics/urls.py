@@ -1,5 +1,8 @@
 from django.urls import path
 from .views_layout import DashboardLayoutView
+from .views_intelligence import (BusinessDashboardView, IntelligenceRunsView, IntelligenceSourcesView,
+                                IntelligenceReviewView, IntelligenceRulesView, IntelligenceTokenUsageView,
+                                IntelligenceCompareView)
 from .views import (
     health,
     HomeDashAllView,
@@ -12,7 +15,19 @@ from .views import (
     HomeDashTopSearchesView,
 )
 
+from .views_agents import AgentOperationsView, AIBudgetView, ModelPriceView
+
 urlpatterns = [
+    path('business/', BusinessDashboardView.as_view()),
+    path('intelligence/runs/', IntelligenceRunsView.as_view()),
+    path('intelligence/sources/', IntelligenceSourcesView.as_view()),
+    path('intelligence/review/<int:file_id>/', IntelligenceReviewView.as_view()),
+    path('intelligence/rules/', IntelligenceRulesView.as_view()),
+    path('intelligence/tokens/', IntelligenceTokenUsageView.as_view()),
+    path('intelligence/compare/', IntelligenceCompareView.as_view()),
+    path('agents/', AgentOperationsView.as_view()),
+    path('agents/budget/', AIBudgetView.as_view()),
+    path('agents/prices/', ModelPriceView.as_view()),
     path("health/", health, name="home_analytics_health"),
 
     # Overview (alias of “me/” for nicer API)

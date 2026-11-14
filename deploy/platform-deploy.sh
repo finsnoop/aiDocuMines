@@ -11,7 +11,7 @@ SHA="${1:?usage: platform-deploy.sh <commit-sha>}"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 
-APP_SERVICES=(web celery celery_beat file_monitor)
+APP_SERVICES=(web celery celery_fast celery_beat file_monitor)
 HEALTH_URL="${HEALTH_URL:-http://127.0.0.1:8020/api/v1/health/}"
 COMPOSE=(docker compose -f docker-compose.yml)
 

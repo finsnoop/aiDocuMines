@@ -133,36 +133,6 @@ class TopicSerializer(serializers.ModelSerializer):
         text = getattr(obj, "latest_query_text", None) or ""
         return text[:140]
 
-'''
-class TopicSerializer(serializers.ModelSerializer):
-    user = serializers.StringRelatedField(read_only=True)
-    db_connection = DatabaseConnectionSerializer(read_only=True)
-    db_connection_id = serializers.PrimaryKeyRelatedField(
-        queryset=DatabaseConnection.objects.all(),
-        write_only=True,
-        source='db_connection',
-        required=False,
-        allow_null=True
-    )
-    files = FileSerializer(many=True, read_only=True)
-    has_data_source = serializers.BooleanField(source='has_data_source', read_only=True)
-
-    class Meta:
-        model = Topic
-        fields = [
-            'id',
-            'name',
-            'project_id',
-            'service_id',
-            'user',
-            'chat_date',
-            'db_connection',
-            'db_connection_id',
-            'files',
-            'has_data_source'
-        ]
-        read_only_fields = ['id', 'user', 'chat_date', 'db_connection', 'files', 'has_data_source']
-'''
 
 
 class QuerySerializer(serializers.ModelSerializer):

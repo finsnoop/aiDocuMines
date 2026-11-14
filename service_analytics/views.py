@@ -2,6 +2,7 @@ import logging
 from datetime import datetime, timedelta
 from django.db.models import Count, Avg, Q, Sum
 from django.utils import timezone
+from system_settings.verticals import is_enabled
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
@@ -56,13 +57,6 @@ client_id_param = openapi.Parameter("X-Client-ID", openapi.IN_HEADER, type=opena
 client_secret_param = openapi.Parameter("X-Client-Secret", openapi.IN_HEADER, type=openapi.TYPE_STRING, required=True)
 
 
-def get_user_from_client_id(client_id):
-    """Get user from OAuth2 client_id"""
-    try:
-        application = Application.objects.get(client_id=client_id)
-        return application.user
-    except Application.DoesNotExist:
-        return None
 
 
 class ServiceAnalyticsOverviewAPIView(APIView):
@@ -88,7 +82,7 @@ class ServiceAnalyticsOverviewAPIView(APIView):
                 status=status.HTTP_400_BAD_REQUEST
             )
 
-        user = get_user_from_client_id(client_id)
+        user = request.user
         if not user:
             return Response(
                 {"error": "Invalid client credentials"},
@@ -281,8 +275,9 @@ class ServiceAnalyticsOverviewAPIView(APIView):
             'success_rate': round(success_rate, 2),
             'total_output_files': total_output_files,
             'avg_execution_time': round(avg_execution_time, 2) if avg_execution_time else None,
-            'verticals_breakdown': verticals_breakdown,
-            'most_used_services': most_used_services[:10]
+            # Only industry verticals switched on for this organisation (system_settings/verticals.py).
+            'verticals_breakdown': [v for v in verticals_breakdown if is_enabled(request.user, v['vertical'])],
+            'most_used_services': [m for m in most_used_services if is_enabled(request.user, m.get('vertical'))][:10]
         }
 
         return Response(response_data, status=status.HTTP_200_OK)
@@ -418,7 +413,7 @@ class RecentActivityAPIView(APIView):
                 status=status.HTTP_400_BAD_REQUEST
             )
 
-        user = get_user_from_client_id(client_id)
+        user = request.user
         if not user:
             return Response(
                 {"error": "Invalid client credentials"},
@@ -523,6 +518,7 @@ class RecentActivityAPIView(APIView):
             })
 
         # Sort by started_at and limit
+        recent_executions = [e for e in recent_executions if is_enabled(request.user, e.get('vertical'))]
         recent_executions.sort(key=lambda x: x['started_at'], reverse=True)
         recent_executions = recent_executions[:limit]
 
@@ -874,7 +870,7 @@ class ToolDataInsightsAPIView(APIView):
                 status=status.HTTP_400_BAD_REQUEST
             )
 
-        user = get_user_from_client_id(client_id)
+        user = request.user
         if not user:
             return Response(
                 {"error": "Invalid client credentials"},
@@ -911,6 +907,7 @@ class ToolDataInsightsAPIView(APIView):
         if not vertical_filter or vertical_filter == 'regulatory_compliance':
             response_data['regulatory_compliance'] = self._get_rc_tool_data(client, limit)
 
+        response_data = {k: v for k, v in response_data.items() if is_enabled(user, k)}
         return Response(response_data, status=status.HTTP_200_OK)
 
     def _get_pe_tool_data(self, client, limit):
@@ -1278,7 +1275,7 @@ class ReportsListView(APIView):
         if not all([client_id, client_secret]):
             return Response({"error": "Missing X-Client-ID or X-Client-Secret"}, status=400)
 
-        user = get_user_from_client_id(client_id)
+        user = request.user
         if not user or not (hasattr(user, 'client') and user.client):
             return Response({"error": "Unauthorized"}, status=401)
 

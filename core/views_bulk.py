@@ -23,13 +23,6 @@ from core.prompt_templates import prompt_for
 logger = logging.getLogger(__name__)
 
 
-def get_user_from_client_id(client_id):
-    from oauth2_provider.models import Application
-    try:
-        application = Application.objects.get(client_id=client_id)
-        return application.user
-    except Application.DoesNotExist:
-        return None
 
 
 client_id_param = openapi.Parameter(
@@ -51,9 +44,11 @@ class BulkServiceCatalogView(APIView):
         responses={200: "List of services"}
     )
     def get(self, request):
+        from system_settings.verticals import filter_services
         handlers = {h["job_type"] for h in list_bulk_handlers()}
         enriched = []
-        for svc in ALL_SERVICES:
+        # Only the industry verticals switched on for this organisation (system_settings/verticals.py).
+        for svc in filter_services(request.user, ALL_SERVICES):
             entry = dict(svc)
             hjt = svc.get("handler_job_type")
             entry["has_handler"] = hjt in handlers if hjt else False
@@ -114,7 +109,7 @@ class BulkJobSubmitView(APIView):
         if not access_token:
             return Response({"error": "Authorization token missing"}, status=401)
 
-        user = get_user_from_client_id(client_id)
+        user = request.user
         if not user:
             return Response({"error": "Invalid client ID"}, status=401)
 
@@ -146,6 +141,9 @@ class BulkJobSubmitView(APIView):
                 {"error": f"Unknown service_type: {raw_job_type}. See /bulk/catalog/ for available services."},
                 status=400
             )
+        from system_settings.verticals import service_enabled
+        if not service_enabled(user, svc_entry):
+            return Response({"error": "This service is not enabled for your organisation."}, status=403)
 
         job_type = svc_entry.get("handler_job_type")
         if not job_type:
@@ -268,7 +266,7 @@ class BulkJobStatusView(APIView):
     )
     def get(self, request, job_id):
         client_id = request.headers.get("X-Client-ID")
-        user = get_user_from_client_id(client_id)
+        user = request.user
         if not user:
             return Response({"error": "Invalid client ID"}, status=401)
 
@@ -323,7 +321,7 @@ class BulkJobResultsView(APIView):
     )
     def get(self, request, job_id):
         client_id = request.headers.get("X-Client-ID")
-        user = get_user_from_client_id(client_id)
+        user = request.user
         if not user:
             return Response({"error": "Invalid client ID"}, status=401)
 
@@ -381,7 +379,7 @@ class BulkJobListView(APIView):
     )
     def get(self, request):
         client_id = request.headers.get("X-Client-ID")
-        user = get_user_from_client_id(client_id)
+        user = request.user
         if not user:
             return Response({"error": "Invalid client ID"}, status=401)
 
@@ -422,7 +420,7 @@ class BulkJobCancelView(APIView):
 
     def post(self, request, job_id):
         client_id = request.headers.get("X-Client-ID")
-        user = get_user_from_client_id(client_id)
+        user = request.user
         if not user:
             return Response({"error": "Invalid client ID"}, status=401)
 
@@ -450,7 +448,7 @@ class BulkJobRetryView(APIView):
 
     def post(self, request, job_id):
         client_id = request.headers.get("X-Client-ID")
-        user = get_user_from_client_id(client_id)
+        user = request.user
         if not user:
             return Response({"error": "Invalid client ID"}, status=401)
 

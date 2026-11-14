@@ -73,6 +73,12 @@ def async_rename_file(file_id, new_name, actor_user_id=None):
     if not has_file_access(actor, file, level="write"):
         return {"error": "Permission denied."}
 
+    from core.access import safe_filename
+    try:
+        new_name = safe_filename(new_name)  # a name, never a path
+    except ValueError:
+        return {"error": "Invalid file name."}
+
     old_path = file.filepath
     new_path = os.path.join(os.path.dirname(old_path), new_name)
 
@@ -330,13 +336,6 @@ def async_grant_public_link(file_link_id):
         link.save()
     except FileFolderLink.DoesNotExist:
         pass
-
-@shared_task(bind=True, max_retries=3, default_retry_delay=10)
-def async_password_protect_file(self, file_id, password_hint):
-    result = set_password_protection(file_id, password_hint)
-    if not result["success"]:
-        raise Exception(result["message"])
-    return result
 
 @shared_task
 def async_bulk_trash_folders(folder_ids):

@@ -28,6 +28,9 @@ class DeleteIndexView(APIView):
     permission_classes = [HasPermission('backup.delete')]
 
     def post(self, request):
+        from core.access import is_platform_superuser
+        if not is_platform_superuser(request.user):
+            return Response({"error": "Only a platform administrator can rebuild the shared search index."}, status=403)
         utils.delete_index()
         return Response({"message": "Index deleted."})
 
@@ -36,6 +39,9 @@ class ForceReindexView(APIView):
     permission_classes = [HasPermission('backup.create')]
 
     def post(self, request):
+        from core.access import is_platform_superuser
+        if not is_platform_superuser(request.user):
+            return Response({"error": "Only a platform administrator can rebuild the shared search index."}, status=403)
         reindex_files_task.delay()
         return Response({"message": "Reindex started."})
 
