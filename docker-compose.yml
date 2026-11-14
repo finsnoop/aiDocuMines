@@ -133,6 +133,10 @@ services:
     environment:
       - OPENAI_API_KEY=${OPENAI_API_KEY}
       - LITELLM_MASTER_KEY=${LITELLM_MASTER_KEY}
+      # Optional vendor keys (litellm/config.yaml): a vendor's models appear once its key is set
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - GEMINI_API_KEY=${GEMINI_API_KEY:-}
+      - OPENROUTER_API_KEY=${OPENROUTER_API_KEY:-}
     networks: [captain-overlay-network]
     healthcheck:
       test: ["CMD-SHELL", "python -c \"import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:4000/health/liveliness', timeout=5).status==200 else 1)\""]

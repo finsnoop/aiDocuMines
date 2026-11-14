@@ -17,6 +17,8 @@ class WatchdogTests(unittest.TestCase):
         docker = self.root / "docker"
         docker.write_text("""#!/bin/bash
 if [ "$1" = info ]; then exit "${FAKE_DOCKER_EXIT:-0}"; fi
+if [ "$1" = compose ]; then printf '%s
+' "$*" >> "$FAKE_LOG"; exit "${FAKE_COMPOSE_EXIT:-0}"; fi
 if [ "$1" = inspect ]; then
   name="${@: -1}"
   [ "$name" = aidocumines_web ] || exit 1
@@ -66,5 +68,41 @@ printf '%s\n' "$*" >> "$FAKE_LOG"
         self.assertNotEqual(result.returncode,0)
         self.assertIn("REDIS_PASSWORD is not set",result.stdout)
         self.assertEqual(self.calls(),[])
+
+    REQUIRED = ["SECRET_KEY", "POSTGRES_USER", "POSTGRES_PASSWORD", "POSTGRES_DB", "FIELD_ENCRYPTION_KEY",
+                "ENCRYPTION_SECRET_KEY", "REDIS_PASSWORD", "ELASTICSEARCH_PASSWORD", "ONLYOFFICE_JWT_SECRET",
+                "OO_POSTGRES_DB", "OO_POSTGRES_USER", "OO_POSTGRES_PASSWORD"]
+
+    def run_restart(self, env_text, **values):
+        script = self.root/"restart_containers.sh"
+        shutil.copy(ROOT/"restart_containers.sh", script)
+        (self.root/".env").write_text(env_text)
+        return subprocess.run(["bash", str(script)], env={**self.env, **values}, cwd=self.root,
+                              capture_output=True, text=True, timeout=120)
+
+    def test_restart_preflight_names_every_missing_variable(self):
+        result = self.run_restart("SECRET_KEY=test-long-random-key\n")
+        self.assertNotEqual(result.returncode, 0)
+        for name in self.REQUIRED[1:]:
+            self.assertIn(f"{name} is not set", result.stdout)
+        self.assertNotIn("n is not set", result.stdout.replace("_n is", ""))   # no stray tokens in the list
+        self.assertEqual(self.calls(), [])
+
+    def test_restart_preflight_refuses_django_insecure_key(self):
+        env = "".join(f"{k}=value-{i}\n" for i, k in enumerate(self.REQUIRED)).replace(
+            "SECRET_KEY=value-0", "SECRET_KEY=django-insecure-abc")
+        result = self.run_restart(env)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("placeholder", result.stdout)
+        self.assertEqual(self.calls(), [])
+
+    def test_restart_preflight_passes_with_every_variable_set(self):
+        env = "".join(f"{k}=value-{i}\n" for i, k in enumerate(self.REQUIRED))
+        result = self.run_restart(env, FAKE_COMPOSE_EXIT="1")   # stop at the build: nothing real is touched
+        self.assertNotIn("is not set", result.stdout)
+        self.assertNotIn("placeholder", result.stdout)
+        self.assertTrue(any(c.startswith("compose") and "build" in c for c in self.calls()), result.stdout)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("Nothing was restarted", result.stdout)
 
 if __name__ == "__main__": unittest.main(verbosity=2)

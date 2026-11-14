@@ -57,6 +57,18 @@ PRACTICE_AREAS = [
     "Private equity and M&A", "Litigation and class actions", "Employment", "Intellectual property",
     "Regulatory, privacy and compliance", "General",
 ]
+# Industry verticals behind each practice area: an area is offered while any of them is switched on.
+PRACTICE_AREA_VERTICALS = {
+    "Private equity and M&A": ["private_equity"], "Litigation and class actions": ["class_actions", "ip_litigation"],
+    "Employment": ["labor_employment"], "Intellectual property": ["ip_litigation"],
+    "Regulatory, privacy and compliance": ["regulatory_compliance"], "General": ["core"],
+}
+
+
+def practice_areas_for(user):
+    from system_settings.verticals import enabled_for
+    on = enabled_for(user)
+    return [a for a in PRACTICE_AREAS if any(v in on for v in PRACTICE_AREA_VERTICALS[a])]
 SERVICES_BY_TYPE = {s["service_type"]: s for s in ALL_SERVICES}
 
 
@@ -260,7 +272,7 @@ class MatterListView(APIView):
         matters = list(qs.annotate(member_total=Count("members", distinct=True))
                        .order_by("-updated_at")[(page - 1) * size: page * size])
         items = _summaries(matters, request.user)
-        return Response(_paginated(items, total, page, size, data=items, practice_areas=PRACTICE_AREAS))
+        return Response(_paginated(items, total, page, size, data=items, practice_areas=practice_areas_for(request.user)))
 
 
 class MatterCreateView(APIView):

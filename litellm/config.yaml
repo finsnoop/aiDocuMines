@@ -16,17 +16,23 @@ model_list:
       model: "openai/*"
       api_key: os.environ/OPENAI_API_KEY
 
-  # ---- Anthropic (all models) — enable by setting ANTHROPIC_API_KEY ----
-  # - model_name: "anthropic/*"
-  #   litellm_params:
-  #     model: "anthropic/*"
-  #     api_key: os.environ/ANTHROPIC_API_KEY
+  # ---- Other vendors: each is listed once its key is set in .env ----
+  # (Mistral, DeepSeek, Groq and Alibaba routes are left out on purpose: without a key LiteLLM
+  #  would still list their whole catalogue. OpenRouter covers those vendors with one key.)
+  - model_name: "anthropic/*"          # Claude
+    litellm_params:
+      model: "anthropic/*"
+      api_key: os.environ/ANTHROPIC_API_KEY
 
-  # ---- Google Gemini (all models) — enable by setting GEMINI_API_KEY ----
-  # - model_name: "gemini/*"
-  #   litellm_params:
-  #     model: "gemini/*"
-  #     api_key: os.environ/GEMINI_API_KEY
+  - model_name: "gemini/*"             # Google Gemini
+    litellm_params:
+      model: "gemini/*"
+      api_key: os.environ/GEMINI_API_KEY
+
+  - model_name: "openrouter/*"         # one key: Meta Llama, Alibaba Qwen, Mistral, DeepSeek, xAI, ...
+    litellm_params:
+      model: "openrouter/*"
+      api_key: os.environ/OPENROUTER_API_KEY
 
   # ---- Local Ollama (every model pulled into the aidocumines_ollama container) ----
   - model_name: "ollama/*"

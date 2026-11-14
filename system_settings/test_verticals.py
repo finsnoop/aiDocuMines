@@ -138,6 +138,15 @@ class VerticalTests(Base):
         self.assertEqual(self.switch(self.firm_a, finance='off').status_code, 400)
         self.assertFalse(VerticalSetting.objects.exists())
 
+    def test_matter_practice_areas_follow_the_switches(self):
+        self.switch(self.firm_a, private_equity=False, ip_litigation=False)
+        areas = client_for(self.tok_a1).get('/api/v1/core/projects/').json()['practice_areas']
+        self.assertNotIn('Private equity and M&A', areas)
+        self.assertNotIn('Intellectual property', areas)
+        self.assertIn('Litigation and class actions', areas)    # class actions is still on
+        self.assertIn('General', areas)
+        self.assertIn('Private equity and M&A', client_for(self.tok_b1).get('/api/v1/core/projects/').json()['practice_areas'])
+
     def test_changes_are_audited(self):
         from custom_authentication.models import AdminAuditEvent
         self.switch(self.firm_a, private_equity=False)
