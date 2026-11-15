@@ -124,7 +124,7 @@ services:
     image: ghcr.io/berriai/litellm:main-stable
     container_name: aidocumines_litellm
     restart: unless-stopped
-    mem_limit: ${LITELLM_MEM_LIMIT:-1g}
+    mem_limit: ${LITELLM_MEM_LIMIT:-1536m}   # one worker uses ~1 GB with several vendor catalogues loaded
     logging: *logging
     # One worker is plenty for forwarding requests (async); each extra one costs ~450 MB.
     command: ["--config", "/app/config.yaml", "--port", "4000", "--num_workers", "${LITELLM_WORKERS:-1}"]
