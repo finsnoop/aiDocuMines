@@ -1,16 +1,17 @@
 # document_structures/utils.py
 
 import os
-from unstructured.partition.pdf import partition_pdf
-from unstructured.partition.text import partition_text
-from unstructured.partition.auto import partition
+# unstructured (and the PyTorch stack behind it) loads on first use (core/lazy_imports.py).
+from core.lazy_imports import lazy_callable
+partition_pdf = lazy_callable("unstructured.partition.pdf", "partition_pdf")
+partition_text = lazy_callable("unstructured.partition.text", "partition_text")
+partition = lazy_callable("unstructured.partition.auto", "partition")
 
 from document_structures import models
 from core.models import File, Run, User
 
 from django.db import transaction
 
-from sentence_transformers import SentenceTransformer
 import numpy as np
 
 import logging

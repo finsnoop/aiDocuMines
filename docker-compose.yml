@@ -126,7 +126,8 @@ services:
     restart: unless-stopped
     mem_limit: ${LITELLM_MEM_LIMIT:-1g}
     logging: *logging
-    command: ["--config", "/app/config.yaml", "--port", "4000", "--num_workers", "2"]
+    # One worker is plenty for forwarding requests (async); each extra one costs ~450 MB.
+    command: ["--config", "/app/config.yaml", "--port", "4000", "--num_workers", "${LITELLM_WORKERS:-1}"]
     ports: ["127.0.0.1:4000:4000"]
     volumes:
       - ./litellm/config.yaml:/app/config.yaml:ro

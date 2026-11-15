@@ -74,15 +74,15 @@ except ImportError:
     CHUNK_OVERLAP = 64
     MAX_CHUNK_TEXT_LENGTH = 5000
 
-try:
-    from sentence_transformers import SentenceTransformer
-except ImportError as e:
-    raise RuntimeError("Install with: pip install sentence-transformers") from e
-
-
 # ─────────────── Embeddings ─────────────────────────────────
+# sentence-transformers (and PyTorch behind it) is imported when the model is first needed, not when
+# every worker starts: that import alone costs each process several hundred MB (core/lazy_imports.py).
 @lru_cache(maxsize=1)
-def _get_model() -> SentenceTransformer:
+def _get_model():
+    try:
+        from sentence_transformers import SentenceTransformer
+    except ImportError as e:
+        raise RuntimeError("Install with: pip install sentence-transformers") from e
     LOGGER.info("Loading embedding model '%s' ...", MODEL_NAME)
     return SentenceTransformer(MODEL_NAME)
 

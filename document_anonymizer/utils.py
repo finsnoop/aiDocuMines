@@ -5,10 +5,12 @@ import re
 import logging
 from django.conf import settings
 from docx import Document
-import spacy
-from presidio_analyzer import AnalyzerEngine
-from presidio_anonymizer import AnonymizerEngine
-from unstructured.partition.pdf import partition_pdf
+# Heavy NLP libraries load on first use, not when every worker starts (core/lazy_imports.py).
+from core.lazy_imports import LazyModule, lazy_callable
+spacy = LazyModule("spacy")
+AnalyzerEngine = lazy_callable("presidio_analyzer", "AnalyzerEngine")
+AnonymizerEngine = lazy_callable("presidio_anonymizer", "AnonymizerEngine")
+partition_pdf = lazy_callable("unstructured.partition.pdf", "partition_pdf")
 from document_anonymizer.models import Anonymize
 
 from document_anonymizer.pii_taxonomy import (
