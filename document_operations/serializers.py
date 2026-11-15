@@ -78,7 +78,8 @@ class FileFolderLinkSerializer(serializers.ModelSerializer):
         return None
 
     def get_shared_with(self, obj):
-        access_entries = obj.access_entries.select_related('user').all()
+        # .all() reads a prefetch when the view made one (users joined there); else one query per link.
+        access_entries = obj.access_entries.all()
         return [
             {
                 "user_id": entry.user.id,
@@ -152,6 +153,12 @@ class RecursiveFolderSerializer(serializers.ModelSerializer):
     def get_subfolders(self, obj):
         include_trashed = self.context.get("include_trashed", False)
         request = self.context.get("request")
+        tree = self.context.get("tree")
+        if tree is not None:   # preloaded by the view: no queries per folder
+            kids = [f for f in tree["children"].get(obj.id, [])
+                    if include_trashed or (not f.is_trashed and f.id not in tree["hidden_folders"])]
+            kids.sort(key=lambda f: f.name)
+            return RecursiveFolderSerializer(kids, many=True, context=self.context).data
         children = obj.subfolders.all()
         if not include_trashed:
             children = children.filter(is_trashed=False)
@@ -171,6 +178,19 @@ class RecursiveFolderSerializer(serializers.ModelSerializer):
 
         include_trashed = self.context.get("include_trashed", False)
         request = self.context.get("request")
+        tree = self.context.get("tree")
+        if tree is not None:   # preloaded by the view: no queries per folder
+            all_links = tree["links"].get(obj.id, [])
+            hidden = tree["hidden_links"]
+            if include_trashed:
+                chosen = [l for l in all_links if l.is_trashed or l.id in hidden]
+                data = FileFolderLinkSerializer(chosen, many=True, context=self.context).data
+                for item in data:
+                    if item.get("id") in hidden:
+                        item["hidden_by_me"] = True
+                return data
+            chosen = [l for l in all_links if not l.is_trashed and l.id not in hidden]
+            return FileFolderLinkSerializer(chosen, many=True, context=self.context).data
         links = obj.files.all().select_related("file")
         if include_trashed:
             trashed_links = links.filter(is_trashed=True)
@@ -197,6 +217,9 @@ class RecursiveFolderSerializer(serializers.ModelSerializer):
             return FileFolderLinkSerializer(links, many=True, context=self.context).data
 
     def get_project_name(self, obj):
+        tree = self.context.get("tree")
+        if tree is not None:
+            return tree["project_names"].get(obj.project_id, obj.project_id)
         try:
             from core.models import Project
             project = Project.objects.filter(id=obj.project_id).first()

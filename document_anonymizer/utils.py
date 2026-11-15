@@ -690,10 +690,41 @@ def calculate_anonymization_insights(user):
 def get_shared_anonymization_service():
     return AnonymizationService()
 
+SUPPORTED_ENTITIES_CACHE_KEY = "anonymizer:supported-entities:v1"
+# spaCy's English NER labels (OntoNotes); used until a worker reports the installed model's own list.
+_SPACY_EN_LABELS = ["CARDINAL", "DATE", "EVENT", "FAC", "GPE", "LANGUAGE", "LAW", "LOC", "MONEY", "NORP",
+                    "ORDINAL", "ORG", "PERCENT", "PERSON", "PRODUCT", "QUANTITY", "TIME", "WORK_OF_ART"]
+
+
+def list_supported_entities():
+    """Entity labels for the UI without loading NLP models in the web tier.
+
+    The installed models' exact list is computed once by a Celery worker (which loads the models anyway to
+    anonymise) and cached for every replica; until then the anonymiser's own taxonomy is returned.
+    Building the Presidio analyser per request took ~90 s and ~1.5 GB per web process."""
+    from django.core.cache import cache
+    try:
+        cached = cache.get(SUPPORTED_ENTITIES_CACHE_KEY)
+    except Exception:
+        cached = None
+    if cached:
+        return cached
+    from document_anonymizer import pii_taxonomy as t
+    presidio = sorted(set().union(t.HIGH, t.MED_HIGH, t.MED, t.LOW) - set(t.NON_PII_ENTITY_TYPES))
+    try:
+        from document_anonymizer.tasks import cache_supported_entities
+        cache_supported_entities.delay()
+    except Exception:
+        logger.warning("Could not queue the supported-entities refresh", exc_info=True)
+    return {"spacy": _SPACY_EN_LABELS, "presidio": presidio,
+            "meta": {"spacy_model": None, "spacy_pipes": [], "source": "taxonomy (runtime list pending)"}}
+
+
 def list_supported_entities_runtime():
     """
     Returns the actual label sets available at runtime.
     Adds model/pipeline metadata, and avoids re-initializing heavy models.
+    Loads the NLP models: call from a Celery worker, not from a web request (see list_supported_entities).
     """
     data = {
         "spacy": [],

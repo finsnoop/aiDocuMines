@@ -64,7 +64,7 @@ class AnonymizationTaskStatusView(APIView):
         file_type = normalize_file_type(request.query_params.get("file_type"))
         run_id = request.query_params.get("run_id")
 
-        if not client_id or not client_secret or (not file_id and not run_id):
+        if not file_id and not run_id:
             return Response({"error": "Missing required parameters"}, status=400)
 
         user = request.user

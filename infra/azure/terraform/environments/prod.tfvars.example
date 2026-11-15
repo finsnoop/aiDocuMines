@@ -1,0 +1,25 @@
+# Copy to prod.tfvars (not committed) and fill in.
+subscription_id = "00000000-0000-0000-0000-000000000000"
+location        = "southafricanorth"
+prefix          = "aidoc"
+environment     = "prod"
+alert_email     = "operations@example.com"
+
+hostnames = {
+  app        = "app.aidocumines.com"
+  api        = "api.aidocumines.com"
+  backend    = "auth.aidocumines.com"
+  onlyoffice = "docs.aidocumines.com"
+}
+
+image_tag = "2026.11.1"
+
+# Sizing: defaults come from the 2,500-user load test (docs/AZURE.md). Raise max_replicas for more tenants.
+# api = { cpu = 1, memory = "2Gi", min_replicas = 2, max_replicas = 8, concurrent_requests = 40 }
+
+# Zone-redundant database standby (recommended for production SLAs; doubles database compute + storage):
+# postgres = { sku_name = "GP_Standard_D4ds_v5", storage_mb = 131072, version = "16",
+#              high_availability = true, backup_retention_days = 14, geo_redundant_backup = true }
+
+enable_defender     = false
+allowed_admin_cidrs = []

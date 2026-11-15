@@ -1,0 +1,110 @@
+# Deploy the API layer and infrastructure to Azure (manual, approved).
+#
+# Setup (once): an Entra app registration with a federated credential for this repository's
+# "production" environment, granted Contributor + User Access Administrator on the subscription (or the
+# resource groups) and "Storage Blob Data Contributor" on the Terraform state account. Repository
+# variables: AZURE_CLIENT_ID, AZURE_TENANT_ID, AZURE_SUBSCRIPTION_ID, TF_BACKEND (contents of
+# prod.backend.hcl) and TF_VARS (contents of prod.tfvars). No passwords are stored: OIDC tokens only.
+name: Azure deploy
+
+on:
+  workflow_dispatch:
+    inputs:
+      image_tag:
+        description: "Image tag to build and deploy (e.g. 2026.11.2)"
+        required: true
+
+permissions:
+  id-token: write
+  contents: read
+
+concurrency:
+  group: azure-production
+  cancel-in-progress: false
+
+jobs:
+  plan:
+    runs-on: ubuntu-24.04
+    environment: production-plan
+    defaults:
+      run:
+        working-directory: infra/azure/terraform
+    steps:
+      - uses: actions/checkout@v4
+      - uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.13.5
+      - name: Configuration
+        run: |
+          printf '%s\n' "${{ vars.TF_BACKEND }}" > environments/prod.backend.hcl
+          printf '%s\n' "${{ vars.TF_VARS }}" > environments/prod.tfvars
+      - run: terraform init -input=false -backend-config=environments/prod.backend.hcl
+        env: { ARM_USE_OIDC: "true", ARM_CLIENT_ID: "${{ vars.AZURE_CLIENT_ID }}", ARM_TENANT_ID: "${{ vars.AZURE_TENANT_ID }}", ARM_SUBSCRIPTION_ID: "${{ vars.AZURE_SUBSCRIPTION_ID }}" }
+      - run: terraform plan -input=false -var-file=environments/prod.tfvars -var image_tag=${{ inputs.image_tag }} -out plan.out
+        env: { ARM_USE_OIDC: "true", ARM_CLIENT_ID: "${{ vars.AZURE_CLIENT_ID }}", ARM_TENANT_ID: "${{ vars.AZURE_TENANT_ID }}", ARM_SUBSCRIPTION_ID: "${{ vars.AZURE_SUBSCRIPTION_ID }}" }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: plan
+          path: infra/azure/terraform/plan.out
+          retention-days: 3
+
+  image:
+    runs-on: ubuntu-24.04
+    needs: plan
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+      - uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+      - name: Build and push the API image
+        run: |
+          REGISTRY=$(az acr list --query "[?starts_with(name, 'acraidocprod')].loginServer | [0]" -o tsv)
+          az acr login --name "${REGISTRY%%.*}"
+          docker build -t "$REGISTRY/aidocumines-app:${{ inputs.image_tag }}" .
+          docker push "$REGISTRY/aidocumines-app:${{ inputs.image_tag }}"
+
+  apply:
+    runs-on: ubuntu-24.04
+    needs: image
+    environment: production          # requires an approver in the repository settings
+    defaults:
+      run:
+        working-directory: infra/azure/terraform
+    steps:
+      - uses: actions/checkout@v4
+      - uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.13.5
+      - uses: actions/download-artifact@v4
+        with:
+          name: plan
+          path: infra/azure/terraform
+      - name: Configuration
+        run: printf '%s\n' "${{ vars.TF_BACKEND }}" > environments/prod.backend.hcl
+      - run: terraform init -input=false -backend-config=environments/prod.backend.hcl
+        env: { ARM_USE_OIDC: "true", ARM_CLIENT_ID: "${{ vars.AZURE_CLIENT_ID }}", ARM_TENANT_ID: "${{ vars.AZURE_TENANT_ID }}", ARM_SUBSCRIPTION_ID: "${{ vars.AZURE_SUBSCRIPTION_ID }}" }
+      - run: terraform apply -input=false plan.out
+        env: { ARM_USE_OIDC: "true", ARM_CLIENT_ID: "${{ vars.AZURE_CLIENT_ID }}", ARM_TENANT_ID: "${{ vars.AZURE_TENANT_ID }}", ARM_SUBSCRIPTION_ID: "${{ vars.AZURE_SUBSCRIPTION_ID }}" }
+      - name: Run database migrations
+        run: |
+          RG=$(terraform output -raw resource_group)
+          JOB=$(terraform output -raw migrate_job)
+          EXECUTION=$(az containerapp job start -n "$JOB" -g "$RG" --query name -o tsv)
+          for i in $(seq 1 60); do
+            STATUS=$(az containerapp job execution show -n "$JOB" -g "$RG" --job-execution-name "$EXECUTION" --query properties.status -o tsv)
+            echo "migrations: $STATUS"; [ "$STATUS" = "Succeeded" ] && exit 0; [ "$STATUS" = "Failed" ] && exit 1; sleep 10
+          done
+          exit 1

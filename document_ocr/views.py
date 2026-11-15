@@ -144,7 +144,7 @@ class CheckOCRStatusAPIView(ClientScopedViewMixin):
         client_secret = request.headers.get("X-Client-Secret")
         ocr_run_id = request.query_params.get("ocr_run_id")
 
-        if not all([client_id, client_secret, ocr_run_id]):
+        if not all([ocr_run_id]):
             return Response({"error": "Missing required parameters"}, status=status.HTTP_400_BAD_REQUEST)
 
         user = request.user

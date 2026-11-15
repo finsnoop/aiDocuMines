@@ -152,16 +152,50 @@ def _can_grant_platform_roles(request):
 from rest_framework.throttling import AnonRateThrottle
 
 
-class AuthBurstThrottle(AnonRateThrottle):
-    """Sign-in, sign-up, password reset and token refresh, per IP address."""
-    scope = "auth"
+def _auth_subject(request) -> str:
+    """The account an anonymous auth request is about: the submitted email/username, or the refresh token."""
+    import hashlib
+    try:
+        data = request.data
+    except Exception:
+        return ""
+    subject = ""
+    if hasattr(data, "get"):
+        subject = str(data.get("email") or data.get("username") or "").strip().lower()
+        if not subject and data.get("refresh_token"):
+            subject = "rt:" + str(data.get("refresh_token"))
+    return hashlib.sha256(subject.encode()).hexdigest()[:32] if subject else ""
 
+
+class _FailOpenThrottle(AnonRateThrottle):
     def allow_request(self, request, view):
         try:
             return super().allow_request(request, view)
         except Exception:  # cache (Redis) unavailable: let people sign in
             logger.warning("Auth throttle unavailable; allowing request", exc_info=True)
             return True
+
+
+class AuthBurstThrottle(_FailOpenThrottle):
+    """Per account (network address + submitted email, or refresh token): stops guessing one account.
+
+    Keyed by account, not only by address: a firm's hundreds of users usually share one office
+    address, and a per-address limit would lock the whole firm out at 9 a.m. Repeated failures
+    also lock the account itself (_login_locked)."""
+    scope = "auth"
+
+    def get_cache_key(self, request, view):
+        key = super().get_cache_key(request, view)
+        subject = _auth_subject(request)
+        return f"{key}:{subject}" if key and subject else key
+
+
+class AuthNetworkThrottle(_FailOpenThrottle):
+    """Per network address, generous (THROTTLE_AUTH_NETWORK): stops one address spraying many accounts."""
+    scope = "auth_network"
+
+
+AUTH_THROTTLES = [AuthBurstThrottle, AuthNetworkThrottle]
 
 
 def _login_locked(email):
@@ -213,7 +247,7 @@ def _application_for(client_id, client_secret, user=None):
 class SignupView(APIView):
     authentication_classes = []
     permission_classes = [AllowAny]
-    throttle_classes = [AuthBurstThrottle]
+    throttle_classes = AUTH_THROTTLES
 
     # ✅ Define the request body schema
     signup_request_schema = openapi.Schema(
@@ -384,7 +418,7 @@ class SignupView(APIView):
 class LoginView(APIView):
     authentication_classes = []
     permission_classes = [AllowAny]
-    throttle_classes = [AuthBurstThrottle]
+    throttle_classes = AUTH_THROTTLES
 
     @swagger_auto_schema(
         operation_description="Authenticate user and return an OAuth2 token. If 2FA is enabled, requires a 2FA code.",
@@ -515,7 +549,7 @@ class LogoutView(APIView):
 class PasswordResetRequestView(APIView):
     authentication_classes = []
     permission_classes = [AllowAny]
-    throttle_classes = [AuthBurstThrottle]
+    throttle_classes = AUTH_THROTTLES
 
     @swagger_auto_schema(
         operation_description="Request a password reset token.",
@@ -549,7 +583,7 @@ class PasswordResetRequestView(APIView):
 class PasswordResetView(APIView):
     authentication_classes = []
     permission_classes = [AllowAny]
-    throttle_classes = [AuthBurstThrottle]
+    throttle_classes = AUTH_THROTTLES
 
     @transaction.atomic
     def post(self, request):
@@ -599,7 +633,7 @@ class PasswordResetView(APIView):
 class RefreshTokenView(APIView):
     authentication_classes = []
     permission_classes = [AllowAny]
-    throttle_classes = [AuthBurstThrottle]
+    throttle_classes = AUTH_THROTTLES
 
     @swagger_auto_schema(
         operation_description="Refresh an expired access token using a refresh token.",
@@ -772,7 +806,8 @@ class ListUsersView(APIView):
 
         # Superusers can see all users, admins can only see users from their client
         from core.access import scope_users
-        users = scope_users(User.objects.all(), request.user)
+        # Organisation and roles in two batched queries, not two per user (500 users: ~1,000 -> 3 queries).
+        users = scope_users(User.objects.all(), request.user).select_related("client").prefetch_related("groups")
 
         user_data = []
         for user in users:

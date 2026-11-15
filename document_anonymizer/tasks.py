@@ -448,3 +448,16 @@ def generate_anonymization_insights_task(user_id):
     logger.info(f"✅ Anonymization insights generated for user_id={user_id}")
     return insights
 
+
+
+@shared_task(name="document_anonymizer.cache_supported_entities", ignore_result=True, soft_time_limit=600)
+def cache_supported_entities():
+    """Compute the installed models' entity labels once and share them with every web replica (7 days)."""
+    from django.core.cache import cache
+    from document_anonymizer.utils import SUPPORTED_ENTITIES_CACHE_KEY, list_supported_entities_runtime
+    if not cache.add(SUPPORTED_ENTITIES_CACHE_KEY + ":lock", 1, timeout=900):
+        return   # another worker is already computing it
+    data = list_supported_entities_runtime()
+    if data.get("presidio") or data.get("spacy"):
+        data["meta"]["source"] = "runtime"
+        cache.set(SUPPORTED_ENTITIES_CACHE_KEY, data, 7 * 24 * 3600)

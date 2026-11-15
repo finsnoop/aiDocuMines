@@ -72,7 +72,7 @@ class SubmitVersionAPIView(APIView):
         file_id = request.query_params.get("file_id")
         change_summary = request.query_params.get("change_summary", "")
 
-        if not all([client_id, client_secret, file_id]):
+        if not all([file_id]):
             return Response({"error": "Missing required parameters"}, status=status.HTTP_400_BAD_REQUEST)
 
         user = request.user
@@ -114,7 +114,7 @@ class ListVersionsAPIView(APIView):
         client_secret = request.headers.get("X-Client-Secret")
         file_id = request.query_params.get("file_id")
 
-        if not all([client_id, client_secret, file_id]):
+        if not all([file_id]):
             return Response({"error": "Missing required parameters"}, status=status.HTTP_400_BAD_REQUEST)
 
         user = request.user
@@ -164,7 +164,7 @@ class GetVersionDiffAPIView(APIView):
         from_version_id = request.query_params.get("from_version")
         to_version_id = request.query_params.get("to_version")
 
-        if not all([client_id, client_secret, file_id, from_version_id, to_version_id]):
+        if not all([file_id, from_version_id, to_version_id]):
             return Response({"error": "Missing required parameters"}, status=status.HTTP_400_BAD_REQUEST)
 
         user = request.user
@@ -216,7 +216,7 @@ class CompareVersionsDetailedView(APIView):
         from_version_id = request.query_params.get("from_version")
         to_version_id = request.query_params.get("to_version")
 
-        if not all([client_id, client_secret, file_id, from_version_id, to_version_id]):
+        if not all([file_id, from_version_id, to_version_id]):
             return Response({"error": "Missing required parameters"}, status=status.HTTP_400_BAD_REQUEST)
 
         user = request.user
@@ -270,9 +270,6 @@ class CheckVersionStatusAPIView(APIView):
         client_secret = request.headers.get("X-Client-Secret")
         file_id = request.query_params.get("file_id")
         version_id = request.query_params.get("version_id")
-
-        if not all([client_id, client_secret]):
-            return Response({"error": "Missing required parameters"}, status=status.HTTP_400_BAD_REQUEST)
 
         user = request.user
         if not user:
@@ -330,7 +327,7 @@ class DownloadVersionAPIView(APIView):
         client_secret = request.headers.get("X-Client-Secret")
         version_id = request.query_params.get("version_id")
 
-        if not all([client_id, client_secret, version_id]):
+        if not all([version_id]):
             return Response({"error": "Missing required parameters"}, status=status.HTTP_400_BAD_REQUEST)
 
         user = request.user
@@ -383,7 +380,7 @@ class RetentionPolicyView(APIView):
         client_secret = request.headers.get("X-Client-Secret")
         project_id = request.query_params.get("project_id")
 
-        if not all([client_id, client_secret, project_id]):
+        if not all([project_id]):
             return Response({"error": "Missing required parameters"}, status=status.HTTP_400_BAD_REQUEST)
 
         user = request.user
@@ -420,7 +417,7 @@ class RetentionPolicyView(APIView):
         client_secret = request.headers.get("X-Client-Secret")
         project_id = request.query_params.get("project_id")
 
-        if not all([client_id, client_secret, project_id]):
+        if not all([project_id]):
             return Response({"error": "Missing required parameters"}, status=status.HTTP_400_BAD_REQUEST)
 
         user = request.user
@@ -469,7 +466,7 @@ class VersionManifestView(APIView):
         client_secret = request.headers.get("X-Client-Secret")
         version_id = request.query_params.get("version_id")
 
-        if not all([client_id, client_secret, version_id]):
+        if not all([version_id]):
             return Response({"error": "Missing required parameters"}, status=status.HTTP_400_BAD_REQUEST)
 
         user = request.user
@@ -510,7 +507,7 @@ class ArchiveVersionView(APIView):
         client_secret = request.headers.get("X-Client-Secret")
         version_id = request.query_params.get("version_id")
 
-        if not all([client_id, client_secret, version_id]):
+        if not all([version_id]):
             return Response({"error": "Missing required parameters"}, status=status.HTTP_400_BAD_REQUEST)
 
         user = request.user
@@ -561,7 +558,7 @@ class RestoreVersionView(APIView):
         client_secret = request.headers.get("X-Client-Secret")
         version_id = request.query_params.get("version_id")
 
-        if not all([client_id, client_secret, version_id]):
+        if not all([version_id]):
             return Response({"error": "Missing required parameters"}, status=status.HTTP_400_BAD_REQUEST)
 
         user = request.user
@@ -609,7 +606,7 @@ class LockVersionView(APIView):
         client_secret = request.headers.get("X-Client-Secret")
         version_id = request.query_params.get("version_id")
 
-        if not all([client_id, client_secret, version_id]):
+        if not all([version_id]):
             return Response({"error": "Missing required parameters"}, status=status.HTTP_400_BAD_REQUEST)
 
         user = request.user

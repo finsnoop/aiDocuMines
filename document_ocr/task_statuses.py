@@ -62,11 +62,7 @@ class OCRTaskStatusView(APIView):
         file_id = request.query_params.get("file_id")
         run_id = request.query_params.get("run_id")
 
-        # ✅ Ensure authentication headers are present
-        if not client_id or not client_secret:
-            return Response({"error": "Missing authentication parameters"}, status=400)
-
-        # ✅ Validate client ID and retrieve user
+        # Identity comes from the bearer token (the browser holds no client secret).
         user = request.user
         if not user:
             return Response({"error": "Invalid client ID"}, status=403)

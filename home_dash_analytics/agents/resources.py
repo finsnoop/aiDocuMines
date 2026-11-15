@@ -148,7 +148,7 @@ def assess(force=False) -> dict:
         if previous is not None or state != 'healthy':
             emit('resource', f'capacity.{state}', severity={'critical': 'critical', 'strained': 'warning'}.get(state, 'info'),
                  reasons=report['reasons'])
-    cache.set(CACHE_KEY, report, 30)
+    cache.set(CACHE_KEY, report, 150)   # beat refreshes it every minute; pages never wait for a live check
     return report
 
 

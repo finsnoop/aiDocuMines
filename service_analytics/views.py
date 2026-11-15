@@ -76,11 +76,7 @@ class ServiceAnalyticsOverviewAPIView(APIView):
         client_id = request.headers.get("X-Client-ID")
         client_secret = request.headers.get("X-Client-Secret")
 
-        if not all([client_id, client_secret]):
-            return Response(
-                {"error": "Missing X-Client-ID or X-Client-Secret headers"},
-                status=status.HTTP_400_BAD_REQUEST
-            )
+        # Identity comes from the bearer token; the browser no longer holds a client secret.
 
         user = request.user
         if not user:
@@ -407,11 +403,7 @@ class RecentActivityAPIView(APIView):
         client_secret = request.headers.get("X-Client-Secret")
         limit = int(request.query_params.get("limit", 20))
 
-        if not all([client_id, client_secret]):
-            return Response(
-                {"error": "Missing X-Client-ID or X-Client-Secret headers"},
-                status=status.HTTP_400_BAD_REQUEST
-            )
+        # Identity comes from the bearer token; the browser no longer holds a client secret.
 
         user = request.user
         if not user:
@@ -864,11 +856,7 @@ class ToolDataInsightsAPIView(APIView):
         vertical_filter = request.query_params.get("vertical", None)
         limit = int(request.query_params.get("limit", 10))
 
-        if not all([client_id, client_secret]):
-            return Response(
-                {"error": "Missing X-Client-ID or X-Client-Secret headers"},
-                status=status.HTTP_400_BAD_REQUEST
-            )
+        # Identity comes from the bearer token; the browser no longer holds a client secret.
 
         user = request.user
         if not user:
@@ -1271,10 +1259,7 @@ class ReportsListView(APIView):
 
     def get(self, request):
         client_id = request.headers.get("X-Client-ID")
-        client_secret = request.headers.get("X-Client-Secret")
-        if not all([client_id, client_secret]):
-            return Response({"error": "Missing X-Client-ID or X-Client-Secret"}, status=400)
-
+        # Identity comes from the bearer token; the browser no longer holds a client secret.
         user = request.user
         if not user or not (hasattr(user, 'client') and user.client):
             return Response({"error": "Unauthorized"}, status=401)

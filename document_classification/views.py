@@ -84,11 +84,9 @@ class SubmitClusteringAPIView(APIView):
         client_id = request.headers.get("X-Client-ID")
         client_secret = request.headers.get("X-Client-Secret")
         
-        if not all([client_id, client_secret]):
-            return Response({"error": "Missing client credentials"}, status=status.HTTP_400_BAD_REQUEST)
+        # Identity from the bearer token, never from a header (the browser holds no client secret).
         
-        application = get_object_or_404(Application, client_id=client_id)
-        user = application.user
+        user = request.user
         client = get_client_from_user(user)
         
         # Validate input
@@ -316,11 +314,9 @@ class SubClusterAPIView(APIView):
         client_id = request.headers.get("X-Client-ID")
         client_secret = request.headers.get("X-Client-Secret")
 
-        if not all([client_id, client_secret]):
-            return Response({"error": "Missing client credentials"}, status=status.HTTP_400_BAD_REQUEST)
+        # Identity from the bearer token, never from a header (the browser holds no client secret).
 
-        application = get_object_or_404(Application, client_id=client_id)
-        user = application.user
+        user = request.user
 
         serializer = SubClusterSubmitSerializer(data=request.data)
         if not serializer.is_valid():

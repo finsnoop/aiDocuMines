@@ -271,6 +271,10 @@ class ModelDiscoveryTests(TestCase):
 
     url = "/api/v1/grid-documents-interrogation/proxy/models/"
 
+    def setUp(self):
+        from django.core.cache import cache
+        cache.clear()   # provider model lists are cached (core/llm_providers.list_models); each test mocks its own
+
     def test_requires_sign_in(self):
         self.assertIn(APIClient().post(self.url, {"provider": "litellm"}, format="json").status_code, (401, 403))
 

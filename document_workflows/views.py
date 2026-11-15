@@ -180,7 +180,7 @@ class SubmitWorkflowRunAPIView(APIView):
         file_id = request.query_params.get("file_id")
         workflow_id = request.query_params.get("workflow_id")
 
-        if not all([client_id, client_secret, file_id, workflow_id]):
+        if not all([file_id, workflow_id]):
             return Response({"error": "Missing required parameters"}, status=status.HTTP_400_BAD_REQUEST)
 
         user = request.user

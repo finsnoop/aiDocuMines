@@ -1,0 +1,10 @@
+# Never commit state, provider caches, plans or real variable files
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfplan
+plan.out
+.terraform.lock.hcl.bak
+environments/*.tfvars
+environments/*.backend.hcl
+!environments/*.example

@@ -23,7 +23,7 @@ from document_operations.models import FileFolderLink, Folder
 
 NO_SEARCH = dict(ELASTICSEARCH_DSL_AUTOSYNC=False, ELASTICSEARCH_DSL_AUTO_REFRESH=False)
 # Throttling is covered by its own test; everywhere else it must not interfere.
-OPEN_RATES = {"auth": "10000/min", "anon": "10000/min", "user": "10000/min"}
+OPEN_RATES = {"auth": "10000/min", "auth_network": "10000/min", "anon": "10000/min", "user": "10000/min"}
 
 
 def api(tok=None, **headers):
@@ -414,6 +414,29 @@ class ThrottleTests(TestCase):
                                   HTTP_X_CLIENT_ID="c", HTTP_X_CLIENT_SECRET="s").status_code for _ in range(5)]
         self.assertEqual(codes[-1], 429)
         self.assertNotIn(429, codes[:3])
+
+    def _rates(self, **rates):
+        from rest_framework.throttling import SimpleRateThrottle
+        saved = SimpleRateThrottle.THROTTLE_RATES
+        SimpleRateThrottle.THROTTLE_RATES = {**saved, **rates}
+        self.addCleanup(lambda: setattr(SimpleRateThrottle, "THROTTLE_RATES", saved))
+        cache.clear()
+
+    def _attempt(self, email):
+        return APIClient().post("/api/v1/auth/login/", {"email": email, "password": "z"}, format="json",
+                                HTTP_X_CLIENT_ID="c", HTTP_X_CLIENT_SECRET="s").status_code
+
+    def test_an_office_behind_one_address_can_sign_in_together(self):
+        """500 colleagues share one office address: each account has its own allowance."""
+        self._rates(auth="3/min", auth_network="1000/min")
+        codes = [self._attempt(f"person{i}@firm.test") for i in range(40)]
+        self.assertNotIn(429, codes)
+
+    def test_one_address_spraying_many_accounts_is_still_stopped(self):
+        self._rates(auth="3/min", auth_network="10/min")
+        codes = [self._attempt(f"person{i}@firm.test") for i in range(12)]
+        self.assertNotIn(429, codes[:10])
+        self.assertEqual(codes[-1], 429)
 
 
 class DeploymentSafetyTests(TestCase):

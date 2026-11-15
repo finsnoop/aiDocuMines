@@ -87,7 +87,7 @@ class SubmitTranslationAPIView(ClientScopedViewMixin):
         from_lang = request.query_params.get("from_language")
         to_lang = request.query_params.get("to_language")
 
-        if not all([client_id, client_secret, file_id, from_lang, to_lang]):
+        if not all([file_id, from_lang, to_lang]):
             return Response({"error": "Missing required parameters"}, status=status.HTTP_400_BAD_REQUEST)
 
         # ✅ Get user from client_id

@@ -815,9 +815,12 @@ class FolderListCreateView(APIView):
         ctx = {
             "include_files": include_files,
             "include_trashed": include_trashed,
-            "request": request
+            "request": request,
+            # The whole tree in a fixed number of queries; the serializer reads it from memory.
+            # (It used to run ~6 queries per folder: 200 folders -> ~1,200 queries per page load.)
+            "tree": _folder_tree(request.user, include_files),
         }
-        serializer = RecursiveFolderSerializer(qs, many=True, context=ctx)
+        serializer = RecursiveFolderSerializer(qs.select_related("color_tag"), many=True, context=ctx)
         return Response(serializer.data, status=200)
 
     def post(self, request):
@@ -1299,3 +1302,42 @@ class FolderAliasDetailView(APIView):
         alias.delete()
         return Response({'message': 'Alias deleted'}, status=200)
 
+def _folder_tree(user, include_files=True):
+    """Preload a user's folders, file links, tags, aliases, access entries and hidden items."""
+    from collections import defaultdict
+    from django.db.models import Prefetch
+    from document_operations.models import FileAccessEntry, FileFolderLink, UserFileHide, UserFolderHide
+    folders = list(Folder.objects.filter(user=user).select_related("color_tag"))
+    children = defaultdict(list)
+    for f in folders:
+        if f.parent_id:
+            children[f.parent_id].append(f)
+    links = defaultdict(list)
+    if include_files and folders:
+        for link in (FileFolderLink.objects.filter(folder__in=[f.id for f in folders])
+                     .select_related("file", "color_tag")
+                     .prefetch_related("aliases", Prefetch("access_entries",
+                                                           queryset=FileAccessEntry.objects.select_related("user")))):
+            links[link.folder_id].append(link)
+    project_names = {}
+    try:
+        from core.models import Project
+        ids = {f.project_id for f in folders if f.project_id}
+        project_names = {str(pid): name for pid, name in Project.objects.filter(
+            id__in=[i for i in ids if _looks_like_uuid(i)]).values_list("id", "project_name")}
+    except Exception:
+        pass
+    return {
+        "children": children, "links": links, "project_names": project_names,
+        "hidden_folders": set(UserFolderHide.objects.filter(user=user).values_list("folder_id", flat=True)),
+        "hidden_links": set(UserFileHide.objects.filter(user=user).values_list("file_link_id", flat=True)),
+    }
+
+
+def _looks_like_uuid(value):
+    import uuid
+    try:
+        uuid.UUID(str(value))
+        return True
+    except ValueError:
+        return False

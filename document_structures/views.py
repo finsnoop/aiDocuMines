@@ -68,7 +68,7 @@ class SubmitDocumentPartitionAPIView(APIView):
         service_id = request.query_params.get("service_id")
         generate_report = request.query_params.get("generate_report", "false").lower() == "true"
 
-        if not all([client_id, client_secret, file_id]):
+        if not all([file_id]):
             return Response({"error": "Missing required parameters"}, status=status.HTTP_400_BAD_REQUEST)
 
         user = request.user
@@ -148,7 +148,7 @@ class DocumentStructureRunStatusAPIView(APIView):
         ds_run_id = request.query_params.get("document_structure_run_id")
         include_elements = request.query_params.get("include_elements", "false").lower() == "true"
 
-        if not all([client_id, client_secret, ds_run_id]):
+        if not all([ds_run_id]):
             return Response({"error": "Missing required parameters"}, status=status.HTTP_400_BAD_REQUEST)
 
         user = request.user
@@ -192,7 +192,7 @@ class SubmitDocumentComparisonAPIView(APIView):
         run_1_id = request.query_params.get("run_1")
         run_2_id = request.query_params.get("run_2")
 
-        if not all([client_id, client_secret, run_1_id, run_2_id]):
+        if not all([run_1_id, run_2_id]):
             return Response({"error": "Missing required parameters"}, status=status.HTTP_400_BAD_REQUEST)
 
         user = request.user
@@ -254,7 +254,7 @@ class DocumentComparisonStatusAPIView(APIView):
         client_secret = request.headers.get("X-Client-Secret")
         comparison_id = request.query_params.get("comparison_id")
 
-        if not all([client_id, client_secret, comparison_id]):
+        if not all([comparison_id]):
             return Response({"error": "Missing required parameters"}, status=status.HTTP_400_BAD_REQUEST)
 
         user = request.user

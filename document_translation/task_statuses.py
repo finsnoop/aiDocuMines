@@ -63,7 +63,7 @@ class TranslationTaskStatusView(APIView):
         file_id = request.query_params.get("file_id")
         run_id = request.query_params.get("run_id")
 
-        if not client_id or not client_secret or (not file_id and not run_id):
+        if not file_id and not run_id:
             return Response({"error": "Missing required parameters"}, status=400)
 
         user = request.user
@@ -205,7 +205,7 @@ class TranslationFileDownloadView(APIView):
         file_type = request.query_params.get("file_type")
         language = request.query_params.get("language")  # ✅ Required parameter to fetch specific language translation
 
-        if not client_id or not client_secret or not file_id or not file_type or not language:
+        if not file_id or not file_type or not language:
             return Response({"error": "Missing required parameters"}, status=400)
 
         # ✅ Validate client ID and retrieve user

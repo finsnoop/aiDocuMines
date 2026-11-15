@@ -298,7 +298,7 @@ class SubscriptionViewSet(viewsets.ModelViewSet):
             or Subscription.objects.create(
                 user=user,
                 tenant=tenant,
-                stripe_subscription_id="",
+                stripe_subscription_id=None,   # unique column: empty means "no Stripe subscription yet"
                 stripe_status="inactive",
                 billing_cycle_start=timezone.now(),
                 billing_cycle_end=timezone.now(),

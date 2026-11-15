@@ -236,12 +236,29 @@ def can_manage_matter(user, matter) -> bool:
     return matter.created_by_id == user.id or is_manager_or_admin(user)
 
 
+SHARED_IDS_INLINE_LIMIT = 5000
+
+
+def _ids_or_subquery(qs, column):
+    """A user's grants of one kind, as a short id list (index lookups) or, if unusually many, a subquery."""
+    ids = list(qs.values_list(column, flat=True)[:SHARED_IDS_INLINE_LIMIT + 1])
+    if len(ids) <= SHARED_IDS_INLINE_LIMIT:
+        return Q(pk__in=[i for i in ids if i is not None])
+    return Q(pk__in=qs.values(column))
+
+
 def _shared_file_ids_q(user, action: str) -> Q:
-    """Files explicitly shared with `user` via any of the platform's sharing models."""
+    """Files explicitly shared with `user` via any of the platform's sharing models.
+
+    Each kind of grant is looked up from the user's side (every table is indexed on user_id) and handed to
+    the file query as ids. One subquery OR-ing the three joins made PostgreSQL join every file with every
+    folder link and share on each listing: cost grew with the whole platform's documents, not the user's.
+    """
     from django.utils import timezone
+    from document_operations.models import EffectiveAccess, FileAccessEntry, FileFolderLink
 
     flag = _ACTION_TO_EFFECTIVE_FLAG.get(action, "can_download")
-    q = Q(**{"effectiveaccess__user": user, f"effectiveaccess__{flag}": True})
+    q = _ids_or_subquery(EffectiveAccess.objects.filter(user=user, file__isnull=False, **{flag: True}), "file_id")
 
     # FileAccessEntry grants (per link, optional expiry).
     entry_flag = {
@@ -249,15 +266,13 @@ def _shared_file_ids_q(user, action: str) -> Q:
         "rename": "can_write", "move": "can_write",
         "delete": "can_delete", "share": "can_share",
     }.get(action, "can_read")
-    not_expired = (Q(folder_links__access_entries__expires_at__isnull=True)
-                   | Q(folder_links__access_entries__expires_at__gt=timezone.now()))
-    q |= Q(folder_links__access_entries__user=user,
-           **{f"folder_links__access_entries__{entry_flag}": True}) & not_expired
+    entries = FileAccessEntry.objects.filter(user=user, **{entry_flag: True}).filter(
+        Q(expires_at__isnull=True) | Q(expires_at__gt=timezone.now()))
+    q |= _ids_or_subquery(entries, "file_link__file_id")
 
     if action in ("view", "download", "process"):
-        q |= Q(folder_links__shared_with=user)
+        q |= _ids_or_subquery(FileFolderLink.objects.filter(shared_with=user), "file_id")
     return q
-
 
 def accessible_files_q(user, action: str = "view", prefix: str = "") -> Q:
     """
@@ -294,11 +309,25 @@ def _prefix_q(q: Q, prefix: str) -> Q:
     return new
 
 
+def _joins_can_repeat_rows(qs) -> bool:
+    """True if the queryset joins along one-to-many / many-to-many relations (rows may repeat).
+    Many-to-one joins (a file's owner, the owner's organisation) never repeat rows."""
+    for join in qs.query.alias_map.values():
+        field = getattr(join, "join_field", None)
+        if field is not None and (getattr(field, "one_to_many", False) or getattr(field, "many_to_many", False)):
+            return True
+    return False
+
+
 def accessible_files(user, action: str = "view", queryset=None):
     from core.models import File
 
     qs = queryset if queryset is not None else File.objects.all()
-    return qs.filter(accessible_files_q(user, action)).distinct()
+    joined = _joins_can_repeat_rows(qs)   # the caller's own joins may repeat rows: keep their DISTINCT
+    qs = qs.filter(accessible_files_q(user, action))
+    # The access rule itself joins nothing that repeats rows (sharing is an id subquery, the organisation
+    # is a many-to-one join), so a plain listing needs no DISTINCT over every column of core_file.
+    return qs.distinct() if joined or qs.query.distinct else qs
 
 
 def can_access_file(user, file_obj, action: str = "view") -> bool:

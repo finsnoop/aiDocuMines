@@ -221,7 +221,8 @@ REST_FRAMEWORK = {
     # Per-IP limits for sign-in, sign-up, password reset and token refresh ("auth"), and for
     # any other endpoint that opts into the standard anonymous/user throttles.
     "DEFAULT_THROTTLE_RATES": {
-        "auth": os.getenv("THROTTLE_AUTH", "20/min"),
+        "auth": os.getenv("THROTTLE_AUTH", "20/min"),              # per account (address + email)
+        "auth_network": os.getenv("THROTTLE_AUTH_NETWORK", "600/min"),  # per address: an office of hundreds
         "anon": os.getenv("THROTTLE_ANON", "120/min"),
         "user": os.getenv("THROTTLE_USER", "1200/min"),
     },

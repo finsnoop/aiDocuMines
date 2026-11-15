@@ -124,7 +124,7 @@ class SubmitAutomationAPIView(APIView):
         template_id = request.query_params.get("template_id")
         input_data = request.data.get("input_data", {})
 
-        if not all([client_id, client_secret, template_id]):
+        if not all([template_id]):
             return Response({"error": "Missing required parameters"}, status=status.HTTP_400_BAD_REQUEST)
 
         user = request.user
@@ -388,7 +388,7 @@ class BulkSubmitAutomationAPIView(APIView):
         clause_ids = request.data.get("clause_ids", None)
         output_format = request.data.get("output_format", "DOCX")
 
-        if not all([client_id, client_secret, template_id]):
+        if not all([template_id]):
             return Response({"error": "Missing required parameters"}, status=status.HTTP_400_BAD_REQUEST)
 
         if not isinstance(bulk_data, list) or len(bulk_data) == 0:

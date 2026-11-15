@@ -71,7 +71,7 @@ class SubmitRedliningAPIView(APIView):
         file_id = request.query_params.get("file_id")
         comparison_file_id = request.query_params.get("comparison_file_id")
 
-        if not all([client_id, client_secret, file_id, comparison_file_id]):
+        if not all([file_id, comparison_file_id]):
             return Response({"error": "Missing required parameters"}, status=status.HTTP_400_BAD_REQUEST)
 
         user = request.user

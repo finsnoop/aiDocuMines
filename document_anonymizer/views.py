@@ -127,11 +127,10 @@ class SubmitAnonymizationAPIView(ClientScopedViewMixin):
         service_id = request.query_params.get("service_id")
         file_type = request.query_params.get("file_type", "plain").lower()
 
-        if not all([client_id, client_secret, file_id, project_id, service_id]):
+        if not all([file_id, project_id, service_id]):
             return Response({"error": "Missing required parameters"}, status=status.HTTP_400_BAD_REQUEST)
 
-        application = get_object_or_404(Application, client_id=client_id)
-        user = application.user
+        user = request.user   # identity from the bearer token, never from a header
         file_instance = self.get_object_by_client(File.objects.filter(project_id=project_id, service_id=service_id), id=file_id)
 
         if str(file_instance.user.id) != str(user.id):
@@ -204,7 +203,7 @@ class DownloadAnonymizedFileAPIView(ClientScopedViewMixin):
         file_type = request.query_params.get("file_type")
         structured_blocks = request.query_params.get("structured_blocks", "false").lower() == "true"
 
-        if not all([client_id, client_secret, file_id, file_type]):
+        if not all([file_id, file_type]):
             return Response({"error": "Missing required parameters"}, status=400)
 
         user = request.user
@@ -828,8 +827,8 @@ class SupportedEntitiesView(APIView):
         responses={200: "Success"},
     )
     def get(self, request):
-        from document_anonymizer.utils import list_supported_entities_runtime, list_supported_entities_with_weights
-        payload = list_supported_entities_runtime()
+        from document_anonymizer.utils import list_supported_entities, list_supported_entities_with_weights
+        payload = list_supported_entities()
         if str(request.query_params.get("include_weights", "false")).lower() == "true":
             payload["weights"] = list_supported_entities_with_weights()
         return Response(payload, status=200)

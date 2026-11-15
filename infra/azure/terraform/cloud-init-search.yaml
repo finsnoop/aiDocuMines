@@ -1,0 +1,49 @@
+#cloud-config
+# Elasticsearch 8 (security on) and Milvus standalone on the data disk (LUN 0 -> /data).
+package_update: true
+packages: [docker.io, docker-compose-v2]
+
+write_files:
+  - path: /etc/sysctl.d/90-elasticsearch.conf
+    content: |
+      vm.max_map_count=262144
+  - path: /opt/search/docker-compose.yml
+    content: |
+      services:
+        elasticsearch:
+          image: docker.elastic.co/elasticsearch/elasticsearch:8.19.25
+          restart: unless-stopped
+          environment:
+            - discovery.type=single-node
+            - xpack.security.enabled=true
+            - xpack.security.http.ssl.enabled=false   # private subnet only; NSG allows the apps' subnet
+            - ELASTIC_PASSWORD=${elastic_password}
+            - ES_JAVA_OPTS=-Xms4g -Xmx4g
+          ulimits: { memlock: { soft: -1, hard: -1 } }
+          volumes: [/data/elasticsearch:/usr/share/elasticsearch/data]
+          ports: ["9200:9200"]
+          mem_limit: 6g
+        milvus:
+          image: milvusdb/milvus:v2.6.17
+          restart: unless-stopped
+          command: ["milvus", "run", "standalone"]
+          environment:
+            - ETCD_USE_EMBED=true
+            - ETCD_DATA_DIR=/var/lib/milvus/etcd
+            - COMMON_STORAGETYPE=local
+          volumes: [/data/milvus:/var/lib/milvus]
+          ports: ["19530:19530"]
+          mem_limit: 6g
+
+runcmd:
+  - sysctl --system
+  - |
+    # Format and mount the data disk once (LUN 0)
+    DISK=/dev/disk/azure/scsi1/lun0
+    for i in $(seq 1 30); do [ -e "$DISK" ] && break; sleep 5; done
+    if ! blkid "$DISK" >/dev/null 2>&1; then mkfs.ext4 -L searchdata "$DISK"; fi
+    mkdir -p /data && grep -q searchdata /etc/fstab || echo "LABEL=searchdata /data ext4 defaults,nofail 0 2" >> /etc/fstab
+    mount -a
+    mkdir -p /data/elasticsearch /data/milvus && chown -R 1000:0 /data/elasticsearch
+  - systemctl enable --now docker
+  - docker compose -f /opt/search/docker-compose.yml up -d

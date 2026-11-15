@@ -150,6 +150,8 @@ class DatabaseConnectionViewSet(viewsets.ModelViewSet):
     def test_connection_view(self, request, pk=None):
         db_conn = getattr(self, "_created_instance", None)
         if not db_conn or str(db_conn.pk) != pk:
+            if not str(pk).isdigit():
+                raise Http404   # malformed id: not found, not a server error
             db_conn = get_object_or_404(DatabaseConnection, pk=pk, owner=request.user)
 
         try:

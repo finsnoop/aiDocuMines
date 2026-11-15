@@ -502,8 +502,11 @@ class ComplianceAlertView(APIView):
         ],
         responses={200: ComplianceAlertSerializer(many=True)}
     )
-    def get(self, request):
-        """Get compliance alerts with optional filtering"""
+    def get(self, request, pk=None):
+        """Get compliance alerts with optional filtering, or one alert (compliance-alerts/<pk>/)."""
+        if pk is not None:
+            alert = get_object_or_404(ComplianceAlert, pk=pk, user=request.user)
+            return Response(ComplianceAlertSerializer(alert).data)
         comm_run_id = request.query_params.get('comm_run_id')
         if not comm_run_id:
             return Response({"error": "comm_run_id parameter is required"},

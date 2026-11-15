@@ -14,13 +14,13 @@ from rest_framework.response import Response
 
 from .models import TwoFactorCode
 from .tasks import send_signin_code_task
-from .views import AuthBurstThrottle
+from .views import AUTH_THROTTLES
 
 
 class BrowserAuthorizeView(APIView):
     authentication_classes = []
     permission_classes = [AllowAny]
-    throttle_classes = [AuthBurstThrottle]
+    throttle_classes = AUTH_THROTTLES
 
     @transaction.atomic
     def post(self, request):

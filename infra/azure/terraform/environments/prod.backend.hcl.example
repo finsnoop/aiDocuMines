@@ -1,0 +1,6 @@
+# Terraform state storage (created once by ../bootstrap.sh). Copy to prod.backend.hcl.
+resource_group_name  = "rg-aidoc-tfstate"
+storage_account_name = "staidoctfstateXXXX"
+container_name       = "tfstate"
+key                  = "prod.terraform.tfstate"
+use_azuread_auth     = true

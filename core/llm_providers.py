@@ -97,11 +97,47 @@ class ProviderError(Exception):
         self.status = status
 
 
+MODEL_LIST_TTL = 600          # a provider's model list rarely changes
+MODEL_LIST_FAILURE_TTL = 60   # while a provider is down, ask again at most once a minute
+
+
 def list_models(provider: str, endpoint: Optional[str] = None, api_key: Optional[str] = None) -> dict:
     """
     Models available from a provider, in the provider's own response shape:
     Ollama -> {"models": [{"name": ...}]}, everything else -> {"data": [{"id": ...}]}.
+
+    Cached in the shared cache (all replicas): pages such as Home check the model on every load, and
+    without a cache 2,500 users would each call the provider, and wait out its timeout when it is down.
     """
+    import hashlib
+    from django.core.cache import cache
+    p = (provider or default_provider()).lower()
+    fingerprint = hashlib.sha256(f"{p}|{endpoint or ''}|{api_key or ''}".encode()).hexdigest()[:24]
+    key = f"llm:models:{fingerprint}"
+    try:
+        hit = cache.get(key)
+    except Exception:
+        hit = None
+    if hit is not None:
+        if isinstance(hit, dict) and hit.get("__error__"):
+            raise ProviderError(hit["message"], status=hit["status"])
+        return hit
+    try:
+        result = _list_models_uncached(provider, endpoint, api_key)
+    except ProviderError as exc:
+        try:
+            cache.set(key, {"__error__": True, "message": str(exc), "status": exc.status}, MODEL_LIST_FAILURE_TTL)
+        except Exception:
+            pass
+        raise
+    try:
+        cache.set(key, result, MODEL_LIST_TTL)
+    except Exception:
+        pass
+    return result
+
+
+def _list_models_uncached(provider: str, endpoint: Optional[str] = None, api_key: Optional[str] = None) -> dict:
     provider = (provider or default_provider()).lower()
     if provider not in PROVIDERS:
         raise ProviderError(f"Unsupported provider '{provider}'.", status=400)
