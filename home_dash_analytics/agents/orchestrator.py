@@ -33,6 +33,7 @@ CAPACITY = {'healthy': 3, 'strained': 1, 'critical': 0}
 RETRY_AFTER = timedelta(hours=6)
 OCR_EXTENSIONS = {'pdf', 'png', 'jpg', 'jpeg', 'tif', 'tiff', 'bmp', 'webp'}
 TICK_DEBOUNCE_SECONDS = 300
+OCR_ATTEMPT_TTL = 24 * 3600      # a file is offered to OCR at most once a day, whether or not OCR succeeded
 
 
 # ── what needs doing ────────────────────────────────────────────────────────
@@ -87,6 +88,8 @@ def dispatch_ocr(files) -> int:
     from document_ocr.tasks import process_ocr
     n = 0
     for f in files:
+        # Recorded before queuing: a failing OCR (missing pages, unreadable file) is not re-queued every cycle.
+        cache.set(f'agents:ocr-attempt:{f.id}', 1, OCR_ATTEMPT_TTL)
         run = OCRRun.objects.create(project_id=f.project_id, service_id=f.service_id, client=f.user.client,
                                     client_name=f.user.email or 'user', status='Pending', ocr_option='Basic-ocr')
         process_ocr.delay(run.id, f.id, 'Basic-ocr')
@@ -139,8 +142,11 @@ def orchestrate(tenant_id=None) -> dict:
     for f in needs_intelligence(tenant_id).select_related('user').only('id', 'user').order_by('id')[:2000]:
         work[f.user.client_id]['intelligence'][f.user_id].append(f.id)
         owners[f.user_id] = f.user
-    for f in needs_ocr(tenant_id).select_related('user', 'user__client').order_by('id')[:200]:
-        work[f.user.client_id]['ocr'].append(f)
+    candidates = list(needs_ocr(tenant_id).select_related('user', 'user__client').order_by('id')[:400])
+    tried = cache.get_many([f'agents:ocr-attempt:{f.id}' for f in candidates]) if candidates else {}
+    for f in candidates:
+        if f'agents:ocr-attempt:{f.id}' not in tried:
+            work[f.user.client_id]['ocr'].append(f)
 
     dispatched = 0
     for tid, jobs in work.items():

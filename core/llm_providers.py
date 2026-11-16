@@ -19,6 +19,7 @@ Server-side configuration (environment variables):
 from __future__ import annotations
 
 import os
+import re
 from typing import Optional
 from urllib.parse import urlparse
 
@@ -195,7 +196,7 @@ def _platform_default_model() -> str:
         return ""
 
 
-def pick_chat_model(ids, preferred=None):
+def pick_chat_model(ids, preferred=None, allow_local=False):
     """
     A model that answers chat completions: `preferred` if offered, else the platform's configured
     default model, else the first of PREFERRED on offer. Gateways such as LiteLLM name models
@@ -211,7 +212,16 @@ def pick_chat_model(ids, preferred=None):
         hit = bare.get(want.split("/", 1)[-1])
         if hit:
             return hit
-    return chat[0] if chat else None
+    # Nothing chosen and none of the preferred models on offer: take a hosted model before a local one.
+    # A local (Ollama) model runs on this server's CPU, so it is only ever used when someone chose it.
+    hosted = [i for i in chat if allow_local or not is_local_model(i)]
+    return hosted[0] if hosted else None
+
+
+def is_local_model(model_id: str) -> bool:
+    """Models served by Ollama on this machine (through LiteLLM or directly)."""
+    m = (model_id or "").lower()
+    return m.startswith(("ollama/", "ollama_chat/")) or bool(re.fullmatch(r"[a-z0-9.\-]+:[\w.\-]+", m))
 
 
 def model_for(provider: str, requested: str) -> str:
@@ -250,7 +260,7 @@ def available_chat_model(provider: str):
         data = list_models(provider)
         ids = [m.get("name") or m.get("model") for m in data.get("models", [])] if provider == "ollama" \
             else [m.get("id") for m in data.get("data", [])]
-        model = pick_chat_model(ids)
+        model = pick_chat_model(ids, allow_local=(provider == "ollama"))
     except ProviderError:
         model = None
     if model:

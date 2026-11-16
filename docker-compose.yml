@@ -89,12 +89,17 @@ services:
     container_name: aidocumines_ollama
     restart: unless-stopped
     mem_limit: ${OLLAMA_MEM_LIMIT:-4g}
+    # Local models run on the CPU: cap them so the web app, OnlyOffice and other apps keep cores free.
+    cpus: ${OLLAMA_CPUS:-2}
     logging: *logging
     ports: ["127.0.0.1:11435:11434"]
     environment:
       # bind to localhost unless you *need* LAN/Internet access
       # if you need LAN: use 0.0.0.0:11434 and protect with a reverse proxy / firewall
       - OLLAMA_HOST=0.0.0.0:11434
+      - OLLAMA_NUM_PARALLEL=${OLLAMA_NUM_PARALLEL:-1}
+      - OLLAMA_MAX_LOADED_MODELS=${OLLAMA_MAX_LOADED_MODELS:-1}
+      - OLLAMA_KEEP_ALIVE=${OLLAMA_KEEP_ALIVE:-5m}
     volumes:
       - ollama-data:/root/.ollama
     networks: [captain-overlay-network]
@@ -202,6 +207,8 @@ services:
     container_name: aidocumines_celery
     restart: unless-stopped
     mem_limit: ${CELERY_MEM_LIMIT:-6g}
+    # Long document jobs (OCR, agents) must not take every core from interactive requests.
+    cpus: ${CELERY_CPUS:-2}
     stop_grace_period: 2m
     logging: *logging
     command: /app/entrypoint.sh

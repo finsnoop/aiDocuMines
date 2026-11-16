@@ -120,7 +120,8 @@ class ResourceAgentTests(Base):
                 if level:
                     reasons.append((level, msg))
             return run
-        with patch.object(resources, '_check_redis', check('redis')), \
+        with patch.object(resources, '_check_cpu', check('cpu')), \
+             patch.object(resources, '_check_redis', check('redis')), \
              patch.object(resources, '_check_celery', check('celery')), \
              patch.object(resources, '_check_postgres', check('postgres')), \
              patch.object(resources, '_check_rabbitmq', check('rabbitmq')):
@@ -134,6 +135,18 @@ class ResourceAgentTests(Base):
         self.assertEqual(critical['state'], 'critical')
         self.assertIn('No Celery worker is answering', critical['reasons'])
         self.assertTrue(AgentEvent.objects.filter(agent='resource', kind='capacity.critical').exists())
+
+    def test_cpu_load_throttles_then_pauses_the_agents(self):
+        for load, state in ((2.0, None), (5.5, 'strained'), (9.0, 'critical')):
+            report, reasons = {}, []
+            with patch('os.getloadavg', return_value=(load, load, load)), patch('os.cpu_count', return_value=6):
+                resources._check_cpu(report, reasons)
+            self.assertEqual(reasons[0][0] if reasons else None, state, load)
+        # a short spike alone (1-minute load high, 5-minute load low) does not pause them
+        report, reasons = {}, []
+        with patch('os.getloadavg', return_value=(9.0, 2.0, 2.0)), patch('os.cpu_count', return_value=6):
+            resources._check_cpu(report, reasons)
+        self.assertEqual(reasons, [])
 
     def test_rabbitmq_is_only_checked_when_configured(self):
         report, reasons = {}, []
@@ -177,6 +190,18 @@ class OrchestratorTests(Base):
         scan.save()
         _, _, ocr, _ = self.cycle()
         self.assertEqual(ocr.call_args[0][1], scan.id)
+
+    def test_failing_ocr_is_not_requeued_every_cycle(self):
+        scan = make_file(self.a2, 'scan.pdf')
+        scan.extension = 'pdf'
+        scan.content = ''
+        scan.save()
+        _, _, ocr, _ = self.cycle()
+        self.assertEqual(ocr.call_count, 1)
+        # OCR failed (no text, no OCR version): the next cycles leave the file alone for a day
+        for _ in range(3):
+            _, _, ocr, _ = self.cycle()
+            self.assertEqual(ocr.call_count, 0)
 
     def test_critical_capacity_pauses_everything(self):
         result, delay, ocr, _ = self.cycle(capacity={'state': 'critical', 'reasons': ['Redis memory at 95%']})

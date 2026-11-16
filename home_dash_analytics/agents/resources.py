@@ -22,8 +22,26 @@ from django.core.cache import cache
 from .events import emit
 
 CACHE_KEY = 'agents:resource-snapshot'
-STRAINED = {'redis_memory': .75, 'db_connections': .70, 'backlog': 200}
-CRITICAL = {'redis_memory': .90, 'db_connections': .90, 'backlog': 1000}
+# Background agents only use spare capacity: they slow down while users are waiting on the same machine.
+STRAINED = {'redis_memory': .75, 'db_connections': .70, 'backlog': int(os.getenv('AGENT_BACKLOG_STRAINED', '20')),
+            'load_per_cpu': float(os.getenv('AGENT_LOAD_STRAINED', '0.8'))}
+CRITICAL = {'redis_memory': .90, 'db_connections': .90, 'backlog': int(os.getenv('AGENT_BACKLOG_CRITICAL', '60')),
+            'load_per_cpu': float(os.getenv('AGENT_LOAD_CRITICAL', '1.2'))}
+
+
+def _check_cpu(report, reasons):
+    """Host CPU load (containers share the kernel's load average) per available core."""
+    try:
+        load1, load5, _ = os.getloadavg()
+        cores = max(1, os.cpu_count() or 1)          # the host's cores: the load average is the host's too
+        per_cpu = round(min(load1, load5 * 1.2) / cores, 2)   # a short spike alone does not pause the agents
+        report['cpu'] = {'load_1m': round(load1, 2), 'load_5m': round(load5, 2), 'cores': cores, 'load_per_cpu': per_cpu}
+        if per_cpu >= CRITICAL['load_per_cpu']:
+            reasons.append(('critical', f'CPU load {load1:.1f} on {cores} cores'))
+        elif per_cpu >= STRAINED['load_per_cpu']:
+            reasons.append(('strained', f'CPU load {load1:.1f} on {cores} cores'))
+    except (OSError, AttributeError):
+        report['cpu'] = None
 
 
 def _redis():
@@ -138,7 +156,7 @@ def assess(force=False) -> dict:
         if cached:
             return cached
     report, reasons = {}, []
-    for check in (_check_redis, _check_celery, _check_postgres, _check_rabbitmq):
+    for check in (_check_cpu, _check_redis, _check_celery, _check_postgres, _check_rabbitmq):
         check(report, reasons)
     state = 'critical' if any(l == 'critical' for l, _ in reasons) else 'strained' if reasons else 'healthy'
     report.update(state=state, reasons=[msg for _, msg in reasons])

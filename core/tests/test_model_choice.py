@@ -30,3 +30,23 @@ class ModelChoiceTests(TestCase):
         settings.default_llm_model = "retired-model"
         settings.save()
         self.assertEqual(pick_chat_model(OFFERED), "gpt-5.6-terra")
+
+
+class LocalModelFallbackTests(TestCase):
+    """A local Ollama model runs on the server's CPU: it is used only when someone chose it."""
+
+    def test_fallback_never_picks_a_local_model(self):
+        offered = ["ollama/llama3.2:3b", "anthropic/claude-sonnet-4-5", "openai/*"]
+        self.assertEqual(pick_chat_model(offered), "anthropic/claude-sonnet-4-5")
+        self.assertIsNone(pick_chat_model(["ollama/llama3.2:3b", "llama3.2:3b"]))
+
+    def test_a_chosen_local_model_is_still_used(self):
+        self.assertEqual(pick_chat_model(["ollama/llama3.2:3b"], "ollama/llama3.2:3b"),
+                         "ollama/llama3.2:3b")
+        settings = PlatformGlobalSettings.load()
+        settings.default_llm_model = "ollama/llama3.2:3b"
+        settings.save()
+        self.assertEqual(pick_chat_model(["ollama/llama3.2:3b"]), "ollama/llama3.2:3b")
+
+    def test_ollama_as_the_chosen_provider_lists_its_own_models(self):
+        self.assertEqual(pick_chat_model(["llama3.2:3b"], allow_local=True), "llama3.2:3b")
