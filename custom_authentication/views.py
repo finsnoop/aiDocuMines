@@ -1996,7 +1996,10 @@ class AdminAuditLogView(APIView):
         except (TypeError, ValueError):
             return Response({"error": "page and page_size must be numbers"}, status=status.HTTP_400_BAD_REQUEST)
 
-        logs = AdminActionLog.objects.select_related("admin_user", "target_user").order_by("-timestamp")
+        from core.ordering import ordering_from
+        logs = AdminActionLog.objects.select_related("admin_user", "target_user").order_by(*ordering_from(
+            request, {"admin": "admin_user__email", "target": "target_user__email", "action": "action",
+                      "time": "timestamp"}, "-timestamp"))
         if not is_platform_superuser(request.user):
             logs = logs.filter(admin_user__client_id=request.user.client_id)
         total = logs.count()

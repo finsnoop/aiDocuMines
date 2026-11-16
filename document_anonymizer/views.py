@@ -721,6 +721,13 @@ class AnonymizationInsightsView(APIView):
         }, status=status.HTTP_200_OK)
 
 
+def _bucket_order(request):
+    """Column sort for the risk bucket table (default: highest risk first)."""
+    from core.ordering import ordering_from
+    return ordering_from(request, {"document": "original_file__filename", "risk": "risk_score",
+                                   "updated": "updated_at"}, "-risk_score") + ["-updated_at"]
+
+
 class RiskBucketDocumentsView(APIView):
     """
     GET /api/v1/anonymizer/risk-bucket-documents/
@@ -787,7 +794,7 @@ class RiskBucketDocumentsView(APIView):
         total_pages = max(1, -(-total // page_size))
         page = min(page, total_pages)
         rows = (
-            qs.order_by("-risk_score", "-updated_at")
+            qs.order_by(*_bucket_order(request))
             .values("id", "original_file_id", "original_file__filename",
                     "risk_score", "risk_level", "updated_at")
             [(page - 1) * page_size: page * page_size]

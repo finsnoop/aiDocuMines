@@ -42,6 +42,7 @@ from .views_matters import (MatterCreateView, MatterDetailView, MatterDocumentsV
                             MatterJobsView, MatterListView, MatterMembersView, MatterPeopleView, MatterRunView,
                             MatterUploadView)
 
+from .views_render import FileRenderView, FileRenderContentView
 from .views_assistant import AssistantAskView, AssistantStatusView
 from .views_backup import BackupDetailView, BackupDownloadView, BackupListView, BackupRestoreView
 urlpatterns = [
@@ -79,6 +80,8 @@ urlpatterns = [
 
     # File Download
     path("download/", FileDownloadView.as_view(), name="file-download"),
+    path("files/<int:file_id>/render/", FileRenderView.as_view(), name="file-render"),
+    path("files/<int:file_id>/render/content/", FileRenderContentView.as_view(), name="file-render-content"),
 
     # Metadata for a Specific File
     path("metadata/", MetadataView.as_view(), name="metadata"),

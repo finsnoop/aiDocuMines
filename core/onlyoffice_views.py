@@ -564,6 +564,9 @@ class OnlyOfficeEditorConfigView(APIView):
             return Response({"error": "Missing file_id"}, status=400)
 
         f = get_file_for_user(request.user, file_id)
+        if not settings.ONLYOFFICE.get("JWT_SECRET"):
+            # The viewer falls back to the in-page document viewer on this answer.
+            return Response({"error": "The document editor is not configured."}, status=503)
 
         # File URL OnlyOffice server will fetch (server-to-server)
         download_url = make_signed_download_url(str(f.id), request=request)

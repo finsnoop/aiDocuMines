@@ -141,7 +141,17 @@ class ServiceReportsView(APIView):
             counts[r["category"]] = counts.get(r["category"], 0) + 1
         if category != "all":
             reports = [r for r in reports if r["category"] == category]
-        reports.sort(key=lambda r: r["timestamp"] or 0, reverse=True)
+        # Column sort (default newest first). Text sorts ignore case; blanks go last.
+        raw = (request.query_params.get("ordering") or "").strip()
+        field = {"report": "label", "category": "category_label", "summary": "title", "status": "status",
+                 "date": "timestamp"}.get(raw.lstrip("-"))
+        reports.sort(key=lambda r: r["timestamp"].timestamp() if r.get("timestamp") else 0, reverse=True)
+        if field:
+            filled = [r for r in reports if r.get(field) not in (None, "")]
+            blank = [r for r in reports if r.get(field) in (None, "")]
+            filled.sort(key=lambda r: r[field].lower() if isinstance(r[field], str) else r[field],
+                        reverse=raw.startswith("-"))
+            reports = filled + blank
 
         total = len(reports)
         return Response({

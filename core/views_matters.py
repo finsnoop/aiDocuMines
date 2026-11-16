@@ -42,6 +42,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from core.ordering import ordering_from
 from core.access import accessible_files, can_manage_matter, matters_for_user, scope_users, tenant_id
 from core.models import BulkJob, BulkJobFileResult, File, Matter, Run, Storage
 from core.service_catalog import ALL_SERVICES
@@ -269,8 +270,10 @@ class MatterListView(APIView):
         if search:
             qs = qs.filter(Q(name__icontains=search) | Q(reference__icontains=search))
         total = qs.count()
+        order = ordering_from(request, {"name": "name", "area": "practice_area", "team": "member_total",
+                                        "activity": "updated_at", "reference": "reference"}, "-updated_at")
         matters = list(qs.annotate(member_total=Count("members", distinct=True))
-                       .order_by("-updated_at")[(page - 1) * size: page * size])
+                       .order_by(*order)[(page - 1) * size: page * size])
         items = _summaries(matters, request.user)
         return Response(_paginated(items, total, page, size, data=items, practice_areas=practice_areas_for(request.user)))
 
@@ -360,9 +363,12 @@ class MatterDocumentsView(APIView):
         search = (request.query_params.get("search") or "").strip()[:200]
         if search:
             qs = qs.filter(filename__icontains=search)
-        ordering = self.ORDERING.get(request.query_params.get("ordering", ""), "-created_at")
+        legacy = self.ORDERING.get(request.query_params.get("ordering", ""))
+        order = [legacy, "-id"] if legacy else ordering_from(request, {
+            "name": "filename", "type": "document_type", "size": "file_size", "uploaded_by": "user__email",
+            "added": "created_at"}, "-created_at")
         total = qs.count()
-        rows = qs.select_related("user").order_by(ordering, "-id")[(page - 1) * size: page * size]
+        rows = qs.select_related("user").order_by(*order)[(page - 1) * size: page * size]
         items = [{
             "id": f.id, "filename": f.filename, "extension": f.extension, "file_type": f.file_type,
             "file_size": f.file_size, "status": f.status, "document_type": f.document_type,
@@ -378,7 +384,9 @@ class MatterJobsView(APIView):
     def get(self, request, matter_id):
         matter = _get_matter(request.user, matter_id)
         page, size = _page_params(request, default_size=25)
-        qs = _matter_jobs(matter).select_related("user").order_by("-created_at")
+        qs = _matter_jobs(matter).select_related("user").order_by(*ordering_from(request, {
+            "service": "service_id", "status": "status", "documents": "total_files", "run_by": "user__email",
+            "started": "created_at"}, "-created_at"))
         total = qs.count()
         items = [{
             "id": str(j.id), "job_type": j.job_type, "service_id": j.service_id,

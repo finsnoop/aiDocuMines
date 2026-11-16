@@ -194,7 +194,11 @@ class PeopleView(APIView):
             qs = qs.filter(Q(groups__name=role) | Q(roles__name=role)).distinct() if hasattr(CustomUser, "roles") \
                 else qs.filter(groups__name=role)
         total = qs.count()
-        rows = list(qs.prefetch_related("groups").order_by("email")[(page - 1) * size: page * size])
+        from core.ordering import ordering_from
+        order = ordering_from(request, {"person": "email", "name": "contact_name", "email": "email",
+                                        "organisation": "client__name", "status": "is_active",
+                                        "last_login": "last_login", "joined": "date_joined"}, "email")
+        rows = list(qs.prefetch_related("groups").order_by(*order)[(page - 1) * size: page * size])
         items = [_person(u, sorted({g.name for g in u.groups.all()} & set(ROLE_DEFINITIONS)) or sorted(user_role_names(u)))
                  for u in rows]
         return Response({"results": items, "count": total, "page": page, "page_size": size,
@@ -420,6 +424,19 @@ class AuditView(APIView):
         platform = is_platform_superuser(request.user)
         tid = tenant_id(request.user)
 
+        # Sort by time (default newest first), person or action. Each stream is ordered the same way in
+        # the database and the streams are merged, so paging stays correct across both sources.
+        raw = (request.query_params.get("ordering") or "-at").strip()
+        sort_key = raw.lstrip("-") if raw.lstrip("-") in ("at", "actor", "action") else "at"
+        newest_first = raw.startswith("-") if raw.lstrip("-") in ("at", "actor", "action") else True
+        admin_field = {"at": "created_at", "actor": "actor__email", "action": "action"}[sort_key]
+        log_field = {"at": "timestamp", "actor": "user__email", "action": "event"}[sort_key]
+        sign = "-" if newest_first else ""
+
+        def merge_key(r):
+            v = r[sort_key]
+            return v.lower() if isinstance(v, str) else v
+
         streams, total = [], 0
         if kind in ("all", "admin"):
             qs = AdminAuditEvent.objects.select_related("actor")
@@ -430,7 +447,7 @@ class AuditView(APIView):
             total += qs.count()
             streams.append([{"at": e.created_at, "type": "admin", "action": e.action,
                              "actor": e.actor.email if e.actor else "system", "target": e.target_label,
-                             "details": e.details, "ip": e.ip_address} for e in qs.order_by("-created_at")[:need]])
+                             "details": e.details, "ip": e.ip_address} for e in qs.order_by(sign + admin_field, "-created_at")[:need]])
         events = {"sign_in": ["LOGIN", "LOGOUT", "PASSWORD_RESET"], "assistant": ["CHAT_QUERY"]}
         if kind in ("all", "sign_in", "assistant"):
             wanted = events.get(kind, events["sign_in"] + events["assistant"])
@@ -443,8 +460,8 @@ class AuditView(APIView):
             streams.append([{"at": a.timestamp, "type": "assistant" if a.event == "CHAT_QUERY" else "sign_in",
                              "action": a.event.lower(), "actor": a.user.email, "target": (a.metadata or {}).get("context_label", ""),
                              "details": {k: v for k, v in (a.metadata or {}).items() if k != "query_preview"},
-                             "ip": (a.metadata or {}).get("ip")} for a in qs.order_by("-timestamp")[:need]])
-        rows = list(merge(*streams, key=lambda r: r["at"], reverse=True))[(page - 1) * size: need]
+                             "ip": (a.metadata or {}).get("ip")} for a in qs.order_by(sign + log_field, "-timestamp")[:need]])
+        rows = list(merge(*streams, key=merge_key, reverse=newest_first))[(page - 1) * size: need]
         return Response({"results": rows, "count": total, "page": page, "page_size": size,
                          "total_pages": max(1, -(-total // size))})
 
