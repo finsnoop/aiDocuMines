@@ -83,6 +83,27 @@ class DocumentTableTests(TestCase):
         self.assertEqual(names, ["doc1.pdf", "doc3.pdf", "doc5.pdf"])
         self.assertNotIn("secret.pdf", [d["filename"] for d in self._get(self.user, "?page_size=100")["results"]])
 
+    def test_folder_filter_includes_sub_folders_and_stays_isolated(self):
+        """A folder chosen in the Locations tree filters All documents to it and every folder below it."""
+        top = get_or_create_folder_tree(["Contracts"], user=self.user, project_id="Atlas", service_id="matter")
+        sub = get_or_create_folder_tree(["Contracts", "Signed"], user=self.user, project_id="Atlas", service_id="matter")
+        other = get_or_create_folder_tree(["Invoices"], user=self.user, project_id="Atlas", service_id="matter")
+        a = make(self.user, "msa.pdf", "Atlas", "matter", "/x/msa.pdf")
+        b = make(self.user, "nda-signed.pdf", "Atlas", "matter", "/x/nda-signed.pdf")
+        c = make(self.user, "inv.pdf", "Atlas", "matter", "/x/inv.pdf")
+        for f, folder in ((a, top), (b, sub), (c, other)):
+            FileFolderLink.objects.filter(file=f).delete()
+            FileFolderLink.objects.create(file=f, folder=folder)
+        names = sorted(d["filename"] for d in self._get(self.user, f"?folder={top.id}&page_size=100")["results"])
+        self.assertEqual(names, ["msa.pdf", "nda-signed.pdf"])
+        # someone else's folder id never shows them anything they cannot already open
+        theirs = get_or_create_folder_tree(["Private"], user=self.stranger, project_id="Atlas", service_id="matter")
+        self.assertEqual(self._get(self.user, f"?folder={theirs.id}")["results"], [])
+        from rest_framework.test import APIClient
+        c2 = APIClient()
+        c2.force_authenticate(user=self.user)
+        self.assertEqual(c2.get("/api/v1/documents/table/?folder=not-a-uuid").status_code, 400)
+
     def test_facets(self):
         from rest_framework.test import APIClient
         c = APIClient()

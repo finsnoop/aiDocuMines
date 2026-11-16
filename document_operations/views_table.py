@@ -56,6 +56,19 @@ class DocumentTableView(APIView):
                 qs = qs.filter(**{field: qp[field][:255]})
         if qp.get("extension"):
             qs = qs.filter(extension__iexact=qp["extension"][:10])
+        folder = (qp.get("folder") or "").strip()
+        if folder:
+            # A folder chosen in the Locations tree: documents in it and in every folder below it. Starts from
+            # the caller's accessible files, so naming someone else's folder reveals nothing new.
+            import uuid
+            from core.assistant import _folder_ids_below
+            from document_operations.models import FileFolderLink
+            try:
+                root = uuid.UUID(folder)
+            except ValueError:
+                return Response({"error": "Unknown folder."}, status=400)
+            in_folder = FileFolderLink.objects.filter(folder_id__in=_folder_ids_below(root), is_trashed=False)
+            qs = qs.filter(id__in=in_folder.values("file_id"))
 
         ordering = ORDERING.get(qp.get("ordering", ""), "-updated_at")
         start = (page - 1) * size
