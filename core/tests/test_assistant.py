@@ -82,6 +82,24 @@ class AssistantAccessTests(TestCase):
         doc = make_doc(self.guest, "g.pdf", "text")
         self.assertEqual(ask(self.guest, {"type": "file", "id": doc.id}).status_code, 403)
 
+    def test_any_on_screen_object_can_be_asked_about(self, llm):
+        """Every object is data: a metric, a report or a table row is sent as [D1] with its readable documents."""
+        r = ask(self.alice, {"type": "data", "label": "Evidence review queue",
+                             "data": {"awaiting_review": 19, "documents_analysed": 19},
+                             "file_ids": [self.doc.id, self.secret.id]}, question="What needs attention?")
+        self.assertEqual(r.status_code, 200, r.content)
+        block = llm.call_args[0][1]
+        self.assertIn("[D1] Evidence review queue", block)
+        self.assertIn('"awaiting_review": 19', block)
+        self.assertIn("thirty days", block)                          # alice's own document is attached
+        self.assertNotIn("900 million", block)                       # another firm's document id is ignored
+        self.assertEqual(r.json()["context"]["type"], "data")
+
+    def test_data_context_is_capped(self, llm):
+        r = ask(self.alice, {"type": "data", "label": "Big table", "data": {"rows": ["x" * 100] * 1000}})
+        self.assertEqual(r.status_code, 200, r.content)
+        self.assertLess(len(llm.call_args[0][1]), 21_000)
+
     def test_unknown_context_is_404(self, llm):
         self.assertEqual(ask(self.alice, {"type": "folder", "id": "not-a-uuid"}).status_code, 404)
         self.assertEqual(ask(self.alice, {"type": "file", "id": 999999}).status_code, 404)

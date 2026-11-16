@@ -34,6 +34,8 @@ MAX_CONTEXT_CHARS = 14_000       # characters of passages sent to the model
 CHUNK_SIZE = 1_200
 CHUNK_OVERLAP = 150
 MAX_FOLDERS = 5_000
+MAX_DATA_CHARS = 20_000          # on-screen data (a metric, report, chart or table row) sent with a question
+MAX_DATA_FILES = 20              # documents attached to a data object
 
 STOPWORDS = set("""a an and are as at be by for from has have in is it its of on or that the this to was were will with
 what which who whom whose when where why how do does did can could should would may might shall i we you they he she
@@ -47,6 +49,7 @@ class Context:
     label: str
     files: list = field(default_factory=list)   # File objects the caller may read (bounded)
     total_in_scope: int = 0
+    data: str = ''                              # "data" contexts: the object as shown to the caller (JSON)
 
 
 # ── scope resolution ─────────────────────────────────────────────────────────
@@ -104,6 +107,21 @@ def resolve_context(user, spec: dict) -> Context:
         if not qs.exists():
             raise Http404("Nothing to read here")
         return _bounded(Context("project", label), qs)
+
+    if kind == "data":
+        # Any object on screen (a metric, a report, a chart's figures, a table row): the caller sends what they
+        # see. Only the documents among `file_ids` that the caller may read are added; others are ignored.
+        import json
+        label = str(spec.get("label") or "Data")[:200]
+        try:
+            data = json.dumps(spec.get("data"), ensure_ascii=False, default=str, indent=1)
+        except (TypeError, ValueError):
+            data = str(spec.get("data"))
+        ctx = Context("data", label, data=data[:MAX_DATA_CHARS])
+        ids = [int(i) for i in (spec.get("file_ids") or []) if str(i).isdigit()][:MAX_DATA_FILES]
+        if ids:
+            _bounded(ctx, readable.filter(id__in=ids))
+        return ctx
 
     raise Http404("Choose a file, folder or matter")
 
@@ -186,6 +204,8 @@ def semantic_first(question: str, ctx: Context, user) -> list:
 
 def build_sources(question: str, ctx: Context, user) -> list:
     """[{label, file_id, filename, excerpt}] filling MAX_CONTEXT_CHARS, most relevant first."""
+    if not ctx.files:
+        return []          # e.g. a data object with no documents behind it: nothing to search
     candidates = semantic_first(question, ctx, user)
     seen_text = {t[:200] for _, t in candidates}
     keyword = []
@@ -208,10 +228,15 @@ def build_sources(question: str, ctx: Context, user) -> list:
 
 def compose_prompt(question: str, ctx: Context, sources: list, web: list) -> tuple[str, str]:
     """(query_text, context_block) for the model."""
-    lines = [f"[{s['label']}] {s['filename']}\n{s['excerpt']}" for s in sources]
+    lines = [f"[D1] {ctx.label} (data shown on screen)\n{ctx.data}"] if ctx.data else []
+    lines += [f"[{s['label']}] {s['filename']}\n{s['excerpt']}" for s in sources]
     lines += [f"[W{i + 1}] {w['title']} ({w['url']})\n{w['snippet']}" for i, w in enumerate(web)]
+    subject = (f"You are answering a question about \"{ctx.label}\", an item of data the user is looking at in "
+               "aiDocuMines (source D1, JSON). Explain what it means, what stands out and what to do next, citing [D1] "
+               "and any document sources. " if ctx.kind == "data"
+               else f"You are answering a question about the {ctx.kind} \"{ctx.label}\". ")
     rules = (
-        f"You are answering a question about the {ctx.kind} \"{ctx.label}\". "
+        subject +
         "Use the numbered sources below. Cite every statement with its source label, for example [S1] or [W2]. "
         + ("Sources starting with W are public web results; say clearly when a point comes from the web. "
            if web else "Do not use outside knowledge; if the sources do not answer the question, say so. ")
