@@ -32,7 +32,7 @@ try:
     ADOBE_PDF_SERVICES_AVAILABLE = True
 except ImportError:
     ADOBE_PDF_SERVICES_AVAILABLE = False
-    logger.warning("⚠️ Adobe PDF Services SDK is not installed. Falling back to Pandoc for DOCX conversion.")
+    logger.warning("Adobe PDF Services SDK is not installed. Falling back to Pandoc for DOCX conversion.")
 
 
 class OCRService:
@@ -42,7 +42,7 @@ class OCRService:
         """Retrieve file path from `core.models.File`."""
         file_obj = File.objects.filter(id=file_id).first()
         if not file_obj:
-            logger.error(f"❌ File ID {file_id} not found.")
+            logger.error(f"File ID {file_id} not found.")
             return None
         return file_obj.filepath if os.path.exists(file_obj.filepath) else None
 
@@ -106,7 +106,7 @@ class OCRService:
     def apply_ocr(self, file_id, file_path, ocr_option="Basic-ocr"):
         """Applies OCR to a given PDF file and saves the OCRed file."""
         if not file_path or not self.is_pdf(file_path):
-            logger.info(f"🔹 Skipping OCR: File {file_path} is not a PDF.")
+            logger.info(f"Skipping OCR: File {file_path} is not a PDF.")
             return None
 
         # Ensure the OCR directories exist without redundancy
@@ -118,7 +118,7 @@ class OCRService:
         ocr_output_path = os.path.join(tmp_dir, f"ocr-{uuid.uuid4()}.pdf")  # Save OCR output directly in tmp/
 
         try:
-            logger.info(f"🔄 Applying OCR to {file_path}")
+            logger.info(f"Applying OCR to {file_path}")
 
             if ocr_option.lower() == "basic-ocr":
                 cmd = [
@@ -166,7 +166,7 @@ class OCRService:
             return ocr_output_path
 
         except subprocess.CalledProcessError as e:
-            logger.error(f"❌ OCR processing failed: {e.stderr}")
+            logger.error(f"OCR processing failed: {e.stderr}")
             return None
 
 
@@ -183,23 +183,23 @@ class OCRService:
                 # Find all PDF files under the OCR directory (recursively)
                 ocr_files = glob.glob(os.path.join(ocr_dir, '**', '*.pdf'), recursive=True)
                 if not ocr_files:
-                    logger.error(f"❌ No OCR batches found to merge in {ocr_dir}.")
+                    logger.error(f"No OCR batches found to merge in {ocr_dir}.")
                     return None
                 ocr_output_files = ocr_files
 
-            logger.info(f"🔄 Found {len(ocr_output_files)} PDFs to merge.")
+            logger.info(f"Found {len(ocr_output_files)} PDFs to merge.")
 
             # Merge PDFs using PdfMerger
             merger = PdfWriter()
             for pdf in ocr_output_files:
-                logger.info(f"🔹 Adding {pdf} to the merger.")
+                logger.info(f"Adding {pdf} to the merger.")
                 merger.append(pdf)
 
             # Write the merged PDF to the final output path
             with open(output_path, "wb") as output_file:
                 merger.write(output_file)
 
-            logger.info(f"✅ Merged PDF saved to: {output_path}")
+            logger.info(f"Merged PDF saved to: {output_path}")
 
             # Move the merged file to the desired location (above the tmp directory)
             final_pdf_dir = os.path.join(ocr_dir, "final")
@@ -207,7 +207,7 @@ class OCRService:
             final_pdf_path = os.path.join(final_pdf_dir, "final_merged_ocr_file.pdf")
             shutil.move(output_path, final_pdf_path)
 
-            logger.info(f"✅ Final merged PDF moved to: {final_pdf_path}")
+            logger.info(f"Final merged PDF moved to: {final_pdf_path}")
 
             # Clean up the temporary files (everything under tmp/)
             tmp_dir = os.path.join(ocr_dir, "tmp")
@@ -215,7 +215,7 @@ class OCRService:
             try:
                 # Clean up the temporary files (everything under tmp/)
                 shutil.rmtree(tmp_dir)
-                logger.info(f"✅ Removed temp directory: {tmp_dir}")
+                logger.info(f"Removed temp directory: {tmp_dir}")
             except Exception as e:
                 # If tmp directory doesn't exist, handle final merged file logic for nested tmp directories
                 logger.error(f"Error during temp directory cleanup: {e}")
@@ -228,9 +228,9 @@ class OCRService:
                     for nested_tmp in nested_tmp_dirs:
                         if os.path.exists(nested_tmp):
                             shutil.rmtree(nested_tmp)
-                            logger.info(f"✅ Removed nested temp directory: {nested_tmp}")
+                            logger.info(f"Removed nested temp directory: {nested_tmp}")
                         else:
-                            logger.warning(f"❌ Could not trace directory: {nested_tmp}")
+                            logger.warning(f"Could not trace directory: {nested_tmp}")
 
             # Handle cleanup for final merged file and tmp dir logic
             final_dir = os.path.join(ocr_dir, "final")
@@ -241,35 +241,35 @@ class OCRService:
                 final_merged_file = os.path.join(final_dir, "final_merged_ocr_file.pdf")
 
                 if os.path.exists(final_merged_file):
-                    logger.info(f"✅ Final merged file found: {final_merged_file}")
+                    logger.info(f"Final merged file found: {final_merged_file}")
 
                     # Ensure final destination exists
                     if not os.path.exists(final_position_of_merged_file):
                         os.makedirs(final_position_of_merged_file)
-                        logger.info(f"✅ Created directory: {final_position_of_merged_file}")
+                        logger.info(f"Created directory: {final_position_of_merged_file}")
 
                     # Move the final merged file
                     shutil.move(final_merged_file, final_position_of_merged_file)
-                    logger.info(f"✅ Moved final merged file to: {final_position_of_merged_file}")
+                    logger.info(f"Moved final merged file to: {final_position_of_merged_file}")
 
                     # Remove the tmp directory
                     if os.path.exists(dir_to_delete):
                         shutil.rmtree(dir_to_delete)
-                        logger.info(f"✅ Removed temp directory: {dir_to_delete}")
+                        logger.info(f"Removed temp directory: {dir_to_delete}")
                     else:
-                        logger.warning(f"❌ Could not trace directory: {dir_to_delete}")
+                        logger.warning(f"Could not trace directory: {dir_to_delete}")
                 else:
-                    logger.warning(f"❌ Final merged file not found in: {final_dir}")
+                    logger.warning(f"Final merged file not found in: {final_dir}")
 
                 return final_merged_file
             else:
-                logger.warning(f"❌ Final directory not found: {final_dir}")
+                logger.warning(f"Final directory not found: {final_dir}")
                 return final_pdf_path
 
             return final_pdf_path
 
         except Exception as e:
-            logger.error(f"❌ Error during PDF merging: {str(e)}")
+            logger.error(f"Error during PDF merging: {str(e)}")
             return None
 
 
@@ -289,23 +289,23 @@ class OCRService:
                 # Find all PDF files under the OCR directory (recursively)
                 ocr_files = glob.glob(os.path.join(ocr_dir, '**', '*.pdf'), recursive=True)
                 if not ocr_files:
-                    logger.error(f"❌ No OCR batches found to merge in {ocr_dir}.")
+                    logger.error(f"No OCR batches found to merge in {ocr_dir}.")
                     return None
                 ocr_output_files = ocr_files
 
-            logger.info(f"🔄 Found {len(ocr_output_files)} PDFs to merge.")
+            logger.info(f"Found {len(ocr_output_files)} PDFs to merge.")
 
             # Merge PDFs using PdfMerger
             merger = PdfWriter()
             for pdf in ocr_output_files:
-                logger.info(f"🔹 Adding {pdf} to the merger.")
+                logger.info(f"Adding {pdf} to the merger.")
                 merger.append(pdf)
 
             # Write the merged PDF to the final output path
             with open(output_path, "wb") as output_file:
                 merger.write(output_file)
 
-            logger.info(f"✅ Merged PDF saved to: {output_path}")
+            logger.info(f"Merged PDF saved to: {output_path}")
 
             # Move the merged file to the desired location (above the tmp directory)
             final_pdf_dir = os.path.join(ocr_dir, "final")
@@ -313,7 +313,7 @@ class OCRService:
             final_pdf_path = os.path.join(final_pdf_dir, "final_merged_ocr_file.pdf")
             shutil.move(output_path, final_pdf_path)
 
-            logger.info(f"✅ Final merged PDF moved to: {final_pdf_path}")
+            logger.info(f"Final merged PDF moved to: {final_pdf_path}")
 
             # Clean up the temporary files (everything under tmp/)
             
@@ -322,7 +322,7 @@ class OCRService:
                 # Clean up the temporary files (everything under tmp/)
                 tmp_dir = os.path.join(ocr_dir, "tmp")
                 shutil.rmtree(tmp_dir)
-                logger.info(f"✅ Removed temp directory: {tmp_dir}")
+                logger.info(f"Removed temp directory: {tmp_dir}")
             except Exception as e:
                 # If tmp directory doesn't exist, handle final merged file logic
                 logger.error(f"Error during temp directory cleanup: {e}")
@@ -338,45 +338,45 @@ class OCRService:
                     
                     # Check if final merged file exists
                     if os.path.exists(final_merged_file):
-                        logger.info(f"✅ Final merged file found: {final_merged_file}")
+                        logger.info(f"Final merged file found: {final_merged_file}")
                         
                         # Ensure final destination exists
                         if not os.path.exists(final_position_of_merged_file):
                             os.makedirs(final_position_of_merged_file)
-                            logger.info(f"✅ Created directory: {final_position_of_merged_file}")
+                            logger.info(f"Created directory: {final_position_of_merged_file}")
                         
                         # Move the final merged file
                         shutil.move(final_merged_file, final_position_of_merged_file)
-                        logger.info(f"✅ Moved final merged file to: {final_position_of_merged_file}")
+                        logger.info(f"Moved final merged file to: {final_position_of_merged_file}")
                         
                         # Remove the tmp directory
                         if os.path.exists(dir_to_delete):
                             shutil.rmtree(dir_to_delete)
-                            logger.info(f"✅ Removed temp directory: {dir_to_delete}")
+                            logger.info(f"Removed temp directory: {dir_to_delete}")
                         else:
-                            logger.warning(f"❌ Could not trace directory: {dir_to_delete}") 
+                            logger.warning(f"Could not trace directory: {dir_to_delete}") 
                     else:
-                        logger.warning(f"❌ Final merged file not found in: {final_dir}")
+                        logger.warning(f"Final merged file not found in: {final_dir}")
 
                     return final_merged_file
 
                 else:
-                    logger.warning(f"❌ Final directory not found: {final_dir}")
+                    logger.warning(f"Final directory not found: {final_dir}")
                     return final_pdf_path
 
             # Clean up the temporary files (everything under tmp/)
             # tmp_dir = os.path.join(ocr_dir, "tmp")
             # if os.path.exists(tmp_dir):
             #     shutil.rmtree(tmp_dir)
-            #     logger.info(f"✅ Removed temp directory: {tmp_dir}")
+            #     logger.info(f"Removed temp directory: {tmp_dir}")
             # else:
-            #     logger.warning(f"❌ Temp directory not found: {tmp_dir}")
+            #     logger.warning(f"Temp directory not found: {tmp_dir}")
             #
 
             return final_pdf_path
 
         except Exception as e:
-            logger.error(f"❌ Error during PDF merging: {str(e)}")
+            logger.error(f"Error during PDF merging: {str(e)}")
             return None
         '''
 
@@ -384,7 +384,7 @@ class OCRService:
     def convert_to_formatted_docx(self, pdf_path, output_path):
         """Converts OCRed PDF to **Formatted DOCX** using Adobe PDF Services."""
         if not ADOBE_PDF_SERVICES_AVAILABLE:
-            logger.warning("⚠️ Adobe PDF Services not available. Skipping formatted DOCX conversion.")
+            logger.warning("Adobe PDF Services not available. Skipping formatted DOCX conversion.")
             return None
 
         try:
@@ -412,7 +412,7 @@ class OCRService:
             return output_path
 
         except Exception as e:
-            logger.error(f"❌ Formatted DOCX conversion failed: {e}")
+            logger.error(f"Formatted DOCX conversion failed: {e}")
             return None
 
     def convert_to_raw_docx(self, pdf_path, output_path):
@@ -422,7 +422,7 @@ class OCRService:
             subprocess.run(cmd, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
             return output_path
         except subprocess.CalledProcessError as e:
-            logger.error(f"❌ Raw DOCX conversion failed: {e.stderr.decode()}")
+            logger.error(f"Raw DOCX conversion failed: {e.stderr.decode()}")
             return None
 
     def extract_bookmarks_to_dataframe(self, input_pdf):
@@ -465,7 +465,7 @@ class OCRService:
         final_ocr_pdf_with_bookmarks = final_ocr_pdf.replace(".pdf", "_with_bookmarks.pdf")
         pdf_document.save(final_ocr_pdf_with_bookmarks, incremental=False)
         pdf_document.close()
-        logger.info(f"✅ Final PDF with bookmarks saved to {final_ocr_pdf_with_bookmarks}")
+        logger.info(f"Final PDF with bookmarks saved to {final_ocr_pdf_with_bookmarks}")
 
         return final_ocr_pdf_with_bookmarks
 
@@ -484,13 +484,13 @@ class OCRService:
                 # Check if tmp_dir exists and remove it
                 if os.path.exists(tmp_dir):
                     shutil.rmtree(tmp_dir)  # Remove the tmp directory
-                    logger.info(f"✅ Removed temp directory: {tmp_dir}")
+                    logger.info(f"Removed temp directory: {tmp_dir}")
                 else:
-                    logger.warning(f"❌ Temp directory not found: {tmp_dir}")
+                    logger.warning(f"Temp directory not found: {tmp_dir}")
                 return
         
         # If no valid OCR option is found in the path
-        logger.error(f"❌ Invalid OCR option in path: {ocr_dir}")
+        logger.error(f"Invalid OCR option in path: {ocr_dir}")
 
 
 
@@ -499,11 +499,11 @@ def cleanup_tmp_dir(tmp_dir):
     """Removes temporary directories."""
     if os.path.exists(tmp_dir):
         shutil.rmtree(tmp_dir, ignore_errors=True)
-        logger.info(f"✅ Cleaned up temporary directory: {tmp_dir}")
+        logger.info(f"Cleaned up temporary directory: {tmp_dir}")
 
 def cleanup_temp_files(file_paths):
     """Delete temporary files."""
     for path in file_paths:
         os.remove(path)
-        logger.info(f"✅ Deleted temporary file: {path}")
+        logger.info(f"Deleted temporary file: {path}")
 

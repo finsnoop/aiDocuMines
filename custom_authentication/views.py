@@ -14,7 +14,7 @@ from oauth2_provider.contrib.rest_framework import TokenHasReadWriteScope
 from custom_authentication.authentication import ClientBoundOAuth2Authentication as OAuth2Authentication
 from .models import PasswordResetToken, CustomUser, Client, TwoFactorCode
 from .serializers import PasswordResetRequestSerializer, PasswordResetSerializer, CreateAdminUserSerializer, UserActivityLogSerializer
-from .tasks import send_signup_email_task, send_password_reset_email_task, send_admin_password_reset_email_task # ✅ Celery tasks
+from .tasks import send_signup_email_task, send_password_reset_email_task, send_admin_password_reset_email_task # Celery tasks
 from .tasks import send_password_reset_success_email_task
 from integrations.tasks import provision_nextcloud_user
 import logging
@@ -58,7 +58,7 @@ import io
 import base64
 from rest_framework.permissions import IsAuthenticated
 
-import pyotp  # 🔐 For TOTP verification
+import pyotp  # For TOTP verification
 
 from .permissions import (
     IsSuperUser, IsAdminUserOnly, IsRegularUser, IsGroupMember, IsManager, IsDeveloper, IsClient,
@@ -88,7 +88,7 @@ EMAIL_FROM = "no-reply@aidocumines.com"
 
 
 # Path to store OAuth secrets
-# ✅ Define Swagger parameters
+# Define Swagger parameters
 client_id_param = openapi.Parameter(
     "X-Client-ID", openapi.IN_HEADER, type=openapi.TYPE_STRING, required=True, description="Client ID provided at signup"
 )
@@ -249,7 +249,7 @@ class SignupView(APIView):
     permission_classes = [AllowAny]
     throttle_classes = AUTH_THROTTLES
 
-    # ✅ Define the request body schema
+    # Define the request body schema
     signup_request_schema = openapi.Schema(
         type=openapi.TYPE_OBJECT,
         required=["email", "password", "organisation", "contact_name", "contact_phone"],
@@ -268,7 +268,7 @@ class SignupView(APIView):
 
     @swagger_auto_schema(
         operation_description="Register a new user and return client credentials along with additional user metrics.",
-        request_body=signup_request_schema,  # ✅ Correct request body schema
+        request_body=signup_request_schema,  # Correct request body schema
         responses={
             201: openapi.Response("User successfully registered", openapi.Schema(
                 type=openapi.TYPE_OBJECT,
@@ -292,7 +292,7 @@ class SignupView(APIView):
     )
     def post(self, request):
         data = request.data
-        email = data.get("email", "").strip().lower()  # ✅ Normalize email
+        email = data.get("email", "").strip().lower()  # Normalize email
         password = data.get("password")
         organisation = data.get("organisation")
         contact_name = data.get("contact_name")
@@ -306,7 +306,7 @@ class SignupView(APIView):
             return Response({"error": "Email, password, organisation, contact_name, and contact_phone are required"},
                             status=status.HTTP_400_BAD_REQUEST)
 
-        # ✅ Ensure email is unique
+        # Ensure email is unique
         if User.objects.filter(email=email).exists():
             return Response({"error": "Email is already registered"}, status=status.HTTP_400_BAD_REQUEST)
 
@@ -321,7 +321,7 @@ class SignupView(APIView):
         client = Client.objects.create(name=organisation)
 
         try:
-            # ✅ Create user with all fields
+            # Create user with all fields
             user = User.objects.create_user(
                 email=email,
                 password=password,
@@ -336,10 +336,10 @@ class SignupView(APIView):
             user.profile_created_at = timezone.now()  # Store profile creation time
             user.save()
 
-            # ✅ Generate a **secure** client secret BEFORE saving the application
+            # Generate a **secure** client secret BEFORE saving the application
             raw_client_secret = generate_client_secret()
 
-            # ✅ Create an OAuth2 Application for the user
+            # Create an OAuth2 Application for the user
             application = Application.objects.create(
                 user=user,
                 name=f"{user.client.name} - API Access",
@@ -349,7 +349,7 @@ class SignupView(APIView):
                 client_secret=raw_client_secret,
             )
 
-            # ✅ Send signup email asynchronously
+            # Send signup email asynchronously
             send_signup_email_task.delay(user.id)
             # send_signup_email_task.delay(user.id,
             #    f"Your account has been created.\n\nClient ID: {application.client_id}\nClient Secret: {raw_client_secret}")
@@ -398,7 +398,7 @@ class SignupView(APIView):
             }, status=status.HTTP_201_CREATED)
 
         except Exception as e:
-            logger.error(f"❌ Error during signup: {str(e)}")
+            logger.error(f"Error during signup: {str(e)}")
             return Response({"error": "Internal Server Error"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
     def create(self, validated_data):
@@ -434,7 +434,7 @@ class LoginView(APIView):
 
         email = request.data.get("email")
         password = request.data.get("password")
-        twofa_code = request.data.get("2fa_code")  # 🔐 New: Optional 2FA code from user
+        twofa_code = request.data.get("2fa_code")  # New: Optional 2FA code from user
 
         if not email or not password:
             return Response({"error": "Email and password are required"}, status=status.HTTP_400_BAD_REQUEST)
@@ -455,7 +455,7 @@ class LoginView(APIView):
             _login_failed(email)
             return Response({"error": "Invalid Client ID or Client Secret"}, status=status.HTTP_401_UNAUTHORIZED)
 
-        # 🔐 If user has 2FA enabled, require a valid email-based 2FA code
+        # If user has 2FA enabled, require a valid email-based 2FA code
         if user.is_2fa_enabled:
             if not twofa_code:
                 code = f"{secrets.randbelow(900000) + 100000}"
@@ -484,17 +484,17 @@ class LoginView(APIView):
 
         _login_succeeded(email)
 
-        # ✅ Log user login activity
+        # Log user login activity
         log_activity(user, "LOGIN", {"ip": request.META.get("REMOTE_ADDR")})
         user_logged_in.send(sender=user.__class__, request=request, user=user)
 
-        # ✅ Verify OAuth2 application
+        # Verify OAuth2 application
         try:
             application = Application.objects.get(client_id=client_id, user=user)
         except Application.DoesNotExist:
             return Response({"error": "Invalid Client ID or Client Secret"}, status=status.HTTP_401_UNAUTHORIZED)
 
-        # ✅ Generate OAuth2 access token
+        # Generate OAuth2 access token
         token = AccessToken.objects.create(
             user=user,
             token=generate_token(),
@@ -505,10 +505,10 @@ class LoginView(APIView):
 
         login(request, user)  # Django login
 
-        # ✅ Get user roles from groups
+        # Get user roles from groups
         roles = [group.name for group in user.groups.all()]
 
-        # ✅ Return flattened response for frontend compatibility
+        # Return flattened response for frontend compatibility
         return Response({
             "access_token": token.token,
             "expires": token.expires.strftime("%Y-%m-%d %H:%M:%S"),
@@ -623,7 +623,7 @@ class PasswordResetView(APIView):
         RefreshToken.objects.filter(user=user).delete()
         _login_succeeded((user.email or "").lower())
 
-        # ✅ Notify user via email
+        # Notify user via email
         transaction.on_commit(lambda: send_password_reset_success_email_task.delay(user.email), robust=True)
 
         return Response({"message": "Password reset successful"}, status=status.HTTP_200_OK)
@@ -859,7 +859,7 @@ class DisableUserView(APIView):
             user.is_active = False
             user.save()
 
-            # ✅ Log disable event
+            # Log disable event
             log_activity(user, "ACCOUNT_DEACTIVATED", {"admin_id": request.user.id})
 
             return Response({"message": "User account disabled successfully"}, status=status.HTTP_200_OK)
@@ -901,7 +901,7 @@ class EnableUserView(APIView):
             user.is_active = True
             user.save()
 
-            # ✅ Log enable event
+            # Log enable event
             log_activity(user, "ACCOUNT_REACTIVATED", {"admin_id": request.user.id})
 
             return Response({"message": "User account enabled successfully"}, status=status.HTTP_200_OK)
@@ -934,7 +934,7 @@ class RevokeAPIKeyView(APIView):
 
     def delete(self, request):
         try:
-            # ✅ Use request.data directly
+            # Use request.data directly
             client_id = request.data.get("client_id")
 
             if not client_id:
@@ -978,10 +978,10 @@ class AdminResetUserPasswordView(APIView):
 
             send_admin_password_reset_email_task.delay(user.id)
 
-            # ✅ Log activity
+            # Log activity
             log_activity(user, "PASSWORD_RESET", {"admin_id": request.user.id})
 
-            # ✅ Send password reset email (manual message, not token-based)
+            # Send password reset email (manual message, not token-based)
             subject = "Your password has been reset by an admin"
             message = (
                 f"Dear {user.email},\n\n"
@@ -1041,13 +1041,13 @@ class PromoteUserToAdminView(APIView):
                 user.is_superuser = True
             user.save()
 
-            # ✅ Adjust group roles
+            # Adjust group roles
             guest_group, _ = Group.objects.get_or_create(name="Guest")
             admin_group, _ = Group.objects.get_or_create(name="Admin")
 
-            # ✅ Group updates
-            user.groups.remove(guest_group)  # ✅ Remove "Guest"
-            user.groups.add(admin_group)     # ✅ Add "Admin"
+            # Group updates
+            user.groups.remove(guest_group)  # Remove "Guest"
+            user.groups.add(admin_group)     # Add "Admin"
 
             return Response({"message": f"User {user.email} has been promoted to admin"}, status=status.HTTP_200_OK)
 
@@ -1189,12 +1189,12 @@ class CreateAdminUserView(APIView):
 
 class CreateUserView(APIView):
     authentication_classes = [OAuth2Authentication]
-    permission_classes = [IsAdminOrSuperUser]  # ✅ Ensure only admins can create users
+    permission_classes = [IsAdminOrSuperUser]  # Ensure only admins can create users
 
-    # ✅ Define request schema
+    # Define request schema
     user_creation_schema = openapi.Schema(
         type=openapi.TYPE_OBJECT,
-        required=["email", "organisation", "contact_name", "contact_phone"],  # ✅ Remove password from required
+        required=["email", "organisation", "contact_name", "contact_phone"],  # Remove password from required
         properties={
             "email": openapi.Schema(type=openapi.TYPE_STRING, format="email", description="User email"),
             "organisation": openapi.Schema(type=openapi.TYPE_STRING, description="Organisation name"),
@@ -1246,18 +1246,18 @@ class CreateUserView(APIView):
         use_case = data.get("use_case", "")
         role_name = data.get("role", "Guest")  # Default to "Guest"
 
-        # ✅ Generate a secure temporary password
+        # Generate a secure temporary password
         temp_password = secrets.token_urlsafe(12)
 
-        # ✅ Fix: Remove password from required fields
+        # Fix: Remove password from required fields
         if not email or not organisation or not contact_name or not contact_phone:
             return Response({"error": "Missing required fields"}, status=status.HTTP_400_BAD_REQUEST)
 
-        # ✅ Ensure email is unique
+        # Ensure email is unique
         if User.objects.filter(email=email).exists():
             return Response({"error": "Email is already registered"}, status=status.HTTP_400_BAD_REQUEST)
 
-        # ✅ Multi-tenancy: Admin can only create users within their own client organization
+        # Multi-tenancy: Admin can only create users within their own client organization
         if not request.user.is_superuser:
             admin_client = request.user.client
             if organisation.lower() != admin_client.name.lower():
@@ -1275,10 +1275,10 @@ class CreateUserView(APIView):
             client = request.user.client  # always the admin's own organisation
 
         try:
-            # ✅ Create user with a temporary password
+            # Create user with a temporary password
             user = User.objects.create_user(
                 email=email,
-                password=temp_password,  # ✅ Assign the temporary password
+                password=temp_password,  # Assign the temporary password
                 client=client,
             )
             user.contact_name = contact_name
@@ -1290,11 +1290,11 @@ class CreateUserView(APIView):
             user.profile_created_at = now()
             user.save()
 
-            # ✅ Assign role (Admin, Manager, Guest)
+            # Assign role (Admin, Manager, Guest)
             role, _ = Group.objects.get_or_create(name=role_name)
             user.groups.add(role)
 
-            # ✅ Generate OAuth2 credentials
+            # Generate OAuth2 credentials
             raw_client_secret = generate_client_secret()
             app = Application.objects.create(
                 user=user,
@@ -1306,19 +1306,19 @@ class CreateUserView(APIView):
             )
             app.save()
 
-            # ✅ Store raw secret securely
+            # Store raw secret securely
 
-            # ✅ Trigger Celery email task
+            # Trigger Celery email task
             send_signup_email_task.delay(user.id)
 
-            # ✅ Trigger Nextcloud auto-provisioning
+            # Trigger Nextcloud auto-provisioning
             provision_nextcloud_user.delay(user.id)
 
             return Response({
                 "message": "User created successfully",
                 "user_id": user.id,
                 "email": user.email,
-                "temporary_password": temp_password,  # ✅ Include the generated password
+                "temporary_password": temp_password,  # Include the generated password
                 "organisation": user.client.name if user.client else None,
                 "role": role.name,
                 "client_id": app.client_id,
@@ -1326,13 +1326,13 @@ class CreateUserView(APIView):
             }, status=status.HTTP_201_CREATED)
 
         except Exception as e:
-            logger.error(f"❌ Error during user creation: {str(e)}")
+            logger.error(f"Error during user creation: {str(e)}")
             return Response({"error": "Internal Server Error"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
 class RetrieveUserView(APIView):
     authentication_classes = [OAuth2Authentication]
-    # permission_classes = [IsAdminUser]  # ✅ Only admins can access
+    # permission_classes = [IsAdminUser]  # Only admins can access
     permission_classes = [IsAdminOrSuperUser]
 
     def get(self, request, user_id):
@@ -1343,7 +1343,7 @@ class RetrieveUserView(APIView):
                 "email": user.email,
                 "organisation": user.client.name if user.client else None,
                 "is_active": user.is_active,
-                "is_superuser": user.is_superuser,  # ✅ Check if they are an admin
+                "is_superuser": user.is_superuser,  # Check if they are an admin
                 "created_at": user.profile_created_at,
             }, status=status.HTTP_200_OK)
         except User.DoesNotExist:
@@ -1566,12 +1566,12 @@ class DemoteUserFromAdminView(APIView):
             if not user.is_superuser:
                 return Response({"message": "User is not an admin"}, status=status.HTTP_400_BAD_REQUEST)
 
-            # ✅ Revoke elevated permissions
+            # Revoke elevated permissions
             user.is_staff = False
             user.is_superuser = False
             user.save()
 
-            # ✅ Adjust group roles
+            # Adjust group roles
             admin_group, _ = Group.objects.get_or_create(name="Admin")
             guest_group, _ = Group.objects.get_or_create(name="Guest")
 

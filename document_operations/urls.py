@@ -25,7 +25,7 @@ from .views import (
 from .views_table import DocumentFacetsView, DocumentTableView
 
 urlpatterns = [
-    # 📁 FOLDER OPERATIONS
+    # FOLDER OPERATIONS
     # path("folders/", FolderListView.as_view(), name="folder_list"),
     # path("folders/", FolderCreateView.as_view(), name="create-folder"),
     # Flat, paginated document table (all accessible documents)
@@ -40,7 +40,7 @@ urlpatterns = [
     path("folders/<uuid:pk>/delete/", DeleteFolderView.as_view(), name="folder_delete"),
     path("folders/<uuid:pk>/restore/", RestoreFolderView.as_view(), name="folder_restore"),
 
-    # 📄 FILE OPERATIONS
+    # FILE OPERATIONS
     path("files/upload-to-folder/", UploadFileToFolderView.as_view(), name="file_upload_to_folder"),
     path("files/<int:pk>/", FileDetailView.as_view(), name="file_detail"),
     path("files/<int:pk>/rename/", RenameFileView.as_view(), name="file_rename"),
@@ -50,39 +50,39 @@ urlpatterns = [
     path("files/<int:pk>/protect/", ProtectFileView.as_view(), name="file_protect"),
     path("files/<int:pk>/restore/", RestoreFileView.as_view(), name="file_restore"),
 
-    # 🗂️ BULK & UTILITIES
+    # BULK & UTILITIES
     path("files/trash/", TrashFilesView.as_view(), name="file_bulk_trash"),
     path("files/move/", MoveFilesView.as_view(), name="file_bulk_move"),
     path("files/zip/", ZipFilesView.as_view(), name="file_zip"),
 
-    # 📜 FILE VERSIONING
+    # FILE VERSIONING
     path("files/<int:pk>/versions/", ListFileVersionsView.as_view(), name="file_versions_list"),
     path("files/<int:pk>/versions/<int:version_number>/restore/", RestoreFileVersionView.as_view(), name="file_version_restore"),
 
-    # 🔗 FILE SHARING
+    # FILE SHARING
     path("files/<int:pk>/share/", ShareFileView.as_view(), name="file_share"),
     path("files/<int:pk>/unshare/", UnshareFileView.as_view(), name="file_unshare"),
     path("files/shared/", SharedFilesView.as_view(), name="file_shared_with_me"),
     path("files/shared-tree/", SharedTreeView.as_view(), name="file_shared_tree"),
 
-    # 👁️ FILE PREVIEW
+    # FILE PREVIEW
     path("files/<int:pk>/preview/", FilePreviewView.as_view(), name="file_preview"),
 
-    # 🕵️‍♂️ FILE ACTIVITY LOGS
+    # ‍FILE ACTIVITY LOGS
     path("files/<int:pk>/audit/", FileAuditLogView.as_view(), name="file_audit_log"),
 
-    # 🙈 HIDE / UNHIDE (per-user soft-delete for shared items)
+    # HIDE / UNHIDE (per-user soft-delete for shared items)
     path("files/<int:pk>/hide/", HideFileView.as_view(), name="file_hide"),
     path("files/<int:pk>/unhide/", UnhideFileView.as_view(), name="file_unhide"),
     path("folders/<uuid:pk>/hide/", HideFolderView.as_view(), name="folder_hide"),
     path("folders/<uuid:pk>/unhide/", UnhideFolderView.as_view(), name="folder_unhide"),
 
-    # 🗂️ BULK FOLDER CASCADE OPERATIONS
+    # BULK FOLDER CASCADE OPERATIONS
     path("folders/bulk-trash/", BulkTrashFoldersView.as_view(), name="folder_bulk_trash"),
     path("folders/bulk-restore/", BulkRestoreFoldersView.as_view(), name="folder_bulk_restore"),
     path("folders/bulk-delete/", BulkDeleteFoldersView.as_view(), name="folder_bulk_delete"),
 
-    # 🌐 PUBLIC ACCESS (if enabled)
+    # PUBLIC ACCESS (if enabled)
     path("public/share/<uuid:share_token>/", PublicSharedFileView.as_view(), name="public_file_access"),
 
     # EXTRA FILE SHARING
@@ -90,11 +90,11 @@ urlpatterns = [
     path("files/<int:pk>/access-level/", SetAccessLevelView.as_view(), name="file_access_level_update"),
     path("files/<int:pk>/share/public/", GrantPublicLinkView.as_view(), name="file_grant_public_link"),
 
-    # 🎨 COLOR TAGS
+    # COLOR TAGS
     path("files/<int:pk>/color/", FileColorTagView.as_view(), name="file_color"),
     path("folders/<uuid:pk>/color/", FolderColorTagView.as_view(), name="folder_color"),
 
-    # 🔗 ALIASES
+    # ALIASES
     path("files/<int:pk>/aliases/", FileAliasView.as_view(), name="file_aliases"),
     path("files/<int:pk>/aliases/<int:alias_id>/", FileAliasDetailView.as_view(), name="file_alias_detail"),
     path("folders/<uuid:pk>/aliases/", FolderAliasView.as_view(), name="folder_aliases"),

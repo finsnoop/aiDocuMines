@@ -29,7 +29,7 @@ def get_user_file_tree(user, base_upload_dir=None):
 
     file_tree = []
 
-    # 🔐 Files user can access: owned + shared
+    # Files user can access: owned + shared
     accessible_ids = get_user_accessible_file_ids(user)
     all_files = File.objects.filter(id__in=accessible_ids)
     file_map = {os.path.normpath(os.path.abspath(f.filepath)): f.id for f in all_files}
@@ -79,7 +79,7 @@ def get_user_file_tree(user, base_upload_dir=None):
 
         return items
 
-    # 1️⃣ Actual physical folder (user uploads)
+    # 1⃣ Actual physical folder (user uploads)
     try:
         client_ids = os.listdir(base_upload_dir)
     except FileNotFoundError:
@@ -96,7 +96,7 @@ def get_user_file_tree(user, base_upload_dir=None):
             children = _clean_tree(children)
             file_tree.extend(children)
 
-    # 2️⃣ Virtual folders for shared files
+    # 2⃣ Virtual folders for shared files
     seen_virtual_paths = set()
 
     for file in all_files:
@@ -111,7 +111,7 @@ def get_user_file_tree(user, base_upload_dir=None):
         if len(parts) < 3:
             continue
 
-        # 🚩 Skip files you own — they're already in the physical tree!
+        # Skip files you own — they're already in the physical tree!
         if file.user_id == user.id:
             continue
 

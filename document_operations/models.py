@@ -32,7 +32,7 @@ class FileFolderLink(models.Model):
     shared_with = models.ManyToManyField(settings.AUTH_USER_MODEL, blank=True, related_name="shared_files")
     password_protected = models.BooleanField(default=False)
     password_hint = models.CharField(max_length=255, null=True, blank=True)
-    is_public = models.BooleanField(default=False)  # 🌐 For public shared link
+    is_public = models.BooleanField(default=False)  # For public shared link
     public_token = models.CharField(max_length=64, unique=True, null=True, blank=True)  # Unique token for access
     shared_link_created_at = models.DateTimeField(null=True, blank=True)
 
@@ -97,7 +97,7 @@ class FileAuditLog(models.Model):
     timestamp = models.DateTimeField(auto_now_add=True)
 
     notes = models.TextField(blank=True, null=True)  # Optional human-readable explanation
-    extra = models.JSONField(blank=True, null=True)  # ✅ Structured metadata for API/debugging/audit
+    extra = models.JSONField(blank=True, null=True)  # Structured metadata for API/debugging/audit
 
     def __str__(self):
         return f"{self.user.email if self.user else 'System'} - {self.file.filename} - {self.action} at {self.timestamp}"

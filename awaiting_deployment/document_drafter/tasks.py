@@ -14,7 +14,7 @@ from app_layout.utils import (
     build_client_persona_prompt,
     build_product_recommendation_prompt,
     build_proposal_prompt,
-    build_suggested_solutions_prompt,   # ✅ ADD THIS
+    build_suggested_solutions_prompt,   # ADD THIS
     call_gpt4o,
     save_proposal_to_docx,
     build_rfp_extraction_prompt,
@@ -221,7 +221,7 @@ def generate_suggested_solutions_task(self, persona_id):
                         reason_for_relevance=rec.get("reason_for_relevance", rec.get("reason", "")),
                     )
         else:
-            print("⚠️ No proper recommendations found in GPT response:", result)
+            print("No proper recommendations found in GPT response:", result)
 
     except Exception as e:
         raise self.retry(exc=e, countdown=30, max_retries=3)
@@ -262,10 +262,10 @@ def extract_rfp_sections_task(self, rfp_id):
         else:
             rfp.status = "failed"
             rfp.save()
-            print("⚠️ GPT response for RFP was not a valid dictionary")
+            print("GPT response for RFP was not a valid dictionary")
 
     except Exception as e:
-        print(f"❌ RFP parsing failed: {e}")
+        print(f"RFP parsing failed: {e}")
         if rfp_id:
             IncomingRFP.objects.filter(id=rfp_id).update(status="failed")
         raise self.retry(exc=e, countdown=30, max_retries=3)
@@ -283,7 +283,7 @@ def answer_rfp_chat_task(self, rfp_id, question, history=""):
         prompt = build_rfp_chat_prompt(summary, question, history)
         return call_gpt4o(prompt)
     except Exception as e:
-        print(f"❌ GPT chat failed: {e}")
+        print(f"GPT chat failed: {e}")
         return "GPT failed to respond."
 
 
@@ -311,9 +311,9 @@ def extract_rfp_metadata_task(self, rfp_id):
             rfp.contact_email = metadata.get("contact_email", "")
             rfp.save()
         else:
-            print("⚠️ No metadata extracted from RFP.")
+            print("No metadata extracted from RFP.")
 
     except Exception as e:
-        print(f"❌ Metadata extraction failed: {e}")
+        print(f"Metadata extraction failed: {e}")
         raise self.retry(exc=e, countdown=30, max_retries=3)
 

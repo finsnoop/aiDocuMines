@@ -28,10 +28,10 @@ class CoreConfig(AppConfig):
                 timeout=30,
             )
 
-        # ✅ Import signal handlers so they are registered when Django boots
+        # Import signal handlers so they are registered when Django boots
         import core.signals
 
-        # ✅ Register bulk processing handlers
+        # Register bulk processing handlers
         try:
             from core.bulk_registry import discover_and_register
             discover_and_register()

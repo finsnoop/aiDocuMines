@@ -36,7 +36,7 @@ openai.api_key = os.getenv("OPENAI_API_KEY")
 
 
 # ------------------------------------------
-# 📄 Text Extraction from PDF
+# Text Extraction from PDF
 # ------------------------------------------
 def extract_text_from_pdf(pdf_path):
     """Extract text content from each page of a PDF."""
@@ -44,14 +44,14 @@ def extract_text_from_pdf(pdf_path):
     return [page.get_text() for page in doc]
 
 # ------------------------------------------
-# 🧠 Generate a unique hash for a page
+# Generate a unique hash for a page
 # ------------------------------------------
 def generate_page_hash(text):
     """Generate a simple MD5 hash for a page's text."""
     return hashlib.md5(text.encode('utf-8')).hexdigest()
 
 # ------------------------------------------
-# 🧠 Build Prompt: Extract Products & Services
+# Build Prompt: Extract Products & Services
 # ------------------------------------------
 def build_product_service_prompt(text):
     """Build a prompt for GPT-4o to extract products/services from text."""
@@ -84,7 +84,7 @@ Text:
 """
 
 # ------------------------------------------
-# 🧠 Build Prompt: Product Recommendations based on Persona
+# Build Prompt: Product Recommendations based on Persona
 # ------------------------------------------
 def build_product_recommendation_prompt(persona_json):
     """Builds a prompt for GPT to recommend products/services based on a client persona."""
@@ -120,7 +120,7 @@ Return the answer ONLY as structured JSON like this:
 
 
 # ------------------------------------------
-# 🧠 Build Prompt: Client Persona Generation
+# Build Prompt: Client Persona Generation
 # ------------------------------------------
 def build_client_persona_prompt(company_name):
     """Build a prompt to generate a client persona based on a company name."""
@@ -167,7 +167,7 @@ Return the output as **standardized JSON** only:
 """
 
 # ------------------------------------------
-# 🧠 Build Prompt: Suggest Products for Persona
+# Build Prompt: Suggest Products for Persona
 # ------------------------------------------
 def build_suggested_solutions_prompt(persona_json, catalog_json):
     return f"""
@@ -179,14 +179,14 @@ Here is a prospective client persona:
 Here is Morae's full catalog of services:
 {json.dumps(catalog_json, indent=2)}
 
-📋 Your task:
+Your task:
 - Analyze the persona's needs and match them to Morae's solutions.
 - Recommend up to **5** Morae products or services most relevant to the client.
 - For **each match**, include:
   - Product/Service Name
   - Reason why it fits the client's challenges or goals.
 
-🧠 Output Format:
+Output Format:
 Return **ONLY strict JSON**, with no explanations, no markdown, no commentary.
 Structure exactly like this:
 
@@ -207,7 +207,7 @@ Structure exactly like this:
 """
 
 # ------------------------------------------
-# 🧠 Build Prompt: Draft Proposal
+# Build Prompt: Draft Proposal
 # ------------------------------------------
 def build_proposal_prompt(persona_json, additional_info="", focus_solution=None, context_solutions=None):
     """
@@ -224,7 +224,7 @@ Generate a highly professional solution(s) proposal from Morae Global for the fo
 
     if focus_solution:
         prompt += f"""
-🎯 Focus Solution:
+Focus Solution:
 This proposal should focus primarily on the following product or service:
 
 - **Name:** {focus_solution.get("product_or_service", "")}
@@ -234,7 +234,7 @@ This proposal should focus primarily on the following product or service:
     if context_solutions:
         prompt += f"""
 
-📚 Context Solutions:
+Context Solutions:
 These additional offerings may complement or provide alternative value:
 
 {json.dumps(context_solutions, indent=2)}
@@ -242,7 +242,7 @@ These additional offerings may complement or provide alternative value:
 
     prompt += f"""
 
-📝 Additional Notes:
+Additional Notes:
 {additional_info}
 
 Formatting Instructions:
@@ -271,7 +271,7 @@ Ensure the document is structured cleanly for easy DOCX export later.
 
 
 # ------------------------------------------
-# 🚀 GPT-4o Call (Upgraded)
+# GPT-4o Call (Upgraded)
 # ------------------------------------------
 def call_gpt4o(prompt):
     """Call GPT-4o API safely and reliably to complete the prompt and extract JSON or text."""
@@ -298,14 +298,14 @@ def call_gpt4o(prompt):
             try:
                 return json.loads(json_string)
             except json.JSONDecodeError as json_err:
-                print(f"⚠️ JSON decoding failed, returning text instead: {json_err}")
+                print(f"JSON decoding failed, returning text instead: {json_err}")
                 return content
 
         # If no JSON found, return content as plain text
         return content
 
     except Exception as e:
-        print(f"⚠️ GPT-4o call failed: {e}")
+        print(f"GPT-4o call failed: {e}")
         return {}
     
 
@@ -465,7 +465,7 @@ def generate_proposal_docx_from_markdown(company_name: str, notes: str, markdown
 
 
 # ------------------------------------------
-# 🧠 GPT Prompt: Extract RFP Sections
+# GPT Prompt: Extract RFP Sections
 # ------------------------------------------
 def build_rfp_extraction_prompt(text):
     """
@@ -483,7 +483,7 @@ From the RFP text below, extract the following key sections:
 - Contact Information
 - Any Explicit Questions (list them)
 
-🧠 Output Format:
+Output Format:
 Return JSON only — no markdown, no commentary.
 
 ```json
@@ -508,7 +508,7 @@ Text:
 """
 
 # ------------------------------------------
-# 🧠 Extract RFP Sections
+# Extract RFP Sections
 # ------------------------------------------
 def extract_sections_from_rfp(text):
     """
@@ -520,12 +520,12 @@ def extract_sections_from_rfp(text):
     if isinstance(response, dict) and "parsed_sections" in response:
         return response["parsed_sections"]
     else:
-        print("⚠️ Failed to extract sections from RFP.")
+        print("Failed to extract sections from RFP.")
         return {}
     
 
 # ------------------------------------------
-# 🧠 GPT Prompt: Answer RFP Chat Questions
+# GPT Prompt: Answer RFP Chat Questions
 # ------------------------------------------
 def build_rfp_chat_prompt(rfp_summary, question, history=None):
     """
@@ -536,11 +536,11 @@ def build_rfp_chat_prompt(rfp_summary, question, history=None):
     return f"""
 You are a sales assistant AI helping respond to an RFP.
 
-📄 Here is a summary and key sections extracted from the RFP:
+Here is a summary and key sections extracted from the RFP:
 
 {json.dumps(rfp_summary, indent=2)}
 
-💬 A sales team member asked:
+A sales team member asked:
 {question}
 
 {context}
@@ -549,7 +549,7 @@ Answer clearly, referencing relevant RFP sections and keeping the response brief
 """
 
 # ------------------------------------------
-# 🧠 Try to parse JSON from response content
+# Try to parse JSON from response content
 # ------------------------------------------
 def try_parse_json_from_response(content):
     try:
@@ -559,7 +559,7 @@ def try_parse_json_from_response(content):
 
 
 # ------------------------------------------
-# 🧠 GPT Prompt: Extract RFP Metadata (Client Info, Due Date etc.)
+# GPT Prompt: Extract RFP Metadata (Client Info, Due Date etc.)
 # ------------------------------------------
 def build_rfp_metadata_prompt(text):
     return f"""
@@ -589,7 +589,7 @@ Text:
 """
 
 # ------------------------------------------
-# 🧠 Extract RFP Metadata
+# Extract RFP Metadata
 # ------------------------------------------
 def extract_rfp_metadata(text: str) -> dict:
     prompt = build_rfp_metadata_prompt(text)

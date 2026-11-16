@@ -12,18 +12,18 @@ class Command(BaseCommand):
         key = os.getenv("FIELD_ENCRYPTION_KEY")
 
         if not key:
-            self.stdout.write(self.style.ERROR("❌ FIELD_ENCRYPTION_KEY is missing"))
+            self.stdout.write(self.style.ERROR("FIELD_ENCRYPTION_KEY is missing"))
             return
 
         try:
             f = Fernet(key)
             test = f.encrypt(b"ping")
             decrypted = f.decrypt(test)
-            self.stdout.write(self.style.SUCCESS("✅ FIELD_ENCRYPTION_KEY loaded and works"))
+            self.stdout.write(self.style.SUCCESS("FIELD_ENCRYPTION_KEY loaded and works"))
             self.stdout.write(f"Encrypted: {test}")
             self.stdout.write(f"Decrypted: {decrypted}")
         except InvalidToken:
-            self.stdout.write(self.style.ERROR("❌ FIELD_ENCRYPTION_KEY is invalid (decryption failed)"))
+            self.stdout.write(self.style.ERROR("FIELD_ENCRYPTION_KEY is invalid (decryption failed)"))
         except Exception as e:
-            self.stdout.write(self.style.ERROR(f"❌ Unexpected error: {str(e)}"))
+            self.stdout.write(self.style.ERROR(f"Unexpected error: {str(e)}"))
 

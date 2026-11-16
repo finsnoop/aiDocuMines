@@ -37,7 +37,7 @@ from django.db.models import Q
 from datetime import datetime
 import logging
 
-# 🔁 Use the same config the tasks use (host/port/collection)
+# Use the same config the tasks use (host/port/collection)
 from document_search.config import (
     COLLECTION_NAME,
     MILVUS_HOST,
@@ -55,7 +55,7 @@ from core.access import get_file_for_user, get_scoped_or_404, get_run_for_user, 
 logger = logging.getLogger(__name__)
 
 # ─────────────────────────────────────────────────────────────
-# 🧠  Connect to Milvus collection (same host/port as tasks.py)
+# Connect to Milvus collection (same host/port as tasks.py)
 # ─────────────────────────────────────────────────────────────
 
 # -------------------------------------------------------------
@@ -93,14 +93,14 @@ class SemanticFileSearchView(APIView):
         if not query:
             return Response({"error": "Query is required"}, status=400)
 
-        # ✅ Determine file scope: only owned/shared files
+        # Determine file scope: only owned/shared files
         accessible_file_ids = get_user_accessible_file_ids(user)
 
         # Optional narrowing to single file — enforce access
         if file_id and int(file_id) not in accessible_file_ids:
             return Response({"error": "You do not have access to this file."}, status=403)
 
-        # 🚀 Enqueue Celery task with kwargs (prevents positional arg mismatches)
+        # Enqueue Celery task with kwargs (prevents positional arg mismatches)
         task = semantic_search_task.apply_async(kwargs={
             "user_id": user.id,
             "query": query,
@@ -112,14 +112,14 @@ class SemanticFileSearchView(APIView):
             "generate_report": generate_report,
         })
 
-        # ⬇️ add this line
+        # ⬇ add this line
         cache.set(f"task_owner:{task.id}", request.user.id, timeout=3600)
 
         return Response({"task_id": task.id}, status=status.HTTP_202_ACCEPTED)
 
 
 # ─────────────────────────────────────────────────────────────
-# 🔍 Search API (sync)
+# Search API (sync)
 # ─────────────────────────────────────────────────────────────
 class ChunkedFileSearchView(APIView):
     authentication_classes = [OAuth2Authentication]
@@ -214,7 +214,7 @@ class TriggerVectorIndexingView(APIView):
         file_ids = ser.validated_data["file_ids"]
         force = ser.validated_data["force"]
 
-        # ✅ Restrict to accessible file IDs
+        # Restrict to accessible file IDs
         allowed_ids = set(get_user_accessible_file_ids(request.user))
         filtered_ids = [fid for fid in file_ids if fid in allowed_ids]
 
@@ -342,7 +342,7 @@ class SearchResultView(APIView):
     def get(self, request, task_id, *args, **kwargs):
         task_id = str(task_id)
 
-        # ✅ verify caller owns this task_id
+        # verify caller owns this task_id
         owner_id = cache.get(f"task_owner:{task_id}")
         if owner_id is None or owner_id != request.user.id:
             # Hide existence to avoid leaking task IDs

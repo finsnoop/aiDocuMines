@@ -18,7 +18,7 @@ class Command(BaseCommand):
             os.makedirs(watch_path)
             self.stdout.write(self.style.WARNING(f"Created watch directory: {watch_path}"))
 
-        self.stdout.write(self.style.SUCCESS(f"👀 Starting file activity monitor on: {watch_path}"))
+        self.stdout.write(self.style.SUCCESS(f"Starting file activity monitor on: {watch_path}"))
 
         event_handler = FileActivityHandler()
         observer = Observer()
@@ -30,8 +30,8 @@ class Command(BaseCommand):
                 time.sleep(5)
         except KeyboardInterrupt:
             observer.stop()
-            self.stdout.write(self.style.WARNING("🛑 File monitor interrupted by user."))
+            self.stdout.write(self.style.WARNING("File monitor interrupted by user."))
 
         observer.join()
-        self.stdout.write(self.style.SUCCESS("✅ File activity monitor stopped."))
+        self.stdout.write(self.style.SUCCESS("File activity monitor stopped."))
 

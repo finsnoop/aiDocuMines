@@ -82,14 +82,14 @@ class PlatformInsightsView(APIView):
         async_flag = request.query_params.get("async", "false").lower() == "true"
 
         if async_flag:
-            # 🔹 Enqueue a Celery task
+            # Enqueue a Celery task
             task = generate_insights_for_user.delay(user.id)
             return Response({
                 "message": "Insights computation queued.",
                 "task_id": task.id
             }, status=status.HTTP_202_ACCEPTED)
 
-        # 🔹 Check for cached insights
+        # Check for cached insights
         latest = UserInsights.objects.filter(user=user).order_by("-generated_at").first()
 
         if latest:
@@ -101,7 +101,7 @@ class PlatformInsightsView(APIView):
             serializer = InsightsResponseSerializer(payload)
             return Response(serializer.data, status=status.HTTP_200_OK)
 
-        # 🔹 Otherwise compute live
+        # Otherwise compute live
         insights = calculate_user_insights(user)
 
         # Save for caching

@@ -24,7 +24,7 @@ def send_password_reset_email_task(user_id, token_str):
     """Celery task to send a password reset email asynchronously."""
     try:
         user = CustomUser.objects.get(id=user_id)
-        reset_token = PasswordResetToken.objects.get(token=token_str)  # ✅ Fix: Query by `token`, not `id`
+        reset_token = PasswordResetToken.objects.get(token=token_str)  # Fix: Query by `token`, not `id`
         send_password_reset_email(user, reset_token)
         return f"Password reset email sent to {user.email}"
     except CustomUser.DoesNotExist:

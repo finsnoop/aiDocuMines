@@ -29,7 +29,7 @@ logger = logging.getLogger(__name__)
 
 class FileEventLogView(APIView):
     """
-    ✅ Return a list of actions performed on a file (opened, modified, processed).
+    Return a list of actions performed on a file (opened, modified, processed).
     """
     authentication_classes = [OAuth2Authentication]
     permission_classes = [TokenHasReadWriteScope, IsClientOrAdminOrSuperUser]
@@ -44,7 +44,7 @@ class FileEventLogView(APIView):
         client_id = request.headers.get("X-Client-ID")
         file_id = request.query_params.get("file_id")
 
-        # ✅ Enforce OAuth2 authentication
+        # Enforce OAuth2 authentication
         user = request.user
         if not user:
             return Response({"error": "Invalid client ID"}, status=status.HTTP_401_UNAUTHORIZED)

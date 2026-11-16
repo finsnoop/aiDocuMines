@@ -13,7 +13,7 @@ def start_monitor():
     observer.schedule(event_handler, watch_path, recursive=True)
 
     observer.start()
-    print(f"👀 Monitoring started on: {watch_path}")
+    print(f"Monitoring started on: {watch_path}")
     try:
         while True:
             time.sleep(5)

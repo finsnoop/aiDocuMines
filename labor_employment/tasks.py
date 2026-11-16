@@ -660,7 +660,7 @@ def detect_communication_patterns_task(self, comm_run_id, user_id):
 
 
 # ═══════════════════════════════════════════════════════════════
-# 🔧 HELPER FUNCTIONS FOR AI INTEGRATION
+# HELPER FUNCTIONS FOR AI INTEGRATION
 # ═══════════════════════════════════════════════════════════════
 
 def _basic_communication_analysis(file_obj, analysis_type):

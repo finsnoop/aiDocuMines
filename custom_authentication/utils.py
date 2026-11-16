@@ -8,7 +8,7 @@ from oauth2_provider.models import Application
 from .models import CustomUser, PasswordResetToken, UserActivityLog
 
 
-# ✅ Email Configuration
+# Email Configuration
 EMAIL_FROM = "no-reply@aidocumines.com"
 
 

@@ -15,7 +15,7 @@ from core.access import get_file_for_user, get_scoped_or_404, get_run_for_user, 
 
 logger = logging.getLogger(__name__)
 
-# ✅ Swagger Parameters
+# Swagger Parameters
 client_id_param = openapi.Parameter(
     "X-Client-ID", openapi.IN_HEADER, type=openapi.TYPE_STRING, required=True, description="Client ID provided at signup"
 )
@@ -29,7 +29,7 @@ file_id_param = openapi.Parameter(
 
 class UploadStatusView(APIView):
     """
-    ✅ Check the status of an upload using run_id
+    Check the status of an upload using run_id
     """
     authentication_classes = [OAuth2Authentication]
     permission_classes = [TokenHasReadWriteScope]
@@ -44,10 +44,10 @@ class UploadStatusView(APIView):
         client_id = request.headers.get("X-Client-ID")
         run_id = request.query_params.get("run_id")
 
-        # ✅ Validate Run ID
+        # Validate Run ID
         run = get_object_or_404(scope_by_owner(request.user, Run.objects.all()), run_id=run_id)
 
-        # ✅ Fetch all files associated with this run
+        # Fetch all files associated with this run
         files = File.objects.filter(run=run)
 
         file_list = [
@@ -76,7 +76,7 @@ class UploadStatusView(APIView):
 
 class MetadataStatusView(APIView):
     """
-    ✅ Retrieve metadata details for a specific file
+    Retrieve metadata details for a specific file
     """
     authentication_classes = [OAuth2Authentication]
     permission_classes = [TokenHasReadWriteScope]
@@ -91,7 +91,7 @@ class MetadataStatusView(APIView):
         client_id = request.headers.get("X-Client-ID")
         file_id = request.query_params.get("file_id")
 
-        # ✅ Fetch metadata entry for the given file_id
+        # Fetch metadata entry for the given file_id
         from core.access import get_file_for_user
         metadata_entry = get_object_or_404(Metadata, file=get_file_for_user(request.user, file_id))
 

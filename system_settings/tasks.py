@@ -20,23 +20,23 @@ def process_system_settings(self, client_id: int, run_id: str, settings_payload:
     - Updates EndpointResponseTable
     """
     try:
-        logger.info(f"⚙️ Saving system settings for client_id={client_id} via run_id={run_id}")
+        logger.info(f"Saving system settings for client_id={client_id} via run_id={run_id}")
 
         run = Run.objects.get(run_id=run_id)
         client = Client.objects.get(id=client_id)
 
-        # ✅ Validate incoming data
+        # Validate incoming data
         cleaned_data = validate_system_settings(settings_payload)
 
-        # ✅ Save or update SystemSettings
+        # Save or update SystemSettings
         settings_obj, created = SystemSettings.objects.update_or_create(
             client=client,
             defaults=cleaned_data
         )
 
-        logger.info(f"✅ System settings {'created' if created else 'updated'} for client {client.name}")
+        logger.info(f"System settings {'created' if created else 'updated'} for client {client.name}")
 
-        # ✅ Save task result in EndpointResponseTable
+        # Save task result in EndpointResponseTable
         EndpointResponseTable.objects.update_or_create(
             run=run,
             client=client,
@@ -53,7 +53,7 @@ def process_system_settings(self, client_id: int, run_id: str, settings_payload:
             },
         )
 
-        # ✅ Mark run as completed
+        # Mark run as completed
         run.status = "Completed"
         run.save(update_fields=["status"])
 
@@ -63,14 +63,14 @@ def process_system_settings(self, client_id: int, run_id: str, settings_payload:
         }
 
     except Client.DoesNotExist:
-        logger.error(f"❌ Client with ID {client_id} not found.")
+        logger.error(f"Client with ID {client_id} not found.")
         return {"error": f"Client with ID {client_id} not found."}
 
     except Run.DoesNotExist:
-        logger.error(f"❌ Run with ID {run_id} not found.")
+        logger.error(f"Run with ID {run_id} not found.")
         return {"error": f"Run with ID {run_id} not found."}
 
     except Exception as e:
-        logger.exception("❌ Failed to save system settings.")
+        logger.exception("Failed to save system settings.")
         return {"error": str(e)}
 

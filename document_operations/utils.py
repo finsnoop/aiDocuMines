@@ -29,7 +29,7 @@ def get_folder_upload_path(user_id, client_id, project_id, service_id, run_id, s
     return os.path.join(base_path, subfolder) if subfolder else base_path
 
 
-# 📁 Folder Operations
+# Folder Operations
 def rename_folder(folder: Folder, new_name: str):
     folder.name = new_name
     folder.save()
@@ -77,7 +77,7 @@ def restore_folder_recursive(folder):
         restore_folder_recursive(sub)
 
 
-# 📄 File Operations
+# File Operations
 def rename_file(file_id, new_name, actor=None):
     from core.access import safe_filename
     new_name = safe_filename(new_name)  # a name, never a path
@@ -288,7 +288,7 @@ def user_has_access(user, file_id, level="read") -> bool:
 
 
 
-# 🔄 Bulk Operations
+# Bulk Operations
 def move_files_to_trash(file_link_ids, actor=None):
     count = 0
     for link_id in file_link_ids:
@@ -320,7 +320,7 @@ def reassign_folder_for_files(file_link_ids, new_folder):
     return updated_links
 
 
-# 📜 File Versioning
+# File Versioning
 def create_file_version(file: File, uploaded_by=None):
     latest_version = file.versions.first()
     new_version = (latest_version.version_number + 1) if latest_version else 1
@@ -337,7 +337,7 @@ def create_file_version(file: File, uploaded_by=None):
     )
 
 
-# 🔗 Sharing
+# Sharing
 def generate_share_token():
     return secrets.token_urlsafe(32)
 
@@ -367,12 +367,12 @@ def revoke_public_link(file_link: FileFolderLink):
     file_link.save()
 
 
-# 🕵️ Logging
+# Logging
 def log_file_activity(file: File, user: User, action: str, notes=None):
     FileAuditLog.objects.create(file=file, user=user, action=action, notes=notes)
 
 
-# 📁📁 Create nested folders based on a path list
+# Create nested folders based on a path list
 def get_or_create_folder_tree(path_parts, *, user, project_id, service_id):
     """
     Ensure each part in `path_parts` exists as a Folder, nested parent->child.
@@ -392,7 +392,7 @@ def get_or_create_folder_tree(path_parts, *, user, project_id, service_id):
     return parent
 
 
-# 🔗 Link a File to its folder (used after file creation)
+# Link a File to its folder (used after file creation)
 def link_file_to_folder(file, folder):
     """
     One-to-one link between File and Folder.
@@ -419,7 +419,7 @@ def update_access_level_for_user(file_link, user_id, access_level, granted_by):
         defaults={**perms, "granted_by": granted_by}
     )
 
-    # ✅ Audit log for permission update
+    # Audit log for permission update
     FileAuditLog.objects.create(
         file=file_link.file,
         user=granted_by,

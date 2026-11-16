@@ -20,18 +20,18 @@ from . import views_admin
 
 urlpatterns = [
     path("browser/authorize/", BrowserAuthorizeView.as_view(), name="browser_authorize"),
-    # 🔐 AUTHENTICATION ENDPOINTS
+    # AUTHENTICATION ENDPOINTS
     path("signup/", SignupView.as_view(), name="auth_signup"),
     path("login/", LoginView.as_view(), name="auth_login"),
     path("logout/", LogoutView.as_view(), name="auth_logout"),
     path("token/refresh/", RefreshTokenView.as_view(), name="auth_token_refresh"),
 
-    # 🔑 PASSWORD RECOVERY
+    # PASSWORD RECOVERY
     path("password/request-reset/", PasswordResetRequestView.as_view(), name="auth_password_request_reset"),
     path("password/reset/", PasswordResetView.as_view(), name="auth_password_reset"),
     path("password/change/", ChangePasswordView.as_view(), name="auth_password_change"),
 
-    # 👤 USER SELF-MANAGEMENT
+    # USER SELF-MANAGEMENT
     path("user/profile/", UserProfileView.as_view(), name="user_profile"),
     path("user/profile/update/", UpdateUserProfileView.as_view(), name="user_profile_update"),
     path("user/account/deactivate/", DeactivateAccountView.as_view(), name="user_account_deactivate"),
@@ -39,14 +39,14 @@ urlpatterns = [
     path("user/account/delete/", DeleteAccountView.as_view(), name="user_account_delete"),
     path("user/activity/", UserOwnActivityLogView.as_view(), name="user_activity"),
 
-    # 🛠️ API KEY MANAGEMENT
+    # API KEY MANAGEMENT
     path("user/api-keys/", ListUserAPIKeysView.as_view(), name="user_api_keys_list"),
     path("user/api-keys/revoke/", RevokeAPIKeyView.as_view(), name="user_api_keys_revoke"),
 
-    # 👑 SUPERUSER / ADMIN BOOTSTRAP
+    # SUPERUSER / ADMIN BOOTSTRAP
     path("admin/initialize/", CreateAdminUserView.as_view(), name="admin_initialize_first_user"),
 
-    # 👮‍♂️ ADMIN USER MANAGEMENT
+    # ‍ADMIN USER MANAGEMENT
     # Admin console
     path("admin/people/", views_admin.PeopleView.as_view(), name="admin_people"),
     path("admin/people/<int:user_id>/", views_admin.PersonView.as_view(), name="admin_person"),
@@ -67,31 +67,31 @@ urlpatterns = [
     path("admin/users/<int:user_id>/promote/", PromoteUserToAdminView.as_view(), name="admin_users_promote"),
     path("admin/users/<int:user_id>/demote/", DemoteUserFromAdminView.as_view(), name="admin_users_demote"),
 
-    # 🎭 ROLE MANAGEMENT
+    # ROLE MANAGEMENT
     path("admin/roles/", ListRolesView.as_view(), name="admin_roles_list"),
     path("admin/users/<int:user_id>/roles/", GetUserRolesView.as_view(), name="admin_users_roles"),
     path("admin/users/<int:user_id>/roles/assign/", AssignUserRoleView.as_view(), name="admin_users_roles_assign"),
     path("admin/users/<int:user_id>/roles/remove/", RemoveUserRoleView.as_view(), name="admin_users_roles_remove"),
     path("admin/users/<int:user_id>/roles/set/", SetUserRolesView.as_view(), name="admin_users_roles_set"),
 
-    # 🏢 CLIENT (TENANT) MANAGEMENT
+    # CLIENT (TENANT) MANAGEMENT
     path("admin/clients/", ListClientsView.as_view(), name="admin_clients_list"),
     path("admin/clients/create/", CreateClientView.as_view(), name="admin_clients_create"),
     path("admin/clients/<int:client_id>/", RetrieveClientView.as_view(), name="admin_clients_retrieve"),
     path("admin/clients/<int:client_id>/update/", UpdateClientView.as_view(), name="admin_clients_update"),
 
-    # 🗑️ DELETE USER
+    # DELETE USER
     path("admin/users/<int:user_id>/delete/", DeleteUserView.as_view(), name="admin_users_delete"),
 
-    # 🎭 ROLE MANAGEMENT
+    # ROLE MANAGEMENT
     path("admin/roles/", ListRolesView.as_view(), name="admin_roles_list"),
     path("admin/users/<int:user_id>/assign-role/", AssignUserRoleView.as_view(), name="admin_users_assign_role"),
     path("admin/users/<int:user_id>/remove-role/", RemoveUserRoleView.as_view(), name="admin_users_remove_role"),
 
-    # 📋 AUDIT LOGS
+    # AUDIT LOGS
     path("admin/audit-log/", AdminAuditLogView.as_view(), name="admin_audit_log"),
 
-    # 👑 SUPERUSER / ADMIN BOOTSTRAP
+    # SUPERUSER / ADMIN BOOTSTRAP
     path("admin/initialize/", CreateAdminUserView.as_view(), name="admin_initialize_first_user"),
     
     # SUPERSUPER USER DB CLEANING 

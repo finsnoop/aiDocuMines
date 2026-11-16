@@ -722,7 +722,7 @@ def analyze_validity_task(self, validity_challenge_id, user_id):
 
 
 # ═══════════════════════════════════════════════════════════════
-# 🔧 HELPER FUNCTIONS FOR AI INTEGRATION
+# HELPER FUNCTIONS FOR AI INTEGRATION
 # ═══════════════════════════════════════════════════════════════
 
 def _basic_patent_analysis(file_obj, analysis_type):

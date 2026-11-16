@@ -24,7 +24,7 @@ from integrations.tasks import (
     sync_user_to_nextcloud_host
 )
 
-# 🔐 In-memory state/nonce registry (used in OIDC callbacks)
+# In-memory state/nonce registry (used in OIDC callbacks)
 from integrations.registry import STATE_REGISTRY, NONCE_REGISTRY
 
 

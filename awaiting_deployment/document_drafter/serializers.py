@@ -8,7 +8,7 @@ from .models import (
     ProposalSuggestion,
     ChatHistory,
     TaskStatus,
-    ProposalDraft,  # ✅ Correct model imported
+    ProposalDraft,  # Correct model imported
     SuggestedSolution,
     SolutionChat,
     Notification,
@@ -154,7 +154,7 @@ class IncomingRFPSerializer(serializers.ModelSerializer):
             'summary',
             'parsed_sections',
             'status',
-            'draft',  # ✅ add this line
+            'draft',  # add this line
             'created_at',
             'updated_at'
         ]

@@ -42,7 +42,7 @@ def process_ocr(run_id, file_id, ocr_option="basic"):
 
         # Check if the file is a valid PDF
         if not ocr_service.is_pdf(file_obj.filepath):
-            logger.info(f"🔹 Skipping OCR: {file_obj.filepath} is not a PDF.")
+            logger.info(f"Skipping OCR: {file_obj.filepath} is not a PDF.")
             ocr_file.status = "Completed"
             ocr_file.save()
             return {"message": "File is not a PDF. OCR skipped."}
@@ -75,7 +75,7 @@ def process_ocr(run_id, file_id, ocr_option="basic"):
         return workflow
 
     except Exception as e:
-        logger.error(f"❌ OCR processing failed: {e}")
+        logger.error(f"OCR processing failed: {e}")
         if 'ocr_file' in locals():
             ocr_file.status = "Failed"
             ocr_file.save()
@@ -88,7 +88,7 @@ def ocr_pdf_page_batch(file_id, batch_file_path, start_page, end_page, ocr_optio
         # Ensure the file exists
         batch_file_path = os.path.normpath(batch_file_path)  # Fix path issues
         if not os.path.exists(batch_file_path):
-            logger.error(f"❌ Batch file not found: {batch_file_path}")
+            logger.error(f"Batch file not found: {batch_file_path}")
             return {"error": "Batch file not found", "batch_file_path": batch_file_path}
 
         ocr_service = OCRService()
@@ -98,7 +98,7 @@ def ocr_pdf_page_batch(file_id, batch_file_path, start_page, end_page, ocr_optio
         return {"start_page": start_page, "end_page": end_page, "ocr_file": ocr_file}
 
     except Exception as e:
-        logger.error(f"❌ OCR processing failed: {str(e)}")
+        logger.error(f"OCR processing failed: {str(e)}")
         return {"error": str(e), "batch_file_path": batch_file_path}
 
 
@@ -111,7 +111,7 @@ def merge_ocr_batches(results, ocr_file_id, bookmarks_list):
 
     # Ensure the OCR option is passed correctly
     if not file_entry.ocr_option:
-        logger.error(f"❌ OCR option is missing for OCRFile {ocr_file_id}.")
+        logger.error(f"OCR option is missing for OCRFile {ocr_file_id}.")
         file_entry.status = "Failed"
         file_entry.save()
         return {"error": "OCR option missing"}
@@ -120,13 +120,13 @@ def merge_ocr_batches(results, ocr_file_id, bookmarks_list):
 
     # Locate the tmp directory where the batch PDFs are stored
     ocr_dir = os.path.join(os.path.dirname(file_entry.original_file.filepath), "ocr", file_entry.ocr_option.lower(), "tmp")
-    logger.info(f"🔍 Searching for OCR tmp directory: {ocr_dir}"
+    logger.info(f"Searching for OCR tmp directory: {ocr_dir}"
                 )
     if not os.path.exists(ocr_dir):
         if "basic-ocr" in ocr_dir:
             ocr_dir = ocr_dir.replace("basic-ocr", "advanced-ocr")
             
-            logger.info(f"🔄 Updated OCR tmp directory to: {ocr_dir}")
+            logger.info(f"Updated OCR tmp directory to: {ocr_dir}")
             
             # There is a folder inside the ocr_dir that needs to be removed. i.e delete os.path.join(ocr_dir, "ocr")
             
@@ -136,10 +136,10 @@ def merge_ocr_batches(results, ocr_file_id, bookmarks_list):
             if os.path.exists(tmp_ocr_dir):
                 # Remove the tmp_ocr_dir
                 shutil.rmtree(tmp_ocr_dir)
-                logger.info(f"🔄 Removed OCR folder inside tmp directory: {tmp_ocr_dir}")
+                logger.info(f"Removed OCR folder inside tmp directory: {tmp_ocr_dir}")
                 
         else:
-            logger.error(f"❌ OCR tmp directory not found: {ocr_dir}.")
+            logger.error(f"OCR tmp directory not found: {ocr_dir}.")
              
     
     # Find all PDF files under the OCR tmp directory (recursively)
@@ -147,19 +147,19 @@ def merge_ocr_batches(results, ocr_file_id, bookmarks_list):
 
     # Ensure there are files to merge
     if not pdf_files:
-        logger.error(f"❌ No OCR batches found to merge in {ocr_dir}.")
+        logger.error(f"No OCR batches found to merge in {ocr_dir}.")
         file_entry.status = "Failed"
         file_entry.save()
         return {"error": "No OCR batches found"}
 
-    logger.info(f"🔄 Found {len(pdf_files)} PDFs to merge.")
+    logger.info(f"Found {len(pdf_files)} PDFs to merge.")
 
     # Merge PDFs using PdfMerger
     final_pdf_dir = os.path.join(os.path.dirname(file_entry.original_file.filepath), "ocr", file_entry.ocr_option.lower(), "final")
     if "advanced-ocr" in ocr_dir:
         final_pdf_dir = final_pdf_dir.replace("basic-ocr", "advanced-ocr")
         
-    logger.info(f"🔄 Final PDF directory: {final_pdf_dir}")
+    logger.info(f"Final PDF directory: {final_pdf_dir}")
     
     os.makedirs(final_pdf_dir, exist_ok=True)
 
@@ -168,16 +168,16 @@ def merge_ocr_batches(results, ocr_file_id, bookmarks_list):
         try:
             merger = PdfWriter()
             for pdf in pdf_files:
-                logger.info(f"🔹 Adding {pdf} to the merger.")
+                logger.info(f"Adding {pdf} to the merger.")
                 merger.append(pdf)
 
             # Write the merged PDF to the final output path
             with open(final_pdf_path, "wb") as output_file:
                 merger.write(output_file)
 
-            logger.info(f"✅ Merged PDF saved to: {final_pdf_path}")
+            logger.info(f"Merged PDF saved to: {final_pdf_path}")
         except Exception as e:
-            logger.error(f"❌ Error during merging PDFs: {e}")
+            logger.error(f"Error during merging PDFs: {e}")
             file_entry.status = "Failed"
             file_entry.save()
             return {"error": f"Error merging PDFs: {e}"}
@@ -203,7 +203,7 @@ def merge_ocr_batches(results, ocr_file_id, bookmarks_list):
         try:
             final_pdf_with_bookmarks = ocr_service.reattach_bookmarks_from_dataframe(final_pdf_path, bookmarks_df, 1, total_pages)
         except Exception as e:
-            logger.error(f"❌ Failed to reattach bookmarks: {e}")
+            logger.error(f"Failed to reattach bookmarks: {e}")
             final_pdf_with_bookmarks = final_pdf_path
 
 
@@ -230,11 +230,11 @@ def merge_ocr_batches(results, ocr_file_id, bookmarks_list):
         # Trigger DOCX conversion
         process_pdf_to_docx.delay(file_entry.id, final_pdf_path)
 
-        logger.info(f"✅ OCR processing completed and saved: {final_pdf_path}")
+        logger.info(f"OCR processing completed and saved: {final_pdf_path}")
 
     # If we enter the except block, this part of the code will handle the final file detection in Advanced-ocr case
     except Exception as e:
-        logger.error(f"❌ Advanced OCR processing failed, attempting to detect final file: {e}")
+        logger.error(f"Advanced OCR processing failed, attempting to detect final file: {e}")
 
         try:
             # Get the last final file found (i.e. final_merged_ocr_file.pdf) and re-attach bookmarks
@@ -243,7 +243,7 @@ def merge_ocr_batches(results, ocr_file_id, bookmarks_list):
 
             if files_in_final:
                 final_pdf_with_bookmarks = files_in_final[0]
-                logger.info(f"✅ Found final PDF at: {final_pdf_with_bookmarks}")
+                logger.info(f"Found final PDF at: {final_pdf_with_bookmarks}")
 
                 # Register the final file
                 registered_pdf = register_generated_file(
@@ -262,7 +262,7 @@ def merge_ocr_batches(results, ocr_file_id, bookmarks_list):
                     file_entry.updated_at = now()
                     file_entry.save()
 
-                logger.info(f"✅ Advanced OCR processed and saved: {final_pdf_with_bookmarks}")
+                logger.info(f"Advanced OCR processed and saved: {final_pdf_with_bookmarks}")
 
                 # Cleanup temporary files
                 ocr_service.cleanup_tmp_dir(ocr_dir)
@@ -271,7 +271,7 @@ def merge_ocr_batches(results, ocr_file_id, bookmarks_list):
                 raise FileNotFoundError("Final OCR PDF not found in the 'final' folder.")
 
         except Exception as e:
-            logger.error(f"❌ Advanced OCR failed to detect final file: {e}")
+            logger.error(f"Advanced OCR failed to detect final file: {e}")
             file_entry.status = "Failed"
             file_entry.save()
             return {"error": "Advanced OCR final file not found or error occurred."}
@@ -299,7 +299,7 @@ def process_pdf_to_docx(ocr_file_id, final_pdf_path):
 
     # Ensure the OCRed PDF exists before conversion
     if not final_pdf_path or not os.path.exists(final_pdf_path):
-        logger.error(f"❌ No OCRed PDF found at {final_pdf_path}. Skipping DOCX conversion.")
+        logger.error(f"No OCRed PDF found at {final_pdf_path}. Skipping DOCX conversion.")
         return {"error": "OCRed PDF not found", "ocr_file_id": ocr_file_id}
 
     ocr_service = OCRService()
@@ -346,7 +346,7 @@ def generate_raw_docx(ocr_file_id):
     file_entry = get_object_or_404(OCRFile, id=ocr_file_id)
 
     if not file_entry.docx_path or not os.path.exists(file_entry.docx_path):
-        logger.error(f"❌ No formatted DOCX found for ocr_file_id: {ocr_file_id}. Skipping RAW DOCX creation.")
+        logger.error(f"No formatted DOCX found for ocr_file_id: {ocr_file_id}. Skipping RAW DOCX creation.")
         return {
             "ocr_file_id": ocr_file_id,
             "status": "Failed",
@@ -391,7 +391,7 @@ def generate_raw_docx(ocr_file_id):
         file_entry.raw_docx_path = raw_docx_path
         file_entry.save()
 
-    logger.info(f"✅ Raw DOCX created and registered: {raw_docx_path}")
+    logger.info(f"Raw DOCX created and registered: {raw_docx_path}")
 
     return {
         "ocr_run_id": str(file_entry.run.id),

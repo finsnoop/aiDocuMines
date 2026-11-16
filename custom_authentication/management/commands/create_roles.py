@@ -18,9 +18,9 @@ class Command(BaseCommand):
         for role_name, perms in roles.items():
             group, created = Group.objects.get_or_create(name=role_name)
             if created:
-                self.stdout.write(self.style.SUCCESS(f'✅ Created role "{role_name}"'))
+                self.stdout.write(self.style.SUCCESS(f'Created role "{role_name}"'))
             else:
-                self.stdout.write(self.style.WARNING(f'ℹ️ Role "{role_name}" already exists'))
+                self.stdout.write(self.style.WARNING(f'ℹ Role "{role_name}" already exists'))
 
             # Optional: assign specific permissions
             for perm_codename in perms:
@@ -31,5 +31,5 @@ class Command(BaseCommand):
                     perm = Permission.objects.get(content_type=content_type, codename=codename)
                     group.permissions.add(perm)
                 except Exception as e:
-                    self.stdout.write(self.style.ERROR(f'❌ Failed to assign permission {perm_codename}: {str(e)}'))
+                    self.stdout.write(self.style.ERROR(f'Failed to assign permission {perm_codename}: {str(e)}'))
 

@@ -9,13 +9,13 @@ class FileActivityHandler(FileSystemEventHandler):
     def log_event(self, filepath, event_type):
         try:
             relative_path = filepath.replace(settings.MEDIA_ROOT + "/", "")
-            print(f"📂 Relative path to match: {relative_path}")
+            print(f"Relative path to match: {relative_path}")
     
             file_record = File.objects.filter(filepath=filepath).first()
-            print(f"🔍 Matched file: {file_record}")
+            print(f"Matched file: {file_record}")
     
             if not file_record:
-                print(f"⚠️ No File entry found in DB matching path: {relative_path}")
+                print(f"No File entry found in DB matching path: {relative_path}")
                 return  # Skip logging since there's no matching file
     
             FileEventLog.objects.create(
@@ -28,10 +28,10 @@ class FileActivityHandler(FileSystemEventHandler):
                 notes=f"Auto-logged via event: {event_type}"
             )
     
-            print(f"✅ Logged {event_type.upper()} event for: {filepath}")
+            print(f"Logged {event_type.upper()} event for: {filepath}")
     
         except Exception as e:
-            print(f"❌ Error logging event for {filepath}: {e}")
+            print(f"Error logging event for {filepath}: {e}")
     
     def on_modified(self, event):
         if not event.is_directory:

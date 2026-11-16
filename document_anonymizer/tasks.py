@@ -26,11 +26,11 @@ service = SimpleLazyObject(get_shared_anonymization_service)
 
 @shared_task
 def anonymize_document_task(file_id, file_type="plain", run_id=None):
-    logger.info(f"🔄 Starting anonymization for file_id={file_id} (type={file_type})")
+    logger.info(f"Starting anonymization for file_id={file_id} (type={file_type})")
     file_entry = get_object_or_404(File, id=file_id)
 
     def mark_run_failed(msg: str):
-        logger.error(f"❌ {msg}")
+        logger.error(f"{msg}")
         if run_id:
             try:
                 run = AnonymizationRun.objects.get(id=run_id)
@@ -40,23 +40,23 @@ def anonymize_document_task(file_id, file_type="plain", run_id=None):
                     run.error_message = msg
                 run.save(update_fields=["status"] + (["error_message"] if hasattr(run, "error_message") else []))
             except AnonymizationRun.DoesNotExist:
-                logger.error(f"❌ AnonymizationRun {run_id} not found to mark as Failed")
+                logger.error(f"AnonymizationRun {run_id} not found to mark as Failed")
 
     if not os.path.exists(file_entry.filepath):
-        logger.error(f"❌ File not found: {file_entry.filepath}")
+        logger.error(f"File not found: {file_entry.filepath}")
         return {"error": "File not found", "file_id": file_id}
 
 
-    # ✅ Normalize file_type
+    # Normalize file_type
     file_type = (file_type or "plain").lower().strip()
     if file_type in {"txt", "text"}:
         file_type = "plain"
 
 
-    # ✅ EARLY EXIT: Already anonymized
+    # EARLY EXIT: Already anonymized
     existing = Anonymize.objects.filter(original_file=file_entry, file_type=file_type, is_active=True).first()
     if existing:
-        logger.info(f"⚠️ Skipping duplicate anonymization. File ID {file_id} already has active anonymized output (ID: {existing.id})")
+        logger.info(f"Skipping duplicate anonymization. File ID {file_id} already has active anonymized output (ID: {existing.id})")
         return {
             "status": "Already Anonymized",
             "anonymized_id": str(existing.id),
@@ -75,7 +75,7 @@ def anonymize_document_task(file_id, file_type="plain", run_id=None):
     structured_txt_path = os.path.join(anonymized_dir, f"{base_filename}_structured.txt")
     structured_html_path = os.path.join(anonymized_dir, f"{base_filename}_structured.html")
 
-    # ✅ Structured extraction (PDF/DOCX only)
+    # Structured extraction (PDF/DOCX only)
     '''
     try:
         structured_text, _, elements_json = service.extract_structured_text(file_entry.filepath)
@@ -99,12 +99,12 @@ def anonymize_document_task(file_id, file_type="plain", run_id=None):
             return {"error": "No extractable content", "file_id": file_id}
         # make a single synthetic block so the rest of the pipeline can run uniformly
         elements_json = [{"element_id": "raw-0", "type": "Text", "text": raw_text}]
-        structured_text = raw_text                  # ✅ ensure downstream writes/HTML have text
+        structured_text = raw_text                  # ensure downstream writes/HTML have text
 
     #try:
     #    structured_text, _, elements_json = service.extract_structured_text(file_entry.filepath)
     #except Exception as e:
-    #    logger.exception(f"❌ Structured text extraction failed: {e}")
+    #    logger.exception(f"Structured text extraction failed: {e}")
     #    return {"error": "Structured extraction crashed", "file_id": file_id}
 
     # if not structured_text:
@@ -142,7 +142,7 @@ def anonymize_document_task(file_id, file_type="plain", run_id=None):
         with open(html_path, "w", encoding="utf-8") as f:
             f.write(html_content)
     except Exception as e:
-        logger.warning(f"⚠️ HTML generation failed: {e}")
+        logger.warning(f"HTML generation failed: {e}")
         html_path = None
 
     try:
@@ -150,7 +150,7 @@ def anonymize_document_task(file_id, file_type="plain", run_id=None):
         with open(structured_html_path, "w", encoding="utf-8") as f:
             f.write(raw_html)
     except Exception as e:
-        logger.warning(f"⚠️ Structured HTML generation failed: {e}")
+        logger.warning(f"Structured HTML generation failed: {e}")
         structured_html_path = None
     '''
     
@@ -165,15 +165,15 @@ def anonymize_document_task(file_id, file_type="plain", run_id=None):
         with open(html_path, "w", encoding="utf-8") as f:
             f.write(html_content)
     except Exception as e:
-        logger.warning(f"⚠️ HTML generation failed: {e}")
+        logger.warning(f"HTML generation failed: {e}")
         html_path = None
 
     try:
-        raw_html = generate_anonymized_html(structured_text, {})  # ✅ structured_text is a string now
+        raw_html = generate_anonymized_html(structured_text, {})  # structured_text is a string now
         with open(structured_html_path, "w", encoding="utf-8") as f:
             f.write(raw_html)
     except Exception as e:
-        logger.warning(f"⚠️ Structured HTML generation failed: {e}")
+        logger.warning(f"Structured HTML generation failed: {e}")
         structured_html_path = None
 
 
@@ -220,7 +220,7 @@ def anonymize_document_task(file_id, file_type="plain", run_id=None):
                 anonymization_type="Presidio-Spacy"
                 )
 
-        # run = file_entry.run # ✅ Still fallback to the File’s Run
+        # run = file_entry.run # Still fallback to the File’s Run
 
     with transaction.atomic():
         
@@ -256,7 +256,7 @@ def anonymize_document_task(file_id, file_type="plain", run_id=None):
         )
 
 
-        # ✅ Register each generated file in the File table
+        # Register each generated file in the File table
         user = file_entry.user
         project_id = file_entry.project_id
         service_id = file_entry.service_id
@@ -300,7 +300,7 @@ def anonymize_document_task(file_id, file_type="plain", run_id=None):
 
 @shared_task
 def deanonymize_document_task(file_id):
-    logger.info(f"🔄 Starting de-anonymization for file_id={file_id}")
+    logger.info(f"Starting de-anonymization for file_id={file_id}")
 
     instance = get_object_or_404(Anonymize, original_file_id=file_id, is_active=True, file_type="plain")
 
@@ -333,13 +333,13 @@ def deanonymize_document_task(file_id):
             status="Completed"
         )
 
-    logger.info(f"✅ De-anonymization complete for file_id={file_id}")
+    logger.info(f"De-anonymization complete for file_id={file_id}")
     return {"file_id": file_id, "deanonymized_txt": txt_path, "status": "Completed"}
 
 
 @shared_task
 def compute_risk_score_task(file_id):
-    logger.info(f"📊 Computing risk score for file_id={file_id}")
+    logger.info(f"Computing risk score for file_id={file_id}")
     file_entry = get_object_or_404(File, id=file_id)
     # instance = get_object_or_404(Anonymize, original_file=file_entry, is_active=True)
     instance = Anonymize.objects.filter(original_file=file_entry, is_active=True).first()
@@ -398,7 +398,7 @@ def compute_anonymization_stats_task(
     date_from=None,
     date_to=None
 ):
-    logger.info(f"📊 Computing anonymization stats...")
+    logger.info(f"Computing anonymization stats...")
 
     result = compute_global_anonymization_stats(
         user_id=user_id,
@@ -420,7 +420,7 @@ def compute_anonymization_stats_task(
         entity_type_breakdown=result["entity_type_breakdown"],
     )
 
-    logger.info(f"✅ Stats saved to DB (id={stats_record.id})")
+    logger.info(f"Stats saved to DB (id={stats_record.id})")
 
     return {
         "stats_id": str(stats_record.id),
@@ -435,17 +435,17 @@ def generate_anonymization_insights_task(user_id):
     """
     Celery task to compute anonymization insights for a single user.
     """
-    logger.info(f"📊 Generating anonymization insights for user_id={user_id}")
+    logger.info(f"Generating anonymization insights for user_id={user_id}")
 
     try:
         user = User.objects.get(id=user_id)
     except User.DoesNotExist:
-        logger.error(f"❌ User not found: {user_id}")
+        logger.error(f"User not found: {user_id}")
         return {"error": f"User {user_id} not found"}
 
     insights = calculate_anonymization_insights(user)
 
-    logger.info(f"✅ Anonymization insights generated for user_id={user_id}")
+    logger.info(f"Anonymization insights generated for user_id={user_id}")
     return insights
 
 

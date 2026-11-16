@@ -87,7 +87,7 @@ SECRETS_FILE = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__fi
 
 
 # ------------------------------------------
-# 📄 Documents Already Uploaded - Link to Core
+# Documents Already Uploaded - Link to Core
 # ------------------------------------------
 class UploadedDocumentViewSet(viewsets.ReadOnlyModelViewSet):
     permission_classes = [IsAuthenticated]
@@ -99,7 +99,7 @@ class UploadedDocumentViewSet(viewsets.ReadOnlyModelViewSet):
         return File.objects.filter(user=user).order_by('-created_at')
 
 # ------------------------------------------
-# 📚 Catalog Entries Linked to User Documents
+# Catalog Entries Linked to User Documents
 # ------------------------------------------
 class CatalogEntryViewSet(viewsets.ReadOnlyModelViewSet):
     permission_classes = [IsAuthenticated]
@@ -112,7 +112,7 @@ class CatalogEntryViewSet(viewsets.ReadOnlyModelViewSet):
         return CatalogEntry.objects.none()
 
 # ------------------------------------------
-# 💬 Chat History (per document)
+# Chat History (per document)
 # ------------------------------------------
 class ChatHistoryViewSet(viewsets.ReadOnlyModelViewSet):
     permission_classes = [IsAuthenticated]
@@ -125,7 +125,7 @@ class ChatHistoryViewSet(viewsets.ReadOnlyModelViewSet):
         return ChatHistory.objects.none()
 
 # ------------------------------------------
-# 📊 Task Status (Catalog Extraction etc.)
+# Task Status (Catalog Extraction etc.)
 # ------------------------------------------
 class TaskStatusView(APIView):
     permission_classes = [IsAuthenticated]
@@ -138,7 +138,7 @@ class TaskStatusView(APIView):
         return Response({"status": "unknown"}, status=404)
 
 # ------------------------------------------
-# 📚 Ask Questions to Documents (Mini RAG Chat)
+# Ask Questions to Documents (Mini RAG Chat)
 # ------------------------------------------
 class AskQuestionView(APIView):
     permission_classes = [IsAuthenticated]
@@ -169,7 +169,7 @@ class AskQuestionView(APIView):
         return Response({"answer": answer})
 
 # ------------------------------------------
-# 🧠 Generate Client Persona (Backgrounded)
+# Generate Client Persona (Backgrounded)
 # ------------------------------------------
 class GenerateClientPersonaView(APIView):
     permission_classes = [IsAuthenticated]
@@ -196,7 +196,7 @@ class GenerateClientPersonaView(APIView):
         return Response({"message": "Persona generation started. Please refresh after a while."}, status=202)
 
 # ------------------------------------------
-# 📋 List All Client Personas
+# List All Client Personas
 # ------------------------------------------
 class ClientPersonaListView(APIView):
     permission_classes = [IsAuthenticated]
@@ -207,7 +207,7 @@ class ClientPersonaListView(APIView):
         return Response(serializer.data)
 
 # ------------------------------------------
-# 📄 Auto-draft Proposal based on persona + extra info (Backgrounded)
+# Auto-draft Proposal based on persona + extra info (Backgrounded)
 # ------------------------------------------
 class GenerateProposalView(APIView):
     permission_classes = [IsAuthenticated]
@@ -236,7 +236,7 @@ class GenerateProposalView(APIView):
 
 
 # ------------------------------------------
-# 📊 All Task Statuses for the User
+# All Task Statuses for the User
 # ------------------------------------------
 class AllTaskStatusesView(APIView):
     permission_classes = [IsAuthenticated]
@@ -248,7 +248,7 @@ class AllTaskStatusesView(APIView):
 
 
 # ------------------------------------------
-# 📄 Proposal Drafts ViewSet (List generated proposals)
+# Proposal Drafts ViewSet (List generated proposals)
 # ------------------------------------------
 class ProposalDraftViewSet(viewsets.ReadOnlyModelViewSet):
     permission_classes = [IsAuthenticated]
@@ -580,20 +580,20 @@ class UploadIncomingRFPView(APIView):
         user = request.user
         timestamp = now().strftime("%Y%m%d%H%M%S")
 
-        # ✅ Compute MD5 hash
+        # Compute MD5 hash
         md5 = hashlib.md5()
         for chunk in uploaded_file.chunks():
             md5.update(chunk)
         file_hash = md5.hexdigest()
 
-        # ✅ Prevent duplicate uploads
+        # Prevent duplicate uploads
         if File.objects.filter(md5_hash=file_hash, user=user).exists():
             return Response({"error": "This document already exists."}, status=409)
 
-        # ✅ Reset file pointer before writing to disk
+        # Reset file pointer before writing to disk
         uploaded_file.seek(0)
 
-        # ✅ Construct and create upload path
+        # Construct and create upload path
         relative_upload_path = os.path.join("uploads", "rfps", f"{timestamp}_{uploaded_file.name}")
         full_upload_path = os.path.join(settings.MEDIA_ROOT, relative_upload_path)
         os.makedirs(os.path.dirname(full_upload_path), exist_ok=True)
@@ -602,11 +602,11 @@ class UploadIncomingRFPView(APIView):
             for chunk in uploaded_file.chunks():
                 dest.write(chunk)
 
-        # ✅ Create run + storage
+        # Create run + storage
         run = Run.objects.create(user=user)
         storage = Storage.objects.create(user=user, run=run, upload_storage_location=full_upload_path)
 
-        # ✅ Register file in DB
+        # Register file in DB
         file_obj = File.objects.create(
             user=user,
             filename=uploaded_file.name,
@@ -621,7 +621,7 @@ class UploadIncomingRFPView(APIView):
             storage=storage
         )
 
-        # ✅ Create Incoming RFP record
+        # Create Incoming RFP record
         rfp = IncomingRFP.objects.create(
             file=file_obj,
             user=user,
@@ -630,7 +630,7 @@ class UploadIncomingRFPView(APIView):
             due_date=None
         )
 
-        # ✅ Trigger Celery background jobs
+        # Trigger Celery background jobs
         extract_rfp_metadata_task.delay(rfp.id)
         extract_rfp_sections_task.delay(rfp.id)
 
@@ -738,7 +738,7 @@ class RFPChatHistoryListView(APIView):
 
 
 # ------------------------------------------
-# 📊 Check RFP Upload + Parsing Status
+# Check RFP Upload + Parsing Status
 # ------------------------------------------
 class RFPProcessingStatusView(APIView):
     permission_classes = [IsAuthenticated]
@@ -748,7 +748,7 @@ class RFPProcessingStatusView(APIView):
         if not run_id:
             return Response({"error": "Missing run_id"}, status=400)
 
-        # ✅ CORRECTED query
+        # CORRECTED query
         rfp = IncomingRFP.objects.filter(file__run__run_id=run_id, file__user=request.user).first()
         if not rfp:
             return Response({"error": "RFP not found"}, status=404)

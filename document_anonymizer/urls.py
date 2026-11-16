@@ -12,8 +12,8 @@ from .views import (
     DownloadStructuredHTMLView,
     DownloadStructuredTextView,
     DownloadStructuredJSONView,
-    DocumentRiskScoreView,               # ✅ NEW
-    DocumentRiskScoreResultView,        # ✅ NEW
+    DocumentRiskScoreView,               # NEW
+    DocumentRiskScoreResultView,        # NEW
     DownloadStructuredDocxView,
     DownloadRedactionReadyJSONView,
     AnonymizationStatsView,
@@ -63,7 +63,7 @@ urlpatterns = [
     path("anonymization-stats-result/", AnonymizationStatsResultView.as_view(), name="anonymization-stats-result"),
     path("anonymization-stats-history/", AnonymizationStatsHistoryView.as_view(), name="anonymization-stats-history"),
 
-    # ✅ NEW: Anonymization Insights
+    # NEW: Anonymization Insights
     path("anonymization-insights/", AnonymizationInsightsView.as_view(), name="anonymization-insights"),
     path("risk-bucket-documents/", RiskBucketDocumentsView.as_view(), name="risk-bucket-documents"),
 

@@ -13,7 +13,7 @@ from rest_framework.permissions import AllowAny
 # OAuth2 Authentication Imports
 from oauth2_provider.contrib.rest_framework import TokenHasReadWriteScope
 from custom_authentication.authentication import ClientBoundOAuth2Authentication as OAuth2Authentication
-from rest_framework.permissions import IsAuthenticated  # ✅ Ensures authentication
+from rest_framework.permissions import IsAuthenticated  # Ensures authentication
 
 # Swagger Imports
 from drf_yasg.utils import swagger_auto_schema
@@ -22,7 +22,7 @@ from core.access import get_file_for_user, get_scoped_or_404, get_run_for_user, 
 
 logger = logging.getLogger(__name__)
 
-# ✅ Define Swagger parameters for authentication
+# Define Swagger parameters for authentication
 client_id_param = openapi.Parameter(
     "X-Client-ID", openapi.IN_HEADER, type=openapi.TYPE_STRING, required=True,
     description="Client ID provided at signup"
@@ -46,8 +46,8 @@ class OCRTaskStatusView(APIView):
     Retrieve the status of an OCR process using `file_id` or `run_id`.
     """
 
-    authentication_classes = [OAuth2Authentication]  # ✅ Require OAuth2 token authentication
-    permission_classes = [TokenHasReadWriteScope]  # ✅ Require valid token with proper scope
+    authentication_classes = [OAuth2Authentication]  # Require OAuth2 token authentication
+    permission_classes = [TokenHasReadWriteScope]  # Require valid token with proper scope
 
     @swagger_auto_schema(
         operation_description="Check the status of an OCR process using `file_id` or `run_id`.",
@@ -67,25 +67,25 @@ class OCRTaskStatusView(APIView):
         if not user:
             return Response({"error": "Invalid client ID"}, status=403)
 
-        # ✅ Fetch `OCRRun` by `run_id` (if provided)
+        # Fetch `OCRRun` by `run_id` (if provided)
         run_instance = None
         if run_id:
             run_instance = get_run_for_user(request.user, OCRRun, run_id)
 
-        # ✅ Fetch `File` by `file_id` (if provided)
+        # Fetch `File` by `file_id` (if provided)
         file_instance = None
         if file_id:
             file_instance = get_file_for_user(request.user, file_id)
-            # ✅ Find corresponding OCR run using `file_id`
+            # Find corresponding OCR run using `file_id`
             ocr_file = scope_by_file(request.user, OCRFile.objects.filter(original_file=file_instance), 'original_file').first()
             if ocr_file:
                 run_instance = ocr_file.run
 
-        # ✅ Ensure that an `OCRRun` instance is found
+        # Ensure that an `OCRRun` instance is found
         if not run_instance:
             return Response({"error": "No OCR process found for the provided file_id or run_id"}, status=404)
 
-        # ✅ Fetch OCR file details
+        # Fetch OCR file details
         ocr_file = OCRFile.objects.filter(run=run_instance).first()
         if not ocr_file:
             return Response({"error": "No OCR file found for the provided details"}, status=404)
@@ -102,7 +102,7 @@ class OCRTaskStatusView(APIView):
             .values("id", "filename", "filepath")
         ]
 
-        # ✅ Ensure that file paths exist and are formatted correctly
+        # Ensure that file paths exist and are formatted correctly
         response_data = {
             "ocr_run_id": str(run_instance.id),
             "original_file_id": str(ocr_file.original_file.id),
@@ -119,7 +119,7 @@ class OCRTaskStatusView(APIView):
             "raw_docx_path": get_logical_path(ocr_file.raw_docx_path) if ocr_file.raw_docx_path else "N/A",
             "created_at": ocr_file.created_at,
             "updated_at": ocr_file.updated_at,
-            "registered_outputs": registered_outputs  # ✅ Added
+            "registered_outputs": registered_outputs  # Added
         }
 
         return Response(response_data, status=200)
@@ -158,7 +158,7 @@ class OCRFileDownloadView(APIView):
 
         ocr_file = get_scoped_or_404(request.user, OCRFile, 'original_file', original_file__id=file_id)
 
-        # ✅ Determine which file to serve based on the requested file_type
+        # Determine which file to serve based on the requested file_type
         file_path_map = {
             "original": ocr_file.original_file.filepath,
             "ocr_pdf": ocr_file.ocr_filepath,
@@ -176,6 +176,6 @@ class OCRFileDownloadView(APIView):
             response["Content-Disposition"] = f'attachment; filename="{os.path.basename(file_path)}"'
             return response
         except Exception as e:
-            logger.error(f"❌ Error serving file {file_path}: {e}")
+            logger.error(f"Error serving file {file_path}: {e}")
             return Response({"error": "Failed to retrieve file."}, status=500)
 

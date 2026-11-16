@@ -6,4 +6,4 @@ class DocumentOperationsConfig(AppConfig):
     name = 'document_operations'
 
     def ready(self):
-        import document_operations.signals  # 👈 Ensures signal is registered
+        import document_operations.signals  # Ensures signal is registered

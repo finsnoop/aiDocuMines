@@ -117,7 +117,7 @@ class SubmitAnonymizationAPIView(ClientScopedViewMixin):
             service_id_param,
             file_type_param
         ],
-        operation_description="Starts anonymization using the default Presidio ➝ spaCy pipeline. You can optionally specify the file_type (plain or structured)."
+        operation_description="Starts anonymization using the default Presidio → spaCy pipeline. You can optionally specify the file_type (plain or structured)."
     )
     def post(self, request):
         client_id = request.headers.get("X-Client-ID")
@@ -139,7 +139,7 @@ class SubmitAnonymizationAPIView(ClientScopedViewMixin):
         if not os.path.exists(file_instance.filepath):
             return Response({"error": "File not found."}, status=status.HTTP_404_NOT_FOUND)
 
-        # ✅ CHECK FOR EXISTING COMPLETED ANONYMIZATION
+        # CHECK FOR EXISTING COMPLETED ANONYMIZATION
         existing = Anonymize.objects.filter(
             original_file=file_instance,
             file_type=file_type,

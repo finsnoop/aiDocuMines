@@ -95,7 +95,7 @@ urlpatterns = [
     path('service-outputs/', ServiceOutputListCreateView.as_view(), name='service-outputs'),
 
     # ═══════════════════════════════════════════════════════════════
-    # 💼 PE VALUE METRICS ENDPOINTS
+    # PE VALUE METRICS ENDPOINTS
     # ═══════════════════════════════════════════════════════════════
 
     # Closing Checklist
@@ -117,7 +117,7 @@ urlpatterns = [
     path('checklist-progress/', ChecklistProgressView.as_view(), name='checklist-progress'),
 
     # ═══════════════════════════════════════════════════════════════
-    # 🏢 PANEL MANAGEMENT & RFP ENDPOINTS
+    # PANEL MANAGEMENT & RFP ENDPOINTS
     # ═══════════════════════════════════════════════════════════════
 
     # Panel Firms
@@ -133,7 +133,7 @@ urlpatterns = [
     path('engagement-letters/', EngagementLetterListCreateView.as_view(), name='engagement-letters'),
 
     # ═══════════════════════════════════════════════════════════════
-    # ✍️ SIGNATURE TRACKING ENDPOINTS
+    # SIGNATURE TRACKING ENDPOINTS
     # ═══════════════════════════════════════════════════════════════
 
     # Signature Trackers
@@ -141,7 +141,7 @@ urlpatterns = [
     path('signature-tracker/', SignatureTrackerListCreateView.as_view(), name='signature-tracker-alias'),
 
     # ═══════════════════════════════════════════════════════════════
-    # 📋 CLOSING MANAGEMENT ENDPOINTS
+    # CLOSING MANAGEMENT ENDPOINTS
     # ═══════════════════════════════════════════════════════════════
 
     # Conditions Precedent
@@ -153,7 +153,7 @@ urlpatterns = [
     path('closing-binder/', ClosingBinderListCreateView.as_view(), name='closing-binder-alias'),
 
     # ═══════════════════════════════════════════════════════════════
-    # 📊 COMPLIANCE TRACKING ENDPOINTS
+    # COMPLIANCE TRACKING ENDPOINTS
     # ═══════════════════════════════════════════════════════════════
 
     # Covenants
@@ -171,14 +171,14 @@ urlpatterns = [
     path('risk-heatmap/', RiskHeatmapView.as_view(), name='risk-heatmap'),
 
     # ═══════════════════════════════════════════════════════════════
-    # 📊 TASK STATUS ENDPOINT
+    # TASK STATUS ENDPOINT
     # ═══════════════════════════════════════════════════════════════
 
     # Task Status (similar to TranslationTaskStatusView)
     path('task-status/', PETaskStatusView.as_view(), name='task-status'),
 
     # ═══════════════════════════════════════════════════════════════
-    # 🚀 PE AI-POWERED SOLUTIONS (15 Solutions)
+    # PE AI-POWERED SOLUTIONS (15 Solutions)
     # ═══════════════════════════════════════════════════════════════
 
     # Foundation: Portfolio Companies

@@ -17,13 +17,13 @@ def promote_if_replica():
         role = info.get("role")
 
         if role == "slave" or role == "replica":
-            logging.warning("⚠️ Redis is in replica mode! Promoting to master...")
+            logging.warning("Redis is in replica mode! Promoting to master...")
             r.slaveof(no_one=True)
-            logging.info("✅ Redis promoted to master.")
+            logging.info("Redis promoted to master.")
         else:
-            logging.info("✔️ Redis is in master mode.")
+            logging.info("Redis is in master mode.")
     except Exception as e:
-        logging.error(f"❌ Error checking Redis: {e}")
+        logging.error(f"Error checking Redis: {e}")
 
 if __name__ == "__main__":
     while True:

@@ -457,7 +457,7 @@ class QueryViewSet(viewsets.ModelViewSet):
                         }
                     )
                     response_data["report_file"] = report_info
-                    logger.info(f"✅ Generated interrogation report: {report_info.get('filename')}")
+                    logger.info(f"Generated interrogation report: {report_info.get('filename')}")
                 except Exception as report_error:
                     logger.warning(f"Failed to generate report: {report_error}")
                     response_data["report_error"] = str(report_error)

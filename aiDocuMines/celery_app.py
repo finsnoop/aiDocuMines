@@ -62,4 +62,4 @@ app.steps["worker"].add(LivenessProbe)
 def debug_task(self):
     print(f"Request: {self.request!r}")
     
-# print("🔍 Celery Tasks Discovered:", app.tasks.keys())  # Add this debug line
+# print("Celery Tasks Discovered:", app.tasks.keys())  # Add this debug line

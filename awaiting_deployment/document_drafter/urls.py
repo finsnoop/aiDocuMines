@@ -1,7 +1,7 @@
 # app_layout/urls.py
 
-from django.urls import path, include    # ➡️ missing earlier
-from rest_framework.routers import DefaultRouter    # ➡️ missing earlier
+from django.urls import path, include    # → missing earlier
+from rest_framework.routers import DefaultRouter    # → missing earlier
 
 from .views import (
     UploadedDocumentViewSet,
@@ -98,7 +98,7 @@ urlpatterns = [
     path('api/notifications/mark-all-as-deleted/', NotificationViewSet.as_view({'post': 'mark_all_as_deleted'}), name='notification-mark-all-as-deleted'),
     path('api/notifications/mark-all-as-not-deleted/', NotificationViewSet.as_view({'post': 'mark_all_as_not_deleted'}), name='notification-mark-all-as-not-deleted'),
     
-    # 📥 Incoming RFPs
+    # Incoming RFPs
     path('api/rfps/upload/', UploadIncomingRFPView.as_view(), name='upload-incoming-rfp'),
     path('api/rfps/', IncomingRFPListView.as_view(), name='incoming-rfp-list'),
     path('api/rfps/ask/', AskRFPQuestionView.as_view(), name='ask-rfp-question'),

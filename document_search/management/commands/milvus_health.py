@@ -58,15 +58,15 @@ SAMPLE_TEXTS = [
 def connect() -> None:
     """Connect (or reuse) the default Milvus alias."""
     if not connections.has_connection("default"):
-        LOGGER.info("🔗  Connecting to Milvus at %s:%s …", MILVUS_HOST, MILVUS_PORT)
+        LOGGER.info("Connecting to Milvus at %s:%s …", MILVUS_HOST, MILVUS_PORT)
         connections.connect(alias="default", host=MILVUS_HOST, port=MILVUS_PORT)
-    LOGGER.info("✅  Connection established")
+    LOGGER.info("Connection established")
 
 
 def prepare_collection() -> Collection:
     """Create a temporary collection for the health-check."""
     if utility.has_collection(COLL_NAME):
-        LOGGER.warning("⚠️  Old '%s' collection found – dropping first", COLL_NAME)
+        LOGGER.warning("Old '%s' collection found – dropping first", COLL_NAME)
         Collection(COLL_NAME).drop()
 
     schema = CollectionSchema(
@@ -79,13 +79,13 @@ def prepare_collection() -> Collection:
     )
 
     coll = Collection(name=COLL_NAME, schema=schema)
-    LOGGER.info("✅  Collection '%s' created", COLL_NAME)
+    LOGGER.info("Collection '%s' created", COLL_NAME)
     return coll
 
 
 def embed_texts(texts: List[str]) -> List[List[float]]:
     model = SentenceTransformer(MODEL_NAME)
-    LOGGER.info("🤖  Encoding %d sample sentences with %s …", len(texts), MODEL_NAME)
+    LOGGER.info("Encoding %d sample sentences with %s …", len(texts), MODEL_NAME)
     return model.encode(texts).tolist()
 
 
@@ -119,12 +119,12 @@ def run_roundtrip() -> None:
         output_fields=["content"],
     )
 
-    LOGGER.info("🔍  Top-3 search results:")
+    LOGGER.info("Top-3 search results:")
     for hit in results[0]:
         LOGGER.info("   • score %.4f  →  \"%s…\"", hit.score, hit.entity.get("content")[:60])
 
     coll.drop()
-    LOGGER.info("🗑️  Temporary collection dropped – health-check successful")
+    LOGGER.info("Temporary collection dropped – health-check successful")
 
 
 # ──────────────────────────────────────────────────────────────
@@ -135,14 +135,14 @@ class Command(BaseCommand):
 
     def handle(self, *args, **options):  # noqa: D401
         ts = datetime.utcnow().isoformat(timespec="seconds")
-        LOGGER.info("🚑  Milvus health-check started @ %s UTC", ts)
+        LOGGER.info("Milvus health-check started @ %s UTC", ts)
         try:
             run_roundtrip()
-            LOGGER.info("🎉  Milvus is UP and fully operational.")
+            LOGGER.info("Milvus is UP and fully operational.")
             self.stdout.write(self.style.SUCCESS("Milvus health-check: PASSED"))
             sys.exit(0)
         except Exception as exc:
-            LOGGER.error("❌  Milvus health-check FAILED\n%s", traceback.format_exc())
+            LOGGER.error("Milvus health-check FAILED\n%s", traceback.format_exc())
             self.stderr.write(self.style.ERROR(f"Milvus health-check failed: {exc}"))
             sys.exit(1)
 

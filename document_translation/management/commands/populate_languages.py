@@ -158,5 +158,5 @@ class Command(BaseCommand):
             else:
                 updated_count += 1
         self.stdout.write(self.style.SUCCESS(
-            f"✅ Languages table populated! Created: {created_count}, Updated: {updated_count}, Total: {len(LANGUAGES)}"
+            f"Languages table populated! Created: {created_count}, Updated: {updated_count}, Total: {len(LANGUAGES)}"
         ))

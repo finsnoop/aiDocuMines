@@ -37,7 +37,7 @@ logger = logging.getLogger(__name__)
 
 User = get_user_model()
 
-# ✅ Define Swagger parameters
+# Define Swagger parameters
 client_id_param = openapi.Parameter(
     "X-Client-ID", openapi.IN_HEADER, type=openapi.TYPE_STRING, required=True, description="Client ID for authentication"
 )
@@ -64,7 +64,7 @@ def health_check(request):
 
 
 
-### **🔹 Submit Translation**
+### **Submit Translation**
 class SubmitTranslationAPIView(ClientScopedViewMixin):
     """
     Submit a file for translation and track using `file_id` and `translation_run_id`.
@@ -90,12 +90,12 @@ class SubmitTranslationAPIView(ClientScopedViewMixin):
         if not all([file_id, from_lang, to_lang]):
             return Response({"error": "Missing required parameters"}, status=status.HTTP_400_BAD_REQUEST)
 
-        # ✅ Get user from client_id
+        # Get user from client_id
         user = request.user
         if not user:
             return Response({"error": "Invalid client ID"}, status=status.HTTP_401_UNAUTHORIZED)
 
-        # ✅ Get the file instance scoped by client
+        # Get the file instance scoped by client
         file_instance = self.get_object_by_client(File.objects.all(), id=file_id)
 
         if file_instance.user != user:
@@ -104,13 +104,13 @@ class SubmitTranslationAPIView(ClientScopedViewMixin):
         if not os.path.exists(file_instance.filepath):
             return Response({"error": "File not found."}, status=status.HTTP_404_NOT_FOUND)
 
-        # ✅ Validate source and target languages
+        # Validate source and target languages
         if from_lang != "auto" and not TranslationLanguage.objects.filter(code=from_lang).exists():
             return Response({"error": f"Invalid source language: {from_lang}"}, status=status.HTTP_400_BAD_REQUEST)
         if not TranslationLanguage.objects.filter(code=to_lang).exists():
             return Response({"error": f"Invalid target language: {to_lang}"}, status=status.HTTP_400_BAD_REQUEST)
 
-        # ✅ Create a new translation run with client FK
+        # Create a new translation run with client FK
         translation_run = TranslationRun.objects.create(
             project_id=file_instance.project_id,
             service_id=file_instance.service_id,
@@ -132,7 +132,7 @@ class SubmitTranslationAPIView(ClientScopedViewMixin):
         return Response(response_data, status=status.HTTP_202_ACCEPTED)
 
 
-### **🔹 Check Translation Status**
+### **Check Translation Status**
 class CheckTranslationStatusAPIView(ClientScopedViewMixin):
     """
     Check the translation status using `translation_run_id`.
@@ -153,16 +153,16 @@ class CheckTranslationStatusAPIView(ClientScopedViewMixin):
         if not translation_run_id:
             return Response({"error": "Missing `translation_run_id` parameter"}, status=status.HTTP_400_BAD_REQUEST)
 
-        # ✅ Verify translation run belongs to user's client
+        # Verify translation run belongs to user's client
         self.get_object_by_client(TranslationRun.objects.all(), id=translation_run_id)
 
-        # ✅ Fetch translation status asynchronously
+        # Fetch translation status asynchronously
         result = check_translation_status_task.apply(args=[translation_run_id]).get()
 
         return Response(result, status=status.HTTP_200_OK if result["status"] == "Completed" else status.HTTP_202_ACCEPTED)
 
 
-### **🔹 Download Translated File**
+### **Download Translated File**
 class DownloadTranslatedFileAPIView(ClientScopedViewMixin):
     """
     Download the translated file.
@@ -182,10 +182,10 @@ class DownloadTranslatedFileAPIView(ClientScopedViewMixin):
         if not file_id:
             return Response({"error": "Missing `file_id` parameter"}, status=status.HTTP_400_BAD_REQUEST)
 
-        # ✅ Verify file belongs to user's client
+        # Verify file belongs to user's client
         self.get_object_by_client(File.objects.all(), id=file_id)
 
-        # ✅ Fetch translated file path asynchronously
+        # Fetch translated file path asynchronously
         result = download_translated_file_task.apply(args=[file_id]).get()
 
         if "error" in result:
@@ -202,7 +202,7 @@ class DownloadTranslatedFileAPIView(ClientScopedViewMixin):
         )
 
 
-### **🔹 Handle Translation File Download View (Fix Swagger Errors)**
+### **Handle Translation File Download View (Fix Swagger Errors)**
 class TranslationFileDownloadView(generics.RetrieveAPIView):
     queryset = TranslationFile.objects.all()
     serializer_class = TranslationFileSerializer
@@ -212,10 +212,10 @@ class TranslationFileDownloadView(generics.RetrieveAPIView):
     def get_queryset(self):
         return scope_by_file(self.request.user, TranslationFile.objects.all(), "original_file")
 
-    @swagger_auto_schema(auto_schema=None)  # ✅ Prevent Swagger from generating schema errors
+    @swagger_auto_schema(auto_schema=None)  # Prevent Swagger from generating schema errors
     def get(self, request, *args, **kwargs):
         if getattr(self, 'swagger_fake_view', False):
-            return None  # ✅ Short-circuit schema generation for Swagger
+            return None  # Short-circuit schema generation for Swagger
         return super().get(request, *args, **kwargs)
 
 
@@ -224,7 +224,7 @@ class TranslationFileDownloadView(generics.RetrieveAPIView):
 
 ##################################################
 
-### 🔹 TranslationRunSummaryView
+### TranslationRunSummaryView
 class TranslationRunSummaryView(ClientScopedViewMixin):
     authentication_classes = [OAuth2Authentication]
     permission_classes = [IsAuthenticated, TokenHasReadWriteScope, IsClientOrAdminOrSuperUser]
@@ -254,7 +254,7 @@ class TranslationRunSummaryView(ClientScopedViewMixin):
         })
 
 
-### 🔹 TranslatedFilesByRunView
+### TranslatedFilesByRunView
 class TranslatedFilesByRunView(ClientScopedViewMixin):
     authentication_classes = [OAuth2Authentication]
     permission_classes = [IsAuthenticated, TokenHasReadWriteScope, IsClientOrAdminOrSuperUser]
@@ -283,7 +283,7 @@ class TranslatedFilesByRunView(ClientScopedViewMixin):
         ])
 
 
-### 🔹 TranslationFileInsightView
+### TranslationFileInsightView
 class TranslationFileInsightView(ClientScopedViewMixin):
     authentication_classes = [OAuth2Authentication]
     permission_classes = [IsAuthenticated, TokenHasReadWriteScope, IsClientOrAdminOrSuperUser]
@@ -313,7 +313,7 @@ class TranslationFileInsightView(ClientScopedViewMixin):
         })
 
 
-### 🔹 TranslationHistoryView
+### TranslationHistoryView
 class TranslationHistoryView(ClientScopedViewMixin):
     authentication_classes = [OAuth2Authentication]
     permission_classes = [IsAuthenticated, TokenHasReadWriteScope, IsClientOrAdminOrSuperUser]
@@ -340,7 +340,7 @@ class TranslationHistoryView(ClientScopedViewMixin):
         ])
 
 
-### 🔹 SupportedLanguagesView
+### SupportedLanguagesView
 class SupportedLanguagesView(APIView):
     permission_classes = [AllowAny]
 
@@ -355,7 +355,7 @@ class SupportedLanguagesView(APIView):
         ])
 
 
-### 🔹 TranslationStorageLocationsView
+### TranslationStorageLocationsView
 class TranslationStorageLocationsView(ClientScopedViewMixin):
     authentication_classes = [OAuth2Authentication]
     permission_classes = [IsAuthenticated, TokenHasReadWriteScope, IsClientOrAdminOrSuperUser]
@@ -381,7 +381,7 @@ class TranslationStorageLocationsView(ClientScopedViewMixin):
         ])
 
 
-### 🔹 TranslationClientSummaryView
+### TranslationClientSummaryView
 class TranslationClientSummaryView(APIView):
     authentication_classes = [OAuth2Authentication]
     permission_classes = [IsAuthenticated, TokenHasReadWriteScope, IsClientOrAdminOrSuperUser]
@@ -425,7 +425,7 @@ class TranslationClientSummaryView(APIView):
         })
 
 
-### 🔹 TranslationProjectSummaryView
+### TranslationProjectSummaryView
 class TranslationProjectSummaryView(ClientScopedViewMixin):
     authentication_classes = [OAuth2Authentication]
     permission_classes = [IsAuthenticated, TokenHasReadWriteScope, IsClientOrAdminOrSuperUser]
@@ -450,7 +450,7 @@ class TranslationProjectSummaryView(ClientScopedViewMixin):
         return Response({"project_id": project_id, "language_summary": summary})
 
 
-### 🔹 TranslationLanguageSummaryView
+### TranslationLanguageSummaryView
 class TranslationLanguageSummaryView(ClientScopedViewMixin):
     authentication_classes = [OAuth2Authentication]
     permission_classes = [IsAuthenticated, TokenHasReadWriteScope, IsClientOrAdminOrSuperUser]

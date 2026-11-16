@@ -31,7 +31,7 @@ def call_ai_document_classification(file_obj, user):
     Advanced AI classification can be enabled later when semantic search is stable.
     """
     try:
-        # ⚠️ TEMPORARY: Always use basic classification to avoid blocking on semantic_search_task
+        # TEMPORARY: Always use basic classification to avoid blocking on semantic_search_task
         # The semantic_search_task.delay().get() pattern blocks the Celery worker
         # and can cause tasks to hang if the semantic search service is unavailable
         logger.info(f"Using basic filename classification for {file_obj.filename}")
@@ -124,7 +124,7 @@ def call_ai_risk_clause_extraction(file_obj, user, classification):
     Advanced AI extraction can be enabled later when semantic search is stable.
     """
     try:
-        # ⚠️ TEMPORARY: Use basic pattern matching to avoid blocking on semantic_search_task
+        # TEMPORARY: Use basic pattern matching to avoid blocking on semantic_search_task
         logger.info(f"Using basic pattern matching for risk extraction in {file_obj.filename}")
 
         # Generate sample risk clauses based on document type
@@ -279,16 +279,16 @@ def classify_document_task(self, file_id, dd_run_id, user_id, project_id=None, s
         dd_run = DueDiligenceRun.objects.get(id=dd_run_id)
         user = User.objects.get(id=user_id)
 
-        # ✅ Use provided project_id/service_id or fall back to file's values
+        # Use provided project_id/service_id or fall back to file's values
         effective_project_id = project_id or file_obj.project_id
         effective_service_id = service_id or file_obj.service_id
-        # ✅ Use provided datetime_folder or generate new one
+        # Use provided datetime_folder or generate new one
         effective_datetime_folder = datetime_folder or timezone.now().strftime("%Y%m%d")
 
         logger.info(f"Starting document classification for file {file_obj.filename}")
-        logger.info(f"  📋 Received project_id={project_id}, service_id={service_id}, datetime_folder={datetime_folder}")
-        logger.info(f"  📋 File's project_id={file_obj.project_id}, service_id={file_obj.service_id}")
-        logger.info(f"  ✅ Using effective_project_id={effective_project_id}, effective_service_id={effective_service_id}, datetime_folder={effective_datetime_folder}")
+        logger.info(f"  Received project_id={project_id}, service_id={service_id}, datetime_folder={datetime_folder}")
+        logger.info(f"  File's project_id={file_obj.project_id}, service_id={file_obj.service_id}")
+        logger.info(f"  Using effective_project_id={effective_project_id}, effective_service_id={effective_service_id}, datetime_folder={effective_datetime_folder}")
 
         # Placeholder classification logic
         # In a real implementation, this would:
@@ -299,7 +299,7 @@ def classify_document_task(self, file_id, dd_run_id, user_id, project_id=None, s
         # Use AI services for document classification
         doc_type, confidence = call_ai_document_classification(file_obj, user)
 
-        # ✅ Get client from user for multi-tenancy
+        # Get client from user for multi-tenancy
         client = getattr(user, 'client', None)
         if not client:
             logger.error(f"User {user.id} has no client - cannot create classification")
@@ -310,7 +310,7 @@ def classify_document_task(self, file_id, dd_run_id, user_id, project_id=None, s
             file=file_obj,
             user=user,
             defaults={
-                'client': client,  # ✅ Required field for multi-tenancy
+                'client': client,  # Required field for multi-tenancy
                 'due_diligence_run': dd_run,
                 'document_type': doc_type,
                 'confidence_score': confidence,
@@ -325,7 +325,7 @@ def classify_document_task(self, file_id, dd_run_id, user_id, project_id=None, s
         action = "Created" if created else "Updated"
         logger.info(f"{action} classification for {file_obj.filename}: {doc_type} (confidence: {confidence})")
 
-        # ✅ Generate classification report file and register it
+        # Generate classification report file and register it
         registered_outputs = []
         try:
             # Create classification report data
@@ -379,7 +379,7 @@ def classify_document_task(self, file_id, dd_run_id, user_id, project_id=None, s
                     "path": get_logical_path(registered.filepath, registered.filename)
                 })
 
-                logger.info(f"✅ Registered classification report file: {registered.filename} (file_id={registered.id})")
+                logger.info(f"Registered classification report file: {registered.filename} (file_id={registered.id})")
 
         except Exception as e:
             logger.error(f"Failed to generate classification report file: {str(e)}")
@@ -427,18 +427,18 @@ def extract_risk_clauses_task(self, file_id, dd_run_id, user_id, project_id=None
         dd_run = DueDiligenceRun.objects.get(id=dd_run_id)
         user = User.objects.get(id=user_id)
 
-        # ✅ Use provided project_id/service_id or fall back to file's values
+        # Use provided project_id/service_id or fall back to file's values
         effective_project_id = project_id or file_obj.project_id
         effective_service_id = service_id or file_obj.service_id
-        # ✅ Use provided datetime_folder or generate new one
+        # Use provided datetime_folder or generate new one
         effective_datetime_folder = datetime_folder or timezone.now().strftime("%Y%m%d")
 
         logger.info(f"Starting risk clause extraction for file {file_obj.filename}")
-        logger.info(f"  📋 Received project_id={project_id}, service_id={service_id}, datetime_folder={datetime_folder}")
-        logger.info(f"  📋 File's project_id={file_obj.project_id}, service_id={file_obj.service_id}")
-        logger.info(f"  ✅ Using effective_project_id={effective_project_id}, effective_service_id={effective_service_id}, datetime_folder={effective_datetime_folder}")
+        logger.info(f"  Received project_id={project_id}, service_id={service_id}, datetime_folder={datetime_folder}")
+        logger.info(f"  File's project_id={file_obj.project_id}, service_id={file_obj.service_id}")
+        logger.info(f"  Using effective_project_id={effective_project_id}, effective_service_id={effective_service_id}, datetime_folder={effective_datetime_folder}")
 
-        # ✅ Get client from user for multi-tenancy
+        # Get client from user for multi-tenancy
         client = getattr(user, 'client', None)
         if not client:
             logger.error(f"User {user.id} has no client - cannot create risk clauses")
@@ -462,7 +462,7 @@ def extract_risk_clauses_task(self, file_id, dd_run_id, user_id, project_id=None
         created_clauses = []
         for clause_data in extracted_clauses:
             risk_clause = RiskClause.objects.create(
-                client=client,  # ✅ Required field for multi-tenancy
+                client=client,  # Required field for multi-tenancy
                 file=file_obj,
                 user=user,
                 due_diligence_run=dd_run,
@@ -472,7 +472,7 @@ def extract_risk_clauses_task(self, file_id, dd_run_id, user_id, project_id=None
         
         logger.info(f"Created {len(created_clauses)} risk clauses for {file_obj.filename}")
 
-        # ✅ Generate risk clauses report file and register it
+        # Generate risk clauses report file and register it
         registered_outputs = []
         try:
             # Create risk clauses report data
@@ -539,7 +539,7 @@ def extract_risk_clauses_task(self, file_id, dd_run_id, user_id, project_id=None
                     "path": get_logical_path(registered.filepath, registered.filename)
                 })
 
-                logger.info(f"✅ Registered risk clauses report file: {registered.filename} (file_id={registered.id})")
+                logger.info(f"Registered risk clauses report file: {registered.filename} (file_id={registered.id})")
 
         except Exception as e:
             logger.error(f"Failed to generate risk clauses report file: {str(e)}")
@@ -590,7 +590,7 @@ def generate_findings_report_task(self, dd_run_id, user_id, report_name="Due Dil
         dd_run = DueDiligenceRun.objects.get(id=dd_run_id)
         user = User.objects.get(id=user_id)
 
-        # ✅ Get client from user for multi-tenancy
+        # Get client from user for multi-tenancy
         client = getattr(user, 'client', None)
         if not client:
             logger.error(f"User {user.id} has no client - cannot create findings report")
@@ -674,7 +674,7 @@ def generate_findings_report_task(self, dd_run_id, user_id, report_name="Due Dil
 
             # Create the findings report database record
             report = FindingsReport.objects.create(
-                client=client,  # ✅ Required field for multi-tenancy
+                client=client,  # Required field for multi-tenancy
                 due_diligence_run=dd_run,
                 user=user,
                 report_name=report_name,
@@ -710,7 +710,7 @@ def generate_findings_report_task(self, dd_run_id, user_id, report_name="Due Dil
 
             # Create output directory - MUST use project_id/service_id structure for proper sidebar placement
             # Path format: {MEDIA_ROOT}/uploads/{client_id}/{user_id}/{project_id}/{service_id}/{datetime}/findings_reports/
-            # ✅ Use datetime_folder from frontend if provided, otherwise generate new one
+            # Use datetime_folder from frontend if provided, otherwise generate new one
             effective_datetime_folder = datetime_folder or timezone.now().strftime("%Y%m%d")
 
             # Use effective_project_id or fallback to vertical name (not "ai_services")
@@ -729,7 +729,7 @@ def generate_findings_report_task(self, dd_run_id, user_id, report_name="Due Dil
             )
             os.makedirs(output_dir, exist_ok=True)
 
-            logger.info(f"📁 Creating findings report at: {output_dir}")
+            logger.info(f"Creating findings report at: {output_dir}")
             logger.info(f"   project_id={final_project_id}, service_id={final_service_id}, datetime_folder={effective_datetime_folder}")
 
             # Write report file
@@ -762,7 +762,7 @@ def generate_findings_report_task(self, dd_run_id, user_id, report_name="Due Dil
                     "path": get_logical_path(registered.filepath, registered.filename)
                 })
 
-                logger.info(f"✅ Registered findings report file: {registered.filename} (file_id={registered.id})")
+                logger.info(f"Registered findings report file: {registered.filename} (file_id={registered.id})")
 
         logger.info(f"Generated findings report {report.id} for DD run {dd_run.deal_name}")
 
@@ -864,7 +864,7 @@ def sync_data_room_task(self, connector_id, user_id):
 
 
 # ═══════════════════════════════════════════════════════════════
-# 🔧 HELPER FUNCTIONS FOR AI INTEGRATION
+# HELPER FUNCTIONS FOR AI INTEGRATION
 # ═══════════════════════════════════════════════════════════════
 
 def _basic_filename_classification(filename):

@@ -77,7 +77,7 @@ def run_partition(file: File, partition_strategy: str) -> list:
     else:
         raise ValueError(f"Unknown partition strategy: {partition_strategy}")
 
-    logger.warning(f"✅ Partition produced {len(elements)} elements.")
+    logger.warning(f"Partition produced {len(elements)} elements.")
     return elements
 
 
@@ -250,7 +250,7 @@ def process_document_structures(
     - save DocumentElements, including any tables or hierarchy
     """
 
-    logger.warning(f"📝 Starting processing of file_id={file.id}, run_id={run.run_id}")
+    logger.warning(f"Starting processing of file_id={file.id}, run_id={run.run_id}")
 
     if ds_run is None:
         # If no DocumentStructureRun is passed, create a new one
@@ -272,7 +272,7 @@ def process_document_structures(
         ds_run.status = "Failed"
         ds_run.error_message = str(e)
         ds_run.save()
-        logger.error(f"🔥 Partitioning failed: {e}")
+        logger.error(f"Partitioning failed: {e}")
         raise
 
     logger.warning(f"→ About to process {len(elements)} elements.")
@@ -320,7 +320,7 @@ def process_document_structures(
 
         element_objects.append(de)
 
-        logger.warning(f"✅ Element {order_counter}: Type={el_type} | Text='{(el_text or '')[:80]}'")
+        logger.warning(f"Element {order_counter}: Type={el_type} | Text='{(el_text or '')[:80]}'")
 
         parent_map[id(el)] = de
 
@@ -354,12 +354,12 @@ def process_document_structures(
     if element_objects:
         try:
             elements = models.DocumentElement.objects.bulk_create(element_objects)
-            logger.warning(f"✅ Saved {len(elements)} DocumentElement rows to DB.")
+            logger.warning(f"Saved {len(elements)} DocumentElement rows to DB.")
         except Exception as e:
-            logger.error(f"🔥 bulk_create for DocumentElement failed: {e}")
+            logger.error(f"bulk_create for DocumentElement failed: {e}")
             raise
     else:
-        logger.warning("⚠️ No elements to save.")
+        logger.warning("No elements to save.")
 
     # Parent relationships
     updates = []
@@ -374,25 +374,25 @@ def process_document_structures(
     if updates:
         try:
             models.DocumentElement.objects.bulk_update(updates, ["parent"])
-            logger.warning(f"✅ Updated parent relationships for {len(updates)} elements.")
+            logger.warning(f"Updated parent relationships for {len(updates)} elements.")
         except Exception as e:
-            logger.error(f"🔥 bulk_update for parent relationships failed: {e}")
+            logger.error(f"bulk_update for parent relationships failed: {e}")
             raise
 
     # Bulk save table cells
     if cell_objects:
         try:
             models.DocumentTableCell.objects.bulk_create(cell_objects)
-            logger.warning(f"✅ Saved {len(cell_objects)} DocumentTableCell rows.")
+            logger.warning(f"Saved {len(cell_objects)} DocumentTableCell rows.")
         except Exception as e:
-            logger.error(f"🔥 bulk_create for table cells failed: {e}")
+            logger.error(f"bulk_create for table cells failed: {e}")
             raise
 
     ds_run.status = "Completed"
     ds_run.error_message = None
     ds_run.save()
 
-    logger.warning(f"✅ DocumentStructureRun {ds_run.id} marked as Completed.")
+    logger.warning(f"DocumentStructureRun {ds_run.id} marked as Completed.")
 
     return ds_run
 
@@ -407,11 +407,11 @@ def compare_document_runs(run1: models.DocumentStructureRun, run2: models.Docume
     - stores comparison result
     """
 
-    logger.warning(f"🔍 Comparing runs {run1.id} vs {run2.id}")
+    logger.warning(f"Comparing runs {run1.id} vs {run2.id}")
 
     # Generate all pair combinations
     pairs = generate_comparison_pairs(run1, run2)
-    logger.warning(f"✅ Generated {len(pairs)} comparison pairs.")
+    logger.warning(f"Generated {len(pairs)} comparison pairs.")
 
     # Collect all unique texts to embed
     all_texts = []
@@ -431,7 +431,7 @@ def compare_document_runs(run1: models.DocumentStructureRun, run2: models.Docume
 
     # Compute embeddings in one go
     embedding_map = compute_batch_embeddings(all_texts)
-    logger.warning(f"✅ Computed embeddings for {len(embedding_map)} unique text blocks.")
+    logger.warning(f"Computed embeddings for {len(embedding_map)} unique text blocks.")
 
     # Compute similarities
     results = []
@@ -465,7 +465,7 @@ def compare_document_runs(run1: models.DocumentStructureRun, run2: models.Docume
             "note": pair.get("note"),
         })
 
-    logger.warning(f"✅ Completed pairwise similarity scoring for {len(results)} pairs.")
+    logger.warning(f"Completed pairwise similarity scoring for {len(results)} pairs.")
 
     # Aggregate results
     agg = aggregate_comparison_results(results)
@@ -497,13 +497,13 @@ def compare_document_runs(run1: models.DocumentStructureRun, run2: models.Docume
 
     if pair_objects:
         models.DocumentElementPairComparison.objects.bulk_create(pair_objects)
-        logger.warning(f"✅ Saved {len(pair_objects)} DocumentElementPairComparison records.")
+        logger.warning(f"Saved {len(pair_objects)} DocumentElementPairComparison records.")
     else:
-        logger.warning("⚠️ No pair-level comparisons to save.")
+        logger.warning("No pair-level comparisons to save.")
 
 
     logger.warning(
-        f"✅ Comparison finished. "
+        f"Comparison finished. "
         f"Avg Lexical={agg['avg_lexical']:.4f} | "
         f"Avg Semantic={agg['avg_semantic']:.4f}"
     )

@@ -26,10 +26,10 @@ def get_language_name(code):
     except TranslationLanguage.DoesNotExist:
         return code
 
-# ✅ Load environment variables
+# Load environment variables
 load_dotenv()
 
-# ✅ Logger setup
+# Logger setup
 logger = logging.getLogger(__name__)
 
 
@@ -51,10 +51,10 @@ from django.utils.timezone import now
 from core.models import File
 from document_translation.models import TranslationRun, TranslationFile
 
-# ✅ Load environment variables
+# Load environment variables
 load_dotenv()
 
-# ✅ Logger setup
+# Logger setup
 logger = logging.getLogger(__name__)
 
 
@@ -93,20 +93,20 @@ class AzureBlobService:
         while retries > 0:
             try:
                 if container_client.exists():
-                    logger.info(f"✅ Container '{container_name}' already exists.")
+                    logger.info(f"Container '{container_name}' already exists.")
                     return
-                logger.info(f"📂 Creating container: {container_name}")
+                logger.info(f"Creating container: {container_name}")
                 container_client.create_container()
-                logger.info(f"✅ Created container: {container_name}")
+                logger.info(f"Created container: {container_name}")
                 return
             except ResourceExistsError as e:
                 if "ContainerBeingDeleted" in str(e):
-                    logger.warning(f"⚠️ Container '{container_name}' is still being deleted. Retrying in 5 seconds...")
+                    logger.warning(f"Container '{container_name}' is still being deleted. Retrying in 5 seconds...")
                     time.sleep(5)
                     retries -= 1
                 else:
                     raise e
-        raise Exception(f"❌ Failed to create container '{container_name}'. Container deletion is taking too long.")
+        raise Exception(f"Failed to create container '{container_name}'. Container deletion is taking too long.")
 
     def force_delete_container(self, container_name):
         """Forcibly deletes an Azure Blob container after ensuring all files are removed."""
@@ -117,13 +117,13 @@ class AzureBlobService:
                 for blob in container_client.list_blobs():
                     container_client.delete_blob(blob.name)
                 container_client.delete_container()
-                logger.info(f"✅ Deleted container: {container_name}")
+                logger.info(f"Deleted container: {container_name}")
                 return
             except ResourceExistsError:
-                logger.warning(f"⚠️ Container '{container_name}' is still being deleted. Retrying in 5 seconds...")
+                logger.warning(f"Container '{container_name}' is still being deleted. Retrying in 5 seconds...")
                 time.sleep(5)
                 retries -= 1
-        logger.error(f"❌ Failed to delete container '{container_name}' after multiple attempts.")
+        logger.error(f"Failed to delete container '{container_name}' after multiple attempts.")
 
     def generate_sas_url(self, container_name):
         """Generates a SAS URL for a container."""
@@ -143,13 +143,13 @@ class AzureBlobService:
         blob_client = self.blob_service_client.get_blob_client(container=container_name, blob=file_name)
 
         if blob_client.exists():
-            logger.info(f"✅ File '{file_name}' already exists in '{container_name}', skipping upload.")
+            logger.info(f"File '{file_name}' already exists in '{container_name}', skipping upload.")
             return
 
-        logger.info(f"📤 Uploading '{file_name}' to Azure Blob Storage...")
+        logger.info(f"Uploading '{file_name}' to Azure Blob Storage...")
         with open(file_path, "rb") as data:
             blob_client.upload_blob(data, overwrite=True)
-        logger.info(f"✅ Successfully uploaded '{file_name}' to '{container_name}'.")
+        logger.info(f"Successfully uploaded '{file_name}' to '{container_name}'.")
 
     def download_files(self, container_name, destination_folder):
         """Downloads translated files from Azure Blob Storage."""
@@ -163,13 +163,13 @@ class AzureBlobService:
 
             with open(destination_file_path, "wb") as my_blob:
                 blob_data.readinto(my_blob)
-            logger.info(f"✅ Downloaded: {destination_file_path}")
+            logger.info(f"Downloaded: {destination_file_path}")
             
     def delete_container(self, container_name):
         """Deletes an Azure Blob Storage container."""
         container_client = self.blob_service_client.get_container_client(container_name)
         container_client.delete_container()
-        logger.info(f"✅ Deleted container: {container_name}")
+        logger.info(f"Deleted container: {container_name}")
 
 
 class TranslationService:
@@ -217,13 +217,13 @@ class TranslationService:
                 source_language=source_language,
                 targets=[TranslationTarget(target_url=target_sas_url, language=target_language)]
             )
-            logger.info(f"📖 Translating from {source_language} to {target_language}")
+            logger.info(f"Translating from {source_language} to {target_language}")
         else:
             translation_input = DocumentTranslationInput(
                 source_url=source_sas_url,
                 targets=[TranslationTarget(target_url=target_sas_url, language=target_language)]
             )
-            logger.info(f"📖 Translating with auto-detection to {target_language}")
+            logger.info(f"Translating with auto-detection to {target_language}")
 
         self.client.begin_translation(inputs=[translation_input]).wait()
 
@@ -234,11 +234,11 @@ class TranslationService:
 
         self.azure_service.download_files(target_container, translated_folder)
 
-        # ✅ Preserve original filename
+        # Preserve original filename
         translated_filename = os.path.basename(original_file.filepath)  # Keep original filename
         translated_filepath = os.path.join(translated_folder, translated_filename)
 
-        # ✅ Update TranslationFile Model
+        # Update TranslationFile Model
         TranslationFile.objects.create(
             run=translation_run,  # Assigning the correct TranslationRun
             original_file=original_file,
@@ -301,17 +301,17 @@ def load_translation_languages():
         ("Xhosa", "xh"), ("Yoruba", "yo"), ("Yucatec Maya", "yua"), ("Zulu", "zu")
     ]
 
-    # ✅ Ensure database is accessible before executing query
+    # Ensure database is accessible before executing query
     try:
         if TranslationLanguage.objects.exists():
-            logger.info("✅ Translation languages already exist. Skipping population.")
+            logger.info("Translation languages already exist. Skipping population.")
             return
 
         for name, code in language_data:
             TranslationLanguage.objects.get_or_create(name=name, code=code)
 
-        logger.info("✅ Translation languages successfully populated.")
+        logger.info("Translation languages successfully populated.")
 
     except Exception as e:
-        logger.error(f"❌ Error populating translation languages: {e}")
+        logger.error(f"Error populating translation languages: {e}")
 

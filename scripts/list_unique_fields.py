@@ -14,14 +14,14 @@ from django.apps import apps
 
 django.setup()
 
-print("\n📌 Models with UNIQUE constraints in aiDocuMines:\n")
+print("\nModels with UNIQUE constraints in aiDocuMines:\n")
 
 for model in apps.get_models():
     unique_fields = [f.name for f in model._meta.fields if getattr(f, 'unique', False)]
     unique_together = getattr(model._meta, 'unique_together', None)
 
     if unique_fields or unique_together:
-        print(f"🔹 Model: {model.__module__}.{model.__name__}")
+        print(f"Model: {model.__module__}.{model.__name__}")
         if unique_fields:
             print(f"   • unique=True fields: {unique_fields}")
         if unique_together:

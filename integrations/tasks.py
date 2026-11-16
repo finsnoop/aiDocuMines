@@ -24,7 +24,7 @@ def provision_nextcloud_user(self, user_id):
     User = get_user_model()
     try:
         user = User.objects.get(id=user_id)
-        print(f"🚀 [provision_nextcloud_user] Starting provisioning for user {user.id}")
+        print(f"[provision_nextcloud_user] Starting provisioning for user {user.id}")
 
         get_or_create_nextcloud_oidc_user(user)
 
@@ -37,10 +37,10 @@ def provision_nextcloud_user(self, user_id):
             status="created",
             details=f"Auto-provisioning initiated for user {user.id}"
         )
-        print(f"✅ [provision_nextcloud_user] Provisioning queued for {user.email}")
+        print(f"[provision_nextcloud_user] Provisioning queued for {user.email}")
 
     except User.DoesNotExist:
-        print(f"❌ [provision_nextcloud_user] User {user_id} does not exist")
+        print(f"[provision_nextcloud_user] User {user_id} does not exist")
     except Exception as e:
         try:
             IntegrationLog.objects.create(
@@ -51,7 +51,7 @@ def provision_nextcloud_user(self, user_id):
             )
         except Exception:
             pass
-        print(f"❌ [provision_nextcloud_user] ERROR: {str(e)}")
+        print(f"[provision_nextcloud_user] ERROR: {str(e)}")
 
 
 @shared_task(bind=True, max_retries=3, default_retry_delay=60)
@@ -63,7 +63,7 @@ def generate_nextcloud_url_async(self, user_id):
     User = get_user_model()
     try:
         user = User.objects.get(id=user_id)
-        print(f"🚀 [generate_nextcloud_url_async] Starting for user ID {user.id}")
+        print(f"[generate_nextcloud_url_async] Starting for user ID {user.id}")
 
         get_or_create_nextcloud_oidc_user(user)
 
@@ -81,7 +81,7 @@ def generate_nextcloud_url_async(self, user_id):
             status="autologin_ready",
             details=f"Autologin URL generated successfully for user {user.id}"
         )
-        print(f"✅ [generate_nextcloud_url_async] URL generated: {url}")
+        print(f"[generate_nextcloud_url_async] URL generated: {url}")
         return url
 
     except User.DoesNotExist:
@@ -103,7 +103,7 @@ def generate_nextcloud_url_async(self, user_id):
             )
         except Exception:
             pass
-        print(f"❌ [generate_nextcloud_url_async] ERROR: {str(e)}")
+        print(f"[generate_nextcloud_url_async] ERROR: {str(e)}")
         raise self.retry(exc=e)
 
 
@@ -118,18 +118,18 @@ def sync_user_to_nextcloud_host(self, user_id, client_id):
         user = User.objects.get(id=user_id)
         username = f"user_{user.id}"
 
-        print(f"📦 [sync_user_to_nextcloud_host] Starting rsync for user {username}")
+        print(f"[sync_user_to_nextcloud_host] Starting rsync for user {username}")
 
         NC_CONTAINER_NAME = os.getenv("NEXTCLOUD_DOCKER_CONTAINER", "srv-captain--nextcloud")
         AIDOCUMINES_DATA = os.getenv("AIDOCUMINES_DATA", "/home/aidocumines/Apps/aiDocuMines/media/uploads")
 
         user_data_path = os.path.join(AIDOCUMINES_DATA, client_id, str(user.id))
-        print(f"📁 [sync_user_to_nextcloud_host] Checking data path: {user_data_path}")
+        print(f"[sync_user_to_nextcloud_host] Checking data path: {user_data_path}")
 
         if not os.path.exists(user_data_path):
             raise Exception(f"[Host] No data found for user at {user_data_path}")
 
-        print(f"✅ [sync_user_to_nextcloud_host] Data folder exists")
+        print(f"[sync_user_to_nextcloud_host] Data folder exists")
         for item in os.listdir(user_data_path):
             print(f"   - {item}")
 
@@ -140,18 +140,18 @@ def sync_user_to_nextcloud_host(self, user_id, client_id):
         NC_DATA_HOST = next((m["Source"] for m in mounts if m["Destination"] == "/var/www/html"), None)
 
         if not NC_DATA_HOST:
-            raise Exception("❌ Could not determine Nextcloud volume host path.")
+            raise Exception("Could not determine Nextcloud volume host path.")
 
-        print(f"🗂️  Host-mounted Nextcloud data dir: {NC_DATA_HOST}")
+        print(f"Host-mounted Nextcloud data dir: {NC_DATA_HOST}")
 
         nextcloud_user_files = os.path.join(NC_DATA_HOST, "data", username, "files")
         os.makedirs(nextcloud_user_files, exist_ok=True)
 
         sync_cmd = ["rsync", "-a", "--delete", f"{user_data_path}/", f"{nextcloud_user_files}/"]
-        print(f"📤 Running rsync: {' '.join(sync_cmd)}")
+        print(f"Running rsync: {' '.join(sync_cmd)}")
         subprocess.run(sync_cmd, check=True)
 
-        print(f"🔄 Running OCC files:scan for {username}")
+        print(f"Running OCC files:scan for {username}")
         subprocess.run([
             "docker", "exec", "-u", "www-data", NC_CONTAINER_NAME,
             "php", "occ", "files:scan", username
@@ -163,7 +163,7 @@ def sync_user_to_nextcloud_host(self, user_id, client_id):
             status="success",
             details="Folder sync complete."
         )
-        print(f"🎉 [sync_user_to_nextcloud_host] Folder synced and scanned for {username}")
+        print(f"[sync_user_to_nextcloud_host] Folder synced and scanned for {username}")
 
     except Exception as e:
         try:
@@ -175,6 +175,6 @@ def sync_user_to_nextcloud_host(self, user_id, client_id):
             )
         except Exception:
             pass
-        print(f"❌ [sync_user_to_nextcloud_host] ERROR: {str(e)}")
+        print(f"[sync_user_to_nextcloud_host] ERROR: {str(e)}")
         raise self.retry(exc=e)
 

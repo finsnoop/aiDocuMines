@@ -1,6 +1,6 @@
 from django.db import models
 from django.contrib.auth.models import AbstractBaseUser, PermissionsMixin, BaseUserManager
-from core.models import File  # ✅ We use File model for uploaded documents
+from core.models import File  # We use File model for uploaded documents
 from django.contrib.postgres.fields import JSONField
 
 # ------------------------------------------
@@ -146,7 +146,7 @@ class TaskStatus(models.Model):
         return f"{self.task_type} for {self.document.filename} [{self.status}]"
 
 # ------------------------------------------
-# 📝 Proposal Suggestion Model (OLD)
+# Proposal Suggestion Model (OLD)
 # ------------------------------------------
 class ProposalSuggestion(models.Model):
     persona = models.ForeignKey(ClientPersona, on_delete=models.CASCADE, related_name='proposal_suggestions')
@@ -159,7 +159,7 @@ class ProposalSuggestion(models.Model):
 
 
 # ------------------------------------------
-# 💬 Chat History for Suggested Solutions
+# Chat History for Suggested Solutions
 # ------------------------------------------
 class SolutionChat(models.Model):
     solution = models.ForeignKey(SuggestedSolution, on_delete=models.CASCADE, related_name='chats')
@@ -173,7 +173,7 @@ class SolutionChat(models.Model):
 
 
 # ------------------------------------------
-# 🔔 Notification Model
+# Notification Model
 # ------------------------------------------
 class Notification(models.Model):
     user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='notifications')
@@ -192,7 +192,7 @@ class Notification(models.Model):
     updated_at = models.DateTimeField(auto_now=True)  # Optional but helpful
 
     def __str__(self):
-        return f"🔔 {self.title} for {self.user.email}"
+        return f"{self.title} for {self.user.email}"
 
     class Meta:
         ordering = ['-created_at']
@@ -220,7 +220,7 @@ class IncomingRFP(models.Model):
 
     status = models.CharField(max_length=50, choices=STATUS_CHOICES, default='uploaded')
     
-    draft = models.TextField(blank=True, null=True)  # ✅ Add this field
+    draft = models.TextField(blank=True, null=True)  # Add this field
 
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)

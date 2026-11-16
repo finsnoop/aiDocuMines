@@ -116,17 +116,17 @@ def perform_ocr_on_pdf(file_path):
 
                     # safety check
                     if image.size[0] * image.size[1] > 178_956_970:
-                        print(f"[⚠️ Skipping page {page_number + 1}] Too large, possible decompression bomb")
+                        print(f"[Skipping page {page_number + 1}] Too large, possible decompression bomb")
                         continue
                     if image.size[0] > 2000 or image.size[1] > 2000:
-                        print(f"[⚠️ Resizing large image {image.size}]")
+                        print(f"[Resizing large image {image.size}]")
                         image = image.resize((int(image.width / 2), int(image.height / 2)))
 
                     text = pytesseract.image_to_string(image)
                     extracted_text.append(text)
                     os.remove(img_temp.name)
             except Exception as page_err:
-                print(f"[⚠️ Skipping page {page_number + 1}] Reason: {page_err}")
+                print(f"[Skipping page {page_number + 1}] Reason: {page_err}")
                 continue
 
         full_text = "\n".join(extracted_text).strip()
@@ -139,7 +139,7 @@ def perform_ocr_on_pdf(file_path):
         return full_text
 
     except Exception as e:
-        print(f"[❌ OCR ERROR] Failed completely: {e}")
+        print(f"[OCR ERROR] Failed completely: {e}")
         return ""
 
 

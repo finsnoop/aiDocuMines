@@ -15,7 +15,7 @@ class RunSerializer(serializers.ModelSerializer):
     class Meta:
         model = Run
         fields = [
-            "run_id",  # ✅ Fixed reference from "id" to "run_id"
+            "run_id",  # Fixed reference from "id" to "run_id"
             "user",
             "status",
             "unique_code",
@@ -37,8 +37,8 @@ class RunSerializer(serializers.ModelSerializer):
 class FileSerializer(serializers.ModelSerializer):
     """Serializer for File model"""
 
-    run_id = serializers.UUIDField(source="run.run_id", read_only=True)  # ✅ Referencing `run_id`
-    storage = serializers.SerializerMethodField()  # ✅ Include related storage information
+    run_id = serializers.UUIDField(source="run.run_id", read_only=True)  # Referencing `run_id`
+    storage = serializers.SerializerMethodField()  # Include related storage information
 
     # Add these fields with null-safe defaults
     extension = serializers.SerializerMethodField()
@@ -101,7 +101,7 @@ class FileSerializer(serializers.ModelSerializer):
 class FileUploadSerializer(serializers.Serializer):
     """Serializer for file uploads"""
 
-    run_id = serializers.UUIDField()  # ✅ Ensuring run_id is treated as a UUID
+    run_id = serializers.UUIDField()  # Ensuring run_id is treated as a UUID
     files = serializers.ListField(
         child=serializers.FileField(),
         required=True
@@ -117,7 +117,7 @@ class FileUploadSerializer(serializers.Serializer):
 class StorageSerializer(serializers.ModelSerializer):
     """Serializer for Storage model"""
 
-    run_id = serializers.UUIDField(source="run.run_id", read_only=True)  # ✅ Ensures run_id compatibility
+    run_id = serializers.UUIDField(source="run.run_id", read_only=True)  # Ensures run_id compatibility
     upload_storage_location = serializers.SerializerMethodField()
     output_storage_location = serializers.SerializerMethodField()
 

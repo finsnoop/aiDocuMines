@@ -55,7 +55,7 @@ urlpatterns = [
     # Include document translation app routes
     path("api/v1/translation/", include("document_translation.urls")),
 
-    # Include document OCR app routes ✅
+    # Include document OCR app routes 
     path("api/v1/ocr/", include("document_ocr.urls")),
     
     # Include document anonymizer app routes
@@ -64,7 +64,7 @@ urlpatterns = [
     # Include file monitoring app routes
     path("api/v1/file-monitor/", include("file_monitor.urls")),
 
-    # ✅ Include file system app routes
+    # Include file system app routes
     path("api/v1/file-system/", include("file_system.urls")),
 
     # Include authentication app routes
@@ -76,11 +76,11 @@ urlpatterns = [
     # Include document operations app routes
     path("api/v1/documents/", include("document_operations.urls")),
 
-    # 🔍 NEW: semantic search endpoints
+    # NEW: semantic search endpoints
     path("api/v1/document-search/", include("document_search.urls")),
 
     # Document Structure
-    path("api/v1/document-structures/", include("document_structures.urls")),   # ✅ ADD THIS LINE
+    path("api/v1/document-structures/", include("document_structures.urls")),   # ADD THIS LINE
 
     # Document Elasticsearch
     path("api/v1/es/", include("file_elasticsearch.urls")),
@@ -89,7 +89,7 @@ urlpatterns = [
     path("api/v1/insights/", include("platform_data_insights.urls")),
 
 
-    # 🔥 Add this line FIRST
+    # Add this line FIRST
     path("o/.well-known/openid-configuration", CustomOIDCMetadataView.as_view(), name="custom-oidc-metadata"),
 
     # OAuth2 Endpoints

@@ -54,7 +54,7 @@ from .models import FileAccessEntry
 from django.contrib.auth import get_user_model
 from document_operations.utils import set_password_protection
 from document_operations.models import FileAuditLog
-from rest_framework.parsers import JSONParser, MultiPartParser, FormParser  # 🔁 Import this at the top
+from rest_framework.parsers import JSONParser, MultiPartParser, FormParser  # Import this at the top
 
 User = get_user_model()
 

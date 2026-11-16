@@ -22,7 +22,7 @@ from core.access import get_file_for_user, get_scoped_or_404, get_run_for_user, 
 
 logger = logging.getLogger(__name__)
 
-# ✅ Define Swagger parameters
+# Define Swagger parameters
 client_id_param = openapi.Parameter(
     "X-Client-ID", openapi.IN_HEADER, type=openapi.TYPE_STRING, required=True,
     description="Client ID for authentication."
@@ -68,20 +68,20 @@ class TranslationTaskStatusView(APIView):
 
         user = request.user
         if not user:
-            logger.error(f"❌ Invalid client ID: {client_id}")
+            logger.error(f"Invalid client ID: {client_id}")
             return Response({"error": "Invalid client ID"}, status=403)
 
         run_instance = None
         file_instance = None
 
-        # ✅ Prefer run_id
+        # Prefer run_id
         if run_id:
             try:
                 run_instance = get_run_for_user(request.user, TranslationRun, run_id)
             except TranslationRun.DoesNotExist:
                 return Response({"error": "No translation process found for the provided run_id"}, status=404)
 
-        # ✅ Resolve via file_id if needed
+        # Resolve via file_id if needed
         if not run_instance and file_id:
             file_instance = get_file_for_user(request.user, file_id)
             tf_for_file = scope_by_file(request.user, TranslationFile.objects.filter(original_file=file_instance), 'original_file').order_by("-created_at").first()
@@ -91,7 +91,7 @@ class TranslationTaskStatusView(APIView):
         if not run_instance:
             return Response({"error": "No translation process found for the provided parameters"}, status=404)
 
-        # ✅ Prefer the translation file matching file_id if provided
+        # Prefer the translation file matching file_id if provided
         if file_instance:
             translation_file = TranslationFile.objects.filter(
                 run=run_instance, original_file=file_instance
@@ -119,12 +119,12 @@ class TranslationTaskStatusView(APIView):
             "updated_at": translation_file.updated_at.strftime("%Y-%m-%d %H:%M:%S"),
         }
 
-        # 🔹 ONLY translated files for THIS original file (all languages)
+        # ONLY translated files for THIS original file (all languages)
         qs = TranslationFile.objects.filter(
             original_file=translation_file.original_file
         ).select_related("run").order_by("-created_at")
 
-        # 👉 If you want only the current run’s language, use:
+        # If you want only the current run’s language, use:
         # qs = qs.filter(run__to_language=run_instance.to_language)
 
         registered_outputs = []
@@ -182,7 +182,7 @@ class TranslationFileDownloadView(APIView):
     """
 
     authentication_classes = [OAuth2Authentication]
-    permission_classes = [TokenHasReadWriteScope]  # ✅ Require OAuth2 authentication
+    permission_classes = [TokenHasReadWriteScope]  # Require OAuth2 authentication
 
     @swagger_auto_schema(
         operation_description="Download the translated file using `file_id` and optional `language` filter.",
@@ -203,31 +203,31 @@ class TranslationFileDownloadView(APIView):
         client_secret = request.headers.get("X-Client-Secret")
         file_id = request.query_params.get("file_id")
         file_type = request.query_params.get("file_type")
-        language = request.query_params.get("language")  # ✅ Required parameter to fetch specific language translation
+        language = request.query_params.get("language")  # Required parameter to fetch specific language translation
 
         if not file_id or not file_type or not language:
             return Response({"error": "Missing required parameters"}, status=400)
 
-        # ✅ Validate client ID and retrieve user
+        # Validate client ID and retrieve user
         user = request.user
         if not user:
             return Response({"error": "Invalid client ID"}, status=403)
 
-        # ✅ Fetch the translation file filtered by `file_id` & `language`
+        # Fetch the translation file filtered by `file_id` & `language`
         translation_file = TranslationFile.objects.filter(
             original_file__id=file_id,
-            run__to_language=language  # ✅ Ensure the translation matches the requested language
+            run__to_language=language  # Ensure the translation matches the requested language
         ).first()
 
         if not translation_file:
             return Response({"error": f"No translated file found for file_id={file_id} in language={language}"}, status=404)
 
-        # ✅ Check if the user owns this file
+        # Check if the user owns this file
         if translation_file.original_file.user != user:
-            logger.error(f"❌ Unauthorized access attempt: {user.username} tried to access file {file_id}")
+            logger.error(f"Unauthorized access attempt: {user.username} tried to access file {file_id}")
             return Response({"error": "Unauthorized"}, status=403)
 
-        # ✅ Determine the file path
+        # Determine the file path
         if file_type == "original":
             file_path = translation_file.original_file.filepath
         elif file_type == "translated":
@@ -235,10 +235,10 @@ class TranslationFileDownloadView(APIView):
         else:
             return Response({"error": "Invalid file_type. Use 'original' or 'translated'."}, status=400)
 
-        # ✅ Ensure the file exists before attempting to serve it
+        # Ensure the file exists before attempting to serve it
         if not file_path or not os.path.exists(file_path):
-            logger.error(f"❌ File not found: {file_path}")
+            logger.error(f"File not found: {file_path}")
             return Response({"error": "File not found."}, status=404)
 
-        logger.info(f"✅ Serving file: {file_path}")
+        logger.info(f"Serving file: {file_path}")
         return FileResponse(open(file_path, "rb"), as_attachment=True)

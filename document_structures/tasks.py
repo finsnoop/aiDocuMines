@@ -81,12 +81,12 @@ def run_document_partition_task(
                         "store_embeddings": store_embeddings
                     }
                 )
-                logger.info(f"✅ Generated document structure report: {report_info.get('filename')}")
+                logger.info(f"Generated document structure report: {report_info.get('filename')}")
             except Exception as report_error:
                 logger.warning(f"Failed to generate report: {report_error}")
 
     except Exception as e:
-        logger.error(f"🔥 Error running partition task: {e}", exc_info=True)
+        logger.error(f"Error running partition task: {e}", exc_info=True)
         traceback.print_exc()
         ds_run.status = "Failed"
         ds_run.error_message = str(e)
@@ -117,10 +117,10 @@ def run_document_comparison_task(self, comparison_id: str):
         comparison.status = "Completed"
         comparison.save()
 
-        logger.warning(f"✅ Comparison {comparison.id} complete.")
+        logger.warning(f"Comparison {comparison.id} complete.")
 
     except Exception as e:
-        logger.error(f"🔥 Error running comparison task: {e}", exc_info=True)
+        logger.error(f"Error running comparison task: {e}", exc_info=True)
         comparison.status = "Failed"
         comparison.save()
         raise

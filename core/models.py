@@ -65,7 +65,7 @@ class Storage(models.Model):
     storage_id = models.AutoField(primary_key=True)
     user = models.ForeignKey(User, on_delete=models.CASCADE, related_name="storages", null=True)
 
-    # 👇 Generic link to any run-like model: Run, TranslationRun, OCRRun, etc.
+    # Generic link to any run-like model: Run, TranslationRun, OCRRun, etc.
     content_type = models.ForeignKey(ContentType, on_delete=models.CASCADE, null=True)
     object_id = models.UUIDField(null=True)  # Assumes your runs use UUIDField
     run_object = GenericForeignKey("content_type", "object_id")
@@ -83,9 +83,9 @@ class File(models.Model):
     """
     id = models.AutoField(primary_key=True)
     filename = models.CharField(max_length=500)
-    filepath = models.CharField(max_length=1024)  # ✅ Store absolute file path
-    file_size = models.BigIntegerField(default=0)  # ✅ Store file size in bytes
-    file_type = models.CharField(max_length=255, blank=True, null=True)  # ✅ Increased max_length to 255
+    filepath = models.CharField(max_length=1024)  # Store absolute file path
+    file_size = models.BigIntegerField(default=0)  # Store file size in bytes
+    file_type = models.CharField(max_length=255, blank=True, null=True)  # Increased max_length to 255
     extension = models.CharField(max_length=10, null=True, blank=True)
     
     # md5_hash = models.CharField(max_length=32, unique=True, null=True, blank=True, help_text="MD5 checksum for duplicate detection")
@@ -128,7 +128,7 @@ class File(models.Model):
     user = models.ForeignKey(User, on_delete=models.CASCADE, related_name="files")
     project_id = models.CharField(max_length=255, db_index=True, blank=False)
     service_id = models.CharField(max_length=255, db_index=True, blank=False)
-    storage = models.ForeignKey(Storage, on_delete=models.CASCADE, related_name="files", null=True, blank=True)  # ✅ Ensure Storage is referenced correctly
+    storage = models.ForeignKey(Storage, on_delete=models.CASCADE, related_name="files", null=True, blank=True)  # Ensure Storage is referenced correctly
     created_at = models.DateTimeField(auto_now_add=True, db_index=True)
     updated_at = models.DateTimeField(auto_now=True)
     document_type = models.CharField(max_length=255, null=True, blank=True, help_text="Predicted document type, e.g. Contract, Financial Report, etc.")
@@ -257,7 +257,7 @@ class EndpointResponseTable(models.Model):
     run = models.ForeignKey(Run, on_delete=models.CASCADE, related_name="endpoint_responses")
     client = models.ForeignKey(User, on_delete=models.CASCADE, related_name="endpoint_responses")
     endpoint_name = models.CharField(max_length=255, db_index=True)  # e.g., "FileUploadView"
-    response_data = models.JSONField(null=True, blank=True)  # ✅ Store response as JSON
+    response_data = models.JSONField(null=True, blank=True)  # Store response as JSON
     status = models.CharField(
         max_length=50,
         choices=[

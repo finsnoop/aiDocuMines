@@ -26,18 +26,18 @@ def process_metadata(self, file_id, run_id):
         file_instance = File.objects.get(id=file_id)
         run = Run.objects.get(run_id=run_id)
 
-        logger.warning(f"🔍 **Processing metadata for file_id: {file_id}, run_id: {run_id}**")
+        logger.warning(f"**Processing metadata for file_id: {file_id}, run_id: {run_id}**")
 
-        # ✅ Extract metadata
+        # Extract metadata
         metadata_data = extract_metadata(file_instance)
 
         if not metadata_data:
-            logger.error(f"❌ Metadata extraction failed for file_id {file_id}")
+            logger.error(f"Metadata extraction failed for file_id {file_id}")
             return {"error": "Metadata extraction failed."}
 
-        logger.info(f"✅ Extracted metadata data: {metadata_data}")
+        logger.info(f"Extracted metadata data: {metadata_data}")
 
-        # 🔐 Normalize all boolean fields
+        # Normalize all boolean fields
         boolean_fields = [
             "is_encrypted", "encrypted", "optimized", "tagged",
             "userproperties", "suspects", "custom_metadata", "metadata_stream"
@@ -47,7 +47,7 @@ def process_metadata(self, file_id, run_id):
                 metadata_data[key] = str_to_bool(metadata_data[key])
 
         
-        # ✅ Convert Dates to Django `datetime` format (Ensures Correct Storage)
+        # Convert Dates to Django `datetime` format (Ensures Correct Storage)
         #def parse_date(date_str):
         #    """Converts a string date into a Django-aware datetime object."""
         #    if not date_str:
@@ -56,7 +56,7 @@ def process_metadata(self, file_id, run_id):
         #        dt = datetime.fromisoformat(date_str)  # Convert from ISO 8601
         #        return make_aware(dt)  # Ensure it's timezone-aware
         #    except ValueError:
-        #        logger.warning(f"⚠️ Failed to parse date: {date_str}")
+        #        logger.warning(f"Failed to parse date: {date_str}")
         #        return None
         
 
@@ -88,7 +88,7 @@ def process_metadata(self, file_id, run_id):
             except Exception:
                 pass
 
-            logger.warning(f"⚠️ Failed to parse date: {date_str}")
+            logger.warning(f"Failed to parse date: {date_str}")
             return None
 
 
@@ -96,11 +96,11 @@ def process_metadata(self, file_id, run_id):
         creationdate = parse_date(metadata_data.get("creationdate", None))
         moddate = parse_date(metadata_data.get("moddate", None))
 
-        # ✅ Ensure Metadata is saved correctly
+        # Ensure Metadata is saved correctly
         metadata, created = Metadata.objects.update_or_create(
             file=file_instance,
             defaults = {
-                "storage": file_instance.storage,  # ✅ Link Storage
+                "storage": file_instance.storage,  # Link Storage
                 "file_size": metadata_data.get("file_size", None),
                 "format": metadata_data.get("format", None),
                 "md5_hash": metadata_data.get("md5_hash", None),
@@ -133,11 +133,11 @@ def process_metadata(self, file_id, run_id):
                 "word_count": metadata_data.get("word_count", 0),
             }
         )
-        logger.info(f"✅ Metadata saved: {metadata}")
+        logger.info(f"Metadata saved: {metadata}")
 
 
 
-        # ✅ Save task result in EndpointResponseTable
+        # Save task result in EndpointResponseTable
         EndpointResponseTable.objects.update_or_create(
             run=run,
             client=file_instance.user,
@@ -159,7 +159,7 @@ def process_metadata(self, file_id, run_id):
         )
 
 
-        # ✅ Update run status
+        # Update run status
         run.status = "Completed"
         run.save(update_fields=["status"])
 
@@ -169,13 +169,13 @@ def process_metadata(self, file_id, run_id):
         }
 
     except File.DoesNotExist:
-        logger.error("❌ File does not exist.")
+        logger.error("File does not exist.")
         return {"error": "File does not exist."}
     except Run.DoesNotExist:
-        logger.error(f"❌ Run ID {run_id} does not exist.")
+        logger.error(f"Run ID {run_id} does not exist.")
         return {"error": f"Run ID {run_id} does not exist."}
     except Exception as e:
-        logger.error(f"❌ Metadata extraction failed: {str(e)}")
+        logger.error(f"Metadata extraction failed: {str(e)}")
         return {"error": str(e)}
 
 
@@ -192,22 +192,22 @@ def process_bulk_metadata(self, run_id):
         files = File.objects.filter(run=run)
 
         if not files.exists():
-            logger.warning(f"⚠️ No files found for run_id: {run_id}")
+            logger.warning(f"No files found for run_id: {run_id}")
             return {"warning": "No files found for this run_id."}
 
-        logger.info(f"🚀 Triggering bulk metadata extraction for run_id: {run_id} with {files.count()} files")
+        logger.info(f"Triggering bulk metadata extraction for run_id: {run_id} with {files.count()} files")
 
-        # 🔁 Launch a group of tasks concurrently
+        # Launch a group of tasks concurrently
         metadata_tasks = group(process_metadata.s(file.id, run_id) for file in files)
         result = metadata_tasks.apply_async()
 
         return {"message": "Bulk metadata extraction triggered.", "task_ids": result.id}
 
     except Run.DoesNotExist:
-        logger.error(f"❌ Run ID {run_id} not found for bulk metadata processing.")
+        logger.error(f"Run ID {run_id} not found for bulk metadata processing.")
         return {"error": f"Run ID {run_id} not found."}
     except Exception as e:
-        logger.error(f"❌ Bulk metadata processing failed: {str(e)}")
+        logger.error(f"Bulk metadata processing failed: {str(e)}")
         return {"error": str(e)}
 
 
@@ -220,18 +220,18 @@ def process_file(file_id):
         file_instance = File.objects.get(id=file_id)
         run = file_instance.run
 
-        # ✅ Get client_id from OAuth2 Application model
+        # Get client_id from OAuth2 Application model
         application = Application.objects.get(user=run.user)
-        client_id = application.client_id  # ✅ Correct way to get client_id
+        client_id = application.client_id  # Correct way to get client_id
 
-        # ✅ Step 1: Compute MD5 Hash
+        # Step 1: Compute MD5 Hash
         file_hash = asyncio.run(calculate_md5(file_instance.filepath))
 
-        # ✅ Step 2: Update File Instance with Hash
+        # Step 2: Update File Instance with Hash
         file_instance.md5_hash = file_hash
         file_instance.save(update_fields=["md5_hash"])
 
-        # ✅ Step 3: Store or update response in EndpointResponseTable
+        # Step 3: Store or update response in EndpointResponseTable
         endpoint_response, created = EndpointResponseTable.objects.update_or_create(
             run=run,
             endpoint_name="FileUploadView",
@@ -254,10 +254,10 @@ def process_file(file_id):
             }
         )
 
-        logger.info(f"✅ File processing completed for file_id: {file_id}")
+        logger.info(f"File processing completed for file_id: {file_id}")
 
     except Exception as e:
-        # ✅ Handle failures and store error message
+        # Handle failures and store error message
         endpoint_response, created = EndpointResponseTable.objects.update_or_create(
             run=run,
             endpoint_name="FileUploadView",
@@ -266,7 +266,7 @@ def process_file(file_id):
                 "response_data": {"error": str(e)}
             }
         )
-        logger.error(f"❌ File processing failed for file_id: {file_id} - Error: {str(e)}")
+        logger.error(f"File processing failed for file_id: {file_id} - Error: {str(e)}")
 
 
 
@@ -300,10 +300,10 @@ def extract_document_text_task(file_id):
         file_obj.content = text or ""
         file_obj.status = "Completed"
         file_obj.save(update_fields=["content", "status", "updated_at"])
-        logger.info("✅ Text extraction completed for file_id: %s (%s chars)",
+        logger.info("Text extraction completed for file_id: %s (%s chars)",
                     file_id, len(file_obj.content))
     except Exception as exc:
-        logger.exception("❌ Text extraction failed for file_id %s: %s", file_id, exc)
+        logger.exception("Text extraction failed for file_id %s: %s", file_id, exc)
         File.objects.filter(id=file_id).update(status="Failed")
         raise
 
@@ -317,7 +317,7 @@ def extract_document_text_task(file_id):
     # try:
         # file_details = await save_uploaded_file(uploaded_file, user_id, project_id, service_id, run_id)
 # 
-        # ✅ Create File instance in DB
+        # Create File instance in DB
         # file_instance = File.objects.create(
             # filename=file_details["filename"],
             # filepath=file_details["file_path"],
@@ -331,7 +331,7 @@ def extract_document_text_task(file_id):
             # service_id=service_id,
         # )
 # 
-        # logger.info(f"✅ File upload completed: {file_instance.filename} - ID: {file_instance.id}")
+        # logger.info(f"File upload completed: {file_instance.filename} - ID: {file_instance.id}")
 # 
         # return {"message": "File uploaded successfully", "file_id": file_instance.id}
 # Import bulk processing tasks so Celery discovers them (file is tasks_bulk.py, not tasks.py)

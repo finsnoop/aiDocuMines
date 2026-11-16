@@ -16,5 +16,5 @@ with open(env_file) as f:
 with open(output_file, "w") as f:
     json.dump(env_vars, f, indent=2)
 
-print(f"✅ Converted {env_file} to {output_file}")
+print(f"Converted {env_file} to {output_file}")
 

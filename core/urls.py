@@ -45,7 +45,7 @@ from .views_matters import (MatterCreateView, MatterDetailView, MatterDocumentsV
 from .views_assistant import AssistantAskView, AssistantStatusView
 from .views_backup import BackupDetailView, BackupDownloadView, BackupListView, BackupRestoreView
 urlpatterns = [
-    # ✅ File Upload Endpoint
+    # File Upload Endpoint
     # Matters (a deal, case or request: documents, workflows, results and team)
     # Context assistant (chat with a file, folder, matter or project)
     path("assistant/ask/", AssistantAskView.as_view(), name="assistant-ask"),
@@ -68,47 +68,47 @@ urlpatterns = [
     path("projects/<uuid:matter_id>/jobs/<uuid:job_id>/download/", MatterJobDownloadView.as_view(), name="matter-job-download"),
     path("upload/", FileUploadView.as_view(), name="file-upload"),
 
-    # ✅ Task Status (Universal)
+    # Task Status (Universal)
     # path("task-status/", UniversalTaskStatusView.as_view(), name="universal-task-status"),
 
-    # ✅ Bulk Folder Upload Endpoint
-    path("upload/folder/", BulkFolderUploadView.as_view(), name="bulk-folder-upload"),  # ✅ New path
+    # Bulk Folder Upload Endpoint
+    path("upload/folder/", BulkFolderUploadView.as_view(), name="bulk-folder-upload"),  # New path
 
-    # ✅ Upload Processing Status
+    # Upload Processing Status
     path("upload-status/", UploadStatusView.as_view(), name="upload-status"),
 
-    # ✅ File Download
+    # File Download
     path("download/", FileDownloadView.as_view(), name="file-download"),
 
-    # ✅ Metadata for a Specific File
+    # Metadata for a Specific File
     path("metadata/", MetadataView.as_view(), name="metadata"),
 
-    # ✅ Metadata Extraction Trigger
+    # Metadata Extraction Trigger
     # path("metadata/extract/", MetadataExtractionTriggerView.as_view(), name="metadata-extract"),
 
-    # ✅ All Metadata Records
+    # All Metadata Records
     path("metadata-status/", MetadataStatusView.as_view(), name="metadata-status"),
     
     # For document interrogation
     path('files/<int:file_id>/associate-topic/', AssociateTopicToFileView.as_view(), name='associate-topic'),
 
 
-    # ✅ File Insight by file_id
+    # File Insight by file_id
     path("file-insight/", FileInsightView.as_view(), name="file-insight"),
 
-    # ✅ Run summary by run_id
+    # Run summary by run_id
     path("run-summary/", RunSummaryView.as_view(), name="run-summary"),
 
-    # ✅ Dashboard for logged-in client
+    # Dashboard for logged-in client
     path("client-summary/", ClientSummaryView.as_view(), name="client-summary"),
 
-    # ✅ File storage mapping
+    # File storage mapping
     path("storage-locations/", StorageLocationsView.as_view(), name="storage-locations"),
 
-    # ✅ Filter files by project_id
+    # Filter files by project_id
     path("project-summary/", ProjectSummaryView.as_view(), name="project-summary"),
 
-    # ✅ Filter files by service_id
+    # Filter files by service_id
     path("service-summary/", ServiceSummaryView.as_view(), name="service-summary"),
 
 

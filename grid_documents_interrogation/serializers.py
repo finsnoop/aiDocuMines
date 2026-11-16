@@ -49,7 +49,7 @@ class DatabaseConnectionSerializer(serializers.ModelSerializer):
         password = validated_data.pop("password", None)
         instance = DatabaseConnection(**validated_data)
         if password is not None:
-            instance.password = password  # 🔒 force trigger encryption
+            instance.password = password  # force trigger encryption
         instance.save()
         return instance
 

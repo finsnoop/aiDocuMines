@@ -1,5 +1,5 @@
 from django.db import models
-from core.models import File  # ✅ Reference to original File model from core
+from core.models import File  # Reference to original File model from core
 import uuid
 
 
@@ -17,16 +17,16 @@ class TranslationRun(models.Model):
     project_id = models.CharField(max_length=255, db_index=True)
     service_id = models.CharField(max_length=255, db_index=True)
     client = models.ForeignKey('custom_authentication.Client', on_delete=models.CASCADE, null=True, blank=True, related_name='translation_runs')
-    client_name = models.CharField(max_length=255, db_index=True)  # ✅ Include client_name for tracking
+    client_name = models.CharField(max_length=255, db_index=True)  # Include client_name for tracking
     from_language = models.CharField(max_length=10, db_index=True)
     to_language = models.CharField(max_length=10, db_index=True)
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='Pending', db_index=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
-    error_message = models.TextField(blank=True, null=True)  # ✅ Store errors if translation fails
+    error_message = models.TextField(blank=True, null=True)  # Store errors if translation fails
 
     def __str__(self):
-        return f"TranslationRun {self.id} - {self.status} ({self.from_language} ➝ {self.to_language})"
+        return f"TranslationRun {self.id} - {self.status} ({self.from_language} → {self.to_language})"
 
 
 class TranslationFile(models.Model):
@@ -42,22 +42,22 @@ class TranslationFile(models.Model):
         ('Failed', 'Failed')
     ]
 
-    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)  # ✅ Unique file ID
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)  # Unique file ID
     run = models.ForeignKey(
         TranslationRun, on_delete=models.CASCADE, related_name="translation_files", null=True, blank=True
-    )  # ✅ Run linked to this translation
-    original_file = models.ForeignKey(File, on_delete=models.CASCADE, related_name="translated_versions")  # ✅ Link to the original file
-    original_filepath = models.CharField(max_length=1024, blank=True, null=True)  # ✅ Store original file path
-    translated_filepath = models.CharField(max_length=1024, blank=True, null=True)  # ✅ Store translated file path
+    )  # Run linked to this translation
+    original_file = models.ForeignKey(File, on_delete=models.CASCADE, related_name="translated_versions")  # Link to the original file
+    original_filepath = models.CharField(max_length=1024, blank=True, null=True)  # Store original file path
+    translated_filepath = models.CharField(max_length=1024, blank=True, null=True)  # Store translated file path
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='Processing', db_index=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
-        unique_together = ("original_file", "run")  # ✅ Prevents duplicate translations per language
+        unique_together = ("original_file", "run")  # Prevents duplicate translations per language
 
     def __str__(self):
-        return f"Translated File {self.original_file.filename} - {self.status} ({self.run.from_language} ➝ {self.run.to_language})"
+        return f"Translated File {self.original_file.filename} - {self.status} ({self.run.from_language} → {self.run.to_language})"
 
 
 class TranslationLanguage(models.Model):
@@ -82,9 +82,9 @@ class TranslationStorage(models.Model):
     storage_id = models.AutoField(primary_key=True)
     run = models.ForeignKey(
         TranslationRun, on_delete=models.CASCADE, related_name="translation_storages", null=True, blank=True
-    )  # ✅ Ensures storage links to a run
-    upload_storage_location = models.CharField(max_length=1024, blank=True, null=True)  # ✅ Path for uploaded file
-    translated_storage_location = models.CharField(max_length=1024, blank=True, null=True)  # ✅ Path for translated file
+    )  # Ensures storage links to a run
+    upload_storage_location = models.CharField(max_length=1024, blank=True, null=True)  # Path for uploaded file
+    translated_storage_location = models.CharField(max_length=1024, blank=True, null=True)  # Path for translated file
     
     def __str__(self):
-        return f"Storage {self.storage_id} - {self.upload_storage_location} ➝ {self.translated_storage_location}"
+        return f"Storage {self.storage_id} - {self.upload_storage_location} → {self.translated_storage_location}"

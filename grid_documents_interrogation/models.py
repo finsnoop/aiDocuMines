@@ -51,7 +51,7 @@ class DatabaseConnection(models.Model):
         encoded_username = quote_plus(str(self.username))
         encoded_password = quote_plus(str(self.password))
 
-        print(f"[🔐 DB URI DEBUG] username={self.username} (encoded={encoded_username}) password={self.password} (encoded={encoded_password})")
+        print(f"[DB URI DEBUG] username={self.username} (encoded={encoded_username}) password={self.password} (encoded={encoded_password})")
 
         if self.database_type == "postgres":
             uri = f"postgresql://{encoded_username}:{encoded_password}@{self.host}:{self.port}/{self.database_name}"
@@ -66,9 +66,9 @@ class DatabaseConnection(models.Model):
         else:
             uri = None
 
-        print(f"[🔐 DEBUG] user={self.username}, password={self.password}, uri={uri}")
+        print(f"[DEBUG] user={self.username}, password={self.password}, uri={uri}")
 
-        print(f"[🔌 Final URI]: {uri}")
+        print(f"[Final URI]: {uri}")
         return uri
     '''
 

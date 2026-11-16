@@ -492,7 +492,7 @@ def generate_compliance_report_task(self, compliance_run_id, report_type, includ
 
 
 # ═══════════════════════════════════════════════════════════════
-# 🔧 HELPER FUNCTIONS FOR AI INTEGRATION
+# HELPER FUNCTIONS FOR AI INTEGRATION
 # ═══════════════════════════════════════════════════════════════
 
 def _basic_regulatory_analysis(file_obj, regulation_type):

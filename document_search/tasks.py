@@ -417,14 +417,14 @@ def classify_file(file_id: int, force: bool = False) -> dict:
     if file.document_type and not force:
         return {"status": "skipped", "document_type": file.document_type}
 
-    # 1️⃣ Direct text extraction
+    # 1⃣ Direct text extraction
     try:
         text = extract_text(file.filepath)
     except Exception as exc:
         LOGGER.warning("classify_file: extraction error for %s: %s", file_id, exc)
         text = ""
 
-    # 2️⃣ OCR fallback for scanned/image-only PDFs
+    # 2⃣ OCR fallback for scanned/image-only PDFs
     if not text.strip() and str(file.filepath).lower().endswith(".pdf"):
         text = _ocr_pdf_pages(file.filepath)
 
@@ -436,7 +436,7 @@ def classify_file(file_id: int, force: bool = False) -> dict:
             LOGGER.error("classify_file: embedding failed for %s: %s", file_id, exc)
             label = guess_type_from_filename(file.filename) or "Unknown"
     else:
-        # 3️⃣ Filename hints as last resort
+        # 3⃣ Filename hints as last resort
         label = guess_type_from_filename(file.filename) or "Unknown"
         if label == "Unknown":
             LOGGER.info("classify_file: no extractable text or hints for file %s", file_id)
@@ -690,7 +690,7 @@ def semantic_search_task(
                     }
                 )
                 response["report_file"] = report_info
-                LOGGER.info(f"✅ Generated semantic search report: {report_info.get('filename')}")
+                LOGGER.info(f"Generated semantic search report: {report_info.get('filename')}")
             except Exception as report_error:
                 LOGGER.warning(f"Failed to generate report: {report_error}")
                 response["report_error"] = str(report_error)

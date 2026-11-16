@@ -21,11 +21,11 @@ RESET = '\033[0m'
 
 
 def print_success(message):
-    print(f"{GREEN}✓ {message}{RESET}")
+    print(f"{GREEN}OK {message}{RESET}")
 
 
 def print_error(message):
-    print(f"{RED}✗ {message}{RESET}")
+    print(f"{RED}FAIL {message}{RESET}")
 
 
 def print_info(message):
@@ -33,7 +33,7 @@ def print_info(message):
 
 
 def print_warning(message):
-    print(f"{YELLOW}⚠ {message}{RESET}")
+    print(f"{YELLOW}{message}{RESET}")
 
 
 def test_endpoint(base_url, endpoint, token, method='GET', data=None, description=""):
@@ -226,9 +226,9 @@ def main():
     print(f"\nSuccess Rate: {success_rate:.1f}%")
 
     if results['failed'] == 0:
-        print_success("\n🎉 All tests passed!")
+        print_success("\nAll tests passed!")
     else:
-        print_warning(f"\n⚠️  {results['failed']} test(s) failed. Check the output above for details.")
+        print_warning(f"\n{results['failed']} test(s) failed. Check the output above for details.")
 
 
 if __name__ == '__main__':

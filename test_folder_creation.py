@@ -56,7 +56,7 @@ def test_get_or_create_folder_tree():
         current = current.parent
     print(f"  Full hierarchy: {' -> '.join(hierarchy)}")
     assert hierarchy == ["20250101", "translations", "Spanish"], f"Expected hierarchy mismatch: {hierarchy}"
-    print("  ✅ Test 1 PASSED\n")
+    print("  Test 1 PASSED\n")
     
     # Test case 2: Empty path parts
     path_parts_empty = [""]
@@ -67,7 +67,7 @@ def test_get_or_create_folder_tree():
     )
     print(f"  Result: folder={folder_empty}")
     if folder_empty:
-        print(f"  ⚠️ Warning: Created folder with empty name! id={folder_empty.id}, name='{folder_empty.name}'")
+        print(f"  Warning: Created folder with empty name! id={folder_empty.id}, name='{folder_empty.name}'")
     else:
         print("  Result is None as expected for empty path")
     print()
@@ -121,7 +121,7 @@ def test_register_file_folder_link():
                 folder_parts = os.path.dirname(relative_path).split("/")
                 print(f"  Expected folder_parts: {folder_parts}")
             else:
-                print(f"  ⚠️ Cannot parse path: split key '{split_key}' not in '{file_obj.filepath}'")
+                print(f"  Cannot parse path: split key '{split_key}' not in '{file_obj.filepath}'")
         print()
 
 

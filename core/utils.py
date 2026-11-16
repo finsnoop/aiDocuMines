@@ -65,7 +65,7 @@ def get_logical_file_path(file_obj):
     )
 
 
-# ✅ Allowed file types (MIME types)
+# Allowed file types (MIME types)
 ALLOWED_FILE_TYPES = {
     "pdf": "application/pdf",
     "docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
@@ -80,14 +80,14 @@ ALLOWED_FILE_TYPES = {
     "png": "image/png",
     "tiff": "image/tiff",
     "gif": "image/gif",
-    # ✅ Report/generated file types
+    # Report/generated file types
     "html": "text/html",
     "json": "application/json",
     "xml": "application/xml",
     "md": "text/markdown",
 }
 
-# ✅ Max file size (100MB limit)
+# Max file size (100MB limit)
 MAX_FILE_SIZE_MB = 100
 MAX_FILE_SIZE_BYTES = MAX_FILE_SIZE_MB * 1024 * 1024
 
@@ -139,11 +139,11 @@ def save_uploaded_file(uploaded_file, storage_path: str, custom_filename=None):
     :param custom_filename: Optional new filename (sanitized automatically)
     :return: File metadata dictionary
     """
-    # ✅ Validate file size
+    # Validate file size
     if uploaded_file.size > MAX_FILE_SIZE_BYTES:
         raise ValueError(f"File size exceeds {MAX_FILE_SIZE_MB}MB limit.")
 
-    # ✅ Validate file type
+    # Validate file type
     file_name = custom_filename or uploaded_file.name
     file_name = sanitize_filename(file_name)
     file_ext = file_name.split(".")[-1].lower()
@@ -155,7 +155,7 @@ def save_uploaded_file(uploaded_file, storage_path: str, custom_filename=None):
     os.makedirs(storage_path, exist_ok=True)
     file_path = os.path.join(storage_path, file_name)
 
-    # ✅ Save file in chunks
+    # Save file in chunks
     chunk_size = 64 * 1024  # 64KB chunks
     with open(file_path, "wb") as out_file:
         while True:
@@ -167,9 +167,9 @@ def save_uploaded_file(uploaded_file, storage_path: str, custom_filename=None):
     # Ensure all names in folder are sanitized (idempotent)
     rename_files_in_folder(storage_path)
 
-    # ✅ Calculate file hash
+    # Calculate file hash
     file_hash = calculate_md5(file_path)
-    logger.info("✅ File %s saved at %s", file_name, file_path)
+    logger.info("File %s saved at %s", file_name, file_path)
 
     return {
         "file_path": file_path,
@@ -200,7 +200,7 @@ def convert_pdf_date(raw_date: str | None):
     if not raw_date or not isinstance(raw_date, str):
         return None
 
-    # ✅ Handle PDF Standard Date Format
+    # Handle PDF Standard Date Format
     m = re.match(r"D:(\d{14})([+-]\d{2})'(\d{2})'", raw_date)
     if m:
         date_part = m.group(1)  # "YYYYMMDDHHMMSS"
@@ -214,7 +214,7 @@ def convert_pdf_date(raw_date: str | None):
         except Exception:
             return None
 
-    # ✅ Fallback: try parsing as generic date
+    # Fallback: try parsing as generic date
     try:
         # Avoid pulling in dateutil parser globally again
         from dateutil import parser as dateutil_parser  # local import
@@ -232,7 +232,7 @@ def extract_pdf_metadata(pdf_path: str) -> dict:
 
     metadata: dict[str, object] = {}
 
-    # ✅ PyMuPDF (fitz)
+    # PyMuPDF (fitz)
     try:
         doc = fitz.open(pdf_path)
         raw = doc.metadata or {}
@@ -257,7 +257,7 @@ def extract_pdf_metadata(pdf_path: str) -> dict:
     except Exception as e:
         metadata.setdefault("errors", []).append(f"PyMuPDF error: {e}")
 
-    # ✅ pypdf
+    # pypdf
     try:
         with open(pdf_path, "rb") as f:
             reader = pypdf.PdfReader(f)
@@ -278,7 +278,7 @@ def extract_pdf_metadata(pdf_path: str) -> dict:
     except Exception as e:
         metadata.setdefault("errors", []).append(f"pypdf error: {e}")
 
-    # ✅ pdfminer.six
+    # pdfminer.six
     try:
         with open(pdf_path, "rb") as f:
             p = PDFParser(f)
@@ -301,7 +301,7 @@ def extract_pdf_metadata(pdf_path: str) -> dict:
     except Exception as e:
         metadata.setdefault("errors", []).append(f"pdfminer error: {e}")
 
-    # ✅ pdfinfo (Poppler)
+    # pdfinfo (Poppler)
     try:
         out = subprocess.run(["pdfinfo", pdf_path], capture_output=True, text=True)
         lines = out.stdout.strip().splitlines()
@@ -409,7 +409,7 @@ def extract_docx_metadata(docx_path: str) -> dict:
         "optimized": False,
         "pdf_version": None,
         "word_count": None,
-        # 🔐 Always present to avoid KeyError downstream:
+        # Always present to avoid KeyError downstream:
         "custom_metadata": {},
     }
 
@@ -448,13 +448,13 @@ def extract_metadata(file_instance):
     Extracts metadata from a given File model instance.
     """
     file_path = file_instance.filepath
-    logger.info("🔍 Checking file path: %s", file_path)
+    logger.info("Checking file path: %s", file_path)
 
     if not Path(file_path).exists():
-        logger.error("❌ File does not exist: %s", file_path)
+        logger.error("File does not exist: %s", file_path)
         return None
 
-    logger.info("✅ File found! Extracting metadata for %s", file_path)
+    logger.info("File found! Extracting metadata for %s", file_path)
 
     base = {
         "file_id": file_instance.id,
@@ -505,25 +505,25 @@ def extract_metadata(file_instance):
         try:
             pdf_meta = extract_pdf_metadata(file_path)
             base.update(pdf_meta)
-            logger.info("✅ Extracted PDF metadata for file_id=%s", file_instance.id)
+            logger.info("Extracted PDF metadata for file_id=%s", file_instance.id)
         except Exception as e:
-            logger.error("❌ PDF metadata extraction failed: %s", e)
+            logger.error("PDF metadata extraction failed: %s", e)
 
     elif name_lc.endswith(".docx"):
         try:
             docx_meta = extract_docx_metadata(file_path)
             base.update(docx_meta)
-            logger.info("✅ Extracted DOCX metadata for file_id=%s", file_instance.id)
+            logger.info("Extracted DOCX metadata for file_id=%s", file_instance.id)
         except Exception as e:
-            logger.error("❌ DOCX metadata extraction failed: %s", e)
+            logger.error("DOCX metadata extraction failed: %s", e)
 
     elif name_lc.endswith(".txt"):
         try:
             with open(file_path, "r", encoding="utf-8", errors="ignore") as text_file:
                 base["word_count"] = sum(len(line.split()) for line in text_file)
-            logger.info("✅ Extracted TXT metadata for file_id=%s", file_instance.id)
+            logger.info("Extracted TXT metadata for file_id=%s", file_instance.id)
         except Exception as e:
-            logger.error("❌ TXT metadata extraction failed: %s", e)
+            logger.error("TXT metadata extraction failed: %s", e)
 
     else:
         # leave base as-is; format likely handled elsewhere
@@ -624,7 +624,7 @@ def register_generated_file(file_path, user, run, project_id, service_id, folder
     # ContentType for the given run instance
     content_type = ContentType.objects.get_for_model(run)
 
-    # ✅ Create Storage with generic linkage
+    # Create Storage with generic linkage
     storage = Storage.objects.create(
         user=user,
         content_type=content_type,
@@ -855,7 +855,7 @@ def generate_service_report_html(
     if input_files:
         input_files_html = """
         <div class="section">
-            <h2>📁 Input Files</h2>
+            <h2>Input Files</h2>
             <ul class="files-list">
         """
         for f in input_files:
@@ -869,7 +869,7 @@ def generate_service_report_html(
     if query:
         query_html = f"""
         <div class="section">
-            <h2>🔍 Query</h2>
+            <h2>Query</h2>
             <div class="query-box">{query}</div>
         </div>
         """
@@ -879,7 +879,7 @@ def generate_service_report_html(
     if additional_metadata:
         metadata_html = """
         <div class="section">
-            <h2>📊 Additional Metadata</h2>
+            <h2>Additional Metadata</h2>
             <div class="metadata">
         """
         for key, value in additional_metadata.items():
@@ -1116,13 +1116,13 @@ def generate_service_report_html(
 <body>
     <div class="container">
         <div class="header">
-            <h1>📋 {service_name}</h1>
+            <h1>{service_name}</h1>
             <div class="subtitle">Service Report - {vertical}</div>
             <div class="meta">
-                <span class="meta-item">📅 {timestamp}</span>
-                <span class="meta-item">🔧 {service_id}</span>
-                {f'<span class="meta-item">⏱️ {execution_time_seconds:.2f}s</span>' if execution_time_seconds else ''}
-                <span class="meta-item">📊 {result_count} results</span>
+                <span class="meta-item">{timestamp}</span>
+                <span class="meta-item">{service_id}</span>
+                {f'<span class="meta-item">{execution_time_seconds:.2f}s</span>' if execution_time_seconds else ''}
+                <span class="meta-item">{result_count} results</span>
             </div>
         </div>
 
@@ -1148,7 +1148,7 @@ def generate_service_report_html(
         {metadata_html}
 
         <div class="section">
-            <h2>📄 Results Data</h2>
+            <h2>Results Data</h2>
             <div class="results-data">
                 <pre>{formatted_response}</pre>
             </div>
@@ -1294,7 +1294,7 @@ def generate_and_register_service_report(
         folder_name=folder_name
     )
 
-    logger.info(f"✅ Generated and registered service report: {filename} in {project_id}/{service_id_folder}/{datetime_folder}/{folder_name}")
+    logger.info(f"Generated and registered service report: {filename} in {project_id}/{service_id_folder}/{datetime_folder}/{folder_name}")
 
     return {
         "file_id": registered_file.id,

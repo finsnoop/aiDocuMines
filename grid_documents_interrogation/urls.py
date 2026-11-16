@@ -14,14 +14,14 @@ router.register(r"queries", QueryViewSet, basename="queries")
 router.register(r"connections", DatabaseConnectionViewSet, basename="db-connections")
 
 urlpatterns = [
-    # 🧠 MAIN INTERROGATION ROUTES
+    # MAIN INTERROGATION ROUTES
     path("", include(router.urls)),
 
     # Model discovery (LiteLLM, Ollama, vLLM, OpenAI)
     path("proxy/models/", ProviderModelsView.as_view(), name="provider_models"),
     path("models/available/", AvailableModelsView.as_view(), name="available_models"),
 
-    # 🧪 DATABASE UTILITIES
+    # DATABASE UTILITIES
     path("db/test-connection/", test_db_connection, name="db_test_connection"),
     path("db/tables/", list_tables, name="db_list_tables"),
     path("db/columns/", list_columns, name="db_list_columns"),

@@ -24,7 +24,7 @@ if not os.path.exists(LOGS_DIR):
 FIELD_ENCRYPTION_KEY = os.getenv("FIELD_ENCRYPTION_KEY")
 
 
-# ✅ Explicitly tell dotenv where to find the file
+# Explicitly tell dotenv where to find the file
 if _LOAD_DOTENV:
     load_dotenv(dotenv_path=os.path.join(BASE_DIR, '.env'))
 

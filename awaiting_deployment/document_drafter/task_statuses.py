@@ -21,7 +21,7 @@ document_id_param = openapi.Parameter(
 
 class TaskStatusView(APIView):
     """
-    ✅ Retrieve the most recent task status for a given document
+    Retrieve the most recent task status for a given document
     """
     authentication_classes = [OAuth2Authentication]
     permission_classes = [TokenHasReadWriteScope]
@@ -45,7 +45,7 @@ class TaskStatusView(APIView):
 
 class AllTaskStatusesView(APIView):
     """
-    ✅ Retrieve all task statuses for the logged-in user
+    Retrieve all task statuses for the logged-in user
     """
     authentication_classes = [OAuth2Authentication]
     permission_classes = [TokenHasReadWriteScope]

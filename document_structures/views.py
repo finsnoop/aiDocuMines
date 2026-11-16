@@ -98,7 +98,7 @@ class SubmitDocumentPartitionAPIView(APIView):
 
         # Optional safety: delete old run if forcing
         if existing and force:
-            logger.warning(f"⚠️ Force rerun requested. Deleting previous run {existing.id}")
+            logger.warning(f"Force rerun requested. Deleting previous run {existing.id}")
             existing.delete()
 
         # Create new structure run

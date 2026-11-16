@@ -531,7 +531,7 @@ class OnlyOfficeCallbackView(APIView):
                     logger.exception("Failed to enqueue onlyoffice_fetch_and_save: %s", e)
                     # still ACK with error:0
 
-            # ✅ The ONLY response shape DS accepts as 'OK'
+            # The ONLY response shape DS accepts as 'OK'
             return Response({"error": 0}, status=200)
 
         except Exception as e:

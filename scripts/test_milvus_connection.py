@@ -53,14 +53,14 @@ LOG = logging.getLogger("milvus-health")
 def connect() -> None:
     """Connect (or reuse) the default Milvus alias."""
     if not connections.has_connection("default"):
-        LOG.info("🔗  Connecting to Milvus at %s:%s …", MILVUS_HOST, MILVUS_PORT)
+        LOG.info("Connecting to Milvus at %s:%s …", MILVUS_HOST, MILVUS_PORT)
         connections.connect(alias="default", host=MILVUS_HOST, port=MILVUS_PORT)
-    LOG.info("✅  Connection established")
+    LOG.info("Connection established")
 
 def prepare_collection() -> Collection:
     """Create / replace a temporary collection."""
     if utility.has_collection(COLL_NAME):
-        LOG.warning("⚠️  Old '%s' collection found – dropping it first", COLL_NAME)
+        LOG.warning("Old '%s' collection found – dropping it first", COLL_NAME)
         Collection(COLL_NAME).drop()
 
     schema = CollectionSchema(
@@ -72,11 +72,11 @@ def prepare_collection() -> Collection:
         description="Temporary health-check collection",
     )
     coll = Collection(name=COLL_NAME, schema=schema)
-    LOG.info("✅  Collection '%s' created", COLL_NAME)
+    LOG.info("Collection '%s' created", COLL_NAME)
     return coll
 
 def embed_texts(texts: List[str]) -> List[List[float]]:
-    LOG.info("🤖  Encoding %d sample sentences with %s …", len(texts), MODEL_NAME)
+    LOG.info("Encoding %d sample sentences with %s …", len(texts), MODEL_NAME)
     model = SentenceTransformer(MODEL_NAME)
     return model.encode(texts).tolist()
 
@@ -111,22 +111,22 @@ def run_roundtrip() -> None:
         output_fields=["content"],
     )
 
-    LOG.info("🔍  Top-3 search results:")
+    LOG.info("Top-3 search results:")
     for hit in results[0]:
         LOG.info("   • score %.4f  →  \"%s…\"", hit.score, hit.entity.get("content")[:60])
 
     # Drop
     coll.drop()
-    LOG.info("🗑️  Temporary collection dropped – health-check successful")
+    LOG.info("Temporary collection dropped – health-check successful")
 
 # ───────────────────────── Main ────────────────────────────
 if __name__ == "__main__":
-    LOG.info("🚑  Milvus health-check started @ %s UTC", datetime.utcnow().isoformat(timespec="seconds"))
+    LOG.info("Milvus health-check started @ %s UTC", datetime.utcnow().isoformat(timespec="seconds"))
     try:
         run_roundtrip()
-        LOG.info("🎉  Milvus is UP and fully operational.")
+        LOG.info("Milvus is UP and fully operational.")
         sys.exit(0)
     except Exception as exc:                 # pragma: no cover
-        LOG.error("❌  Milvus health-check FAILED\n%s", traceback.format_exc())
+        LOG.error("Milvus health-check FAILED\n%s", traceback.format_exc())
         sys.exit(1)
 

@@ -156,7 +156,7 @@ qrcode
 django-celery-beat
 
 
-# ➕ LLM Integration & LangChain Support
+# LLM Integration & LangChain Support
 openai
 langchain
 langchain-core
@@ -165,14 +165,14 @@ langchain-ollama
 ollama  # Optional, only if running local models
 dspy-ai  # DSPy for structured LLM programming
 
-# ➕ Token Counting and Chunking
+# Token Counting and Chunking
 tiktoken  # Required for OpenAI-style token estimation
 
-# ➕ SQL Streaming & Cross-DB Support
+# SQL Streaming & Cross-DB Support
 pyodbc  # For MSSQL and other ODBC drivers
 # mysqlclient  # For MySQL (optional, based on usage) - Not needed, using PostgreSQL
 
-# ➕ PDF Image OCR Helpers (used in PDF chunking)
+# PDF Image OCR Helpers (used in PDF chunking)
 wand  # Optional: used with ImageMagick for PDF → image conversion
 
 # For schema generation, preview UI, or sandbox eval:

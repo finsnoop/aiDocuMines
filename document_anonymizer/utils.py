@@ -45,13 +45,13 @@ def _skip_heavy_init() -> bool:
 
 class AnonymizationService:
     """
-    Handles document extraction, full Presidio ➔ SpaCy anonymization pipeline, and de-anonymization.
+    Handles document extraction, full Presidio → SpaCy anonymization pipeline, and de-anonymization.
     Now supports structured PDF extraction using unstructured.
     """
 
 
     def __init__(self):
-        logger.info("📦 Initializing AnonymizationService with shared models...")
+        logger.info("Initializing AnonymizationService with shared models...")
         self.analyzer = AnalyzerEngine()
         self.anonymizer = AnonymizerEngine()
 
@@ -60,7 +60,7 @@ class AnonymizationService:
         self._presidio_entities = None
 
         if _skip_heavy_init():
-            logger.info(f"⏭️ Skipping spaCy load (SPACY_MODEL={self._spacy_model}) due to build/management command.")
+            logger.info(f"Skipping spaCy load (SPACY_MODEL={self._spacy_model}) due to build/management command.")
         else:
             self._ensure_nlp_loaded()
 
@@ -71,10 +71,10 @@ class AnonymizationService:
         try:
             shared_nlp = getattr(self.analyzer.nlp_engine, 'nlp', {}).get('en')
             self.nlp = shared_nlp if shared_nlp is not None and shared_nlp.meta.get('name') == self._spacy_model.removeprefix('en_') else spacy.load(self._spacy_model)
-            logger.info(f"✅ spaCy model loaded: {self._spacy_model}")
+            logger.info(f"spaCy model loaded: {self._spacy_model}")
         except OSError as e:
             logger.error(
-                f"❌ spaCy model '{self._spacy_model}' not installed. "
+                f"spaCy model '{self._spacy_model}' not installed. "
                 f"Install it in the image or set SPACY_MODEL to an installed model."
             )
             raise
@@ -82,7 +82,7 @@ class AnonymizationService:
 
     ''' 
     def __init__(self):
-        logger.info("📦 Initializing AnonymizationService with shared models...")
+        logger.info("Initializing AnonymizationService with shared models...")
         self.analyzer = AnalyzerEngine()
         self.anonymizer = AnonymizerEngine()
         self.nlp = spacy.load("en_core_web_lg")  # Load once per task
@@ -90,10 +90,10 @@ class AnonymizationService:
 
 
     def extract_text_from_file(self, file_path):
-        logger.info(f"🔄 Extracting text from: {file_path}")
+        logger.info(f"Extracting text from: {file_path}")
 
         if not os.path.exists(file_path):
-            logger.error(f"❌ File not found: {file_path}")
+            logger.error(f"File not found: {file_path}")
             return None, [], []
 
         try:
@@ -106,18 +106,18 @@ class AnonymizationService:
                 return self.extract_text_from_docx(file_path), [], []
             else:
                 # Fallback: try reading as plain UTF-8 text for any text-based format
-                logger.info(f"📄 Attempting plain-text read for: {file_path}")
+                logger.info(f"Attempting plain-text read for: {file_path}")
                 with open(file_path, "r", encoding="utf-8") as f:
                     return f.read(), [], []
         except Exception as e:
-            logger.error(f"❌ Failed to extract text from {file_path}: {e}")
+            logger.error(f"Failed to extract text from {file_path}: {e}")
             return None, [], []
 
     def extract_structured_text(self, file_path):
         """
         Dynamically select the correct structured extraction function based on file type.
         """
-        logger.info(f"📄 extract_structured_text() ➔ Processing {file_path}")
+        logger.info(f"extract_structured_text() → Processing {file_path}")
         try:
             if file_path.lower().endswith(".pdf"):
                 from unstructured.partition.pdf import partition_pdf
@@ -127,7 +127,7 @@ class AnonymizationService:
                 elements = partition_docx(filename=file_path)
             else:
                 # Fallback: treat as plain text for any text-based format
-                logger.info(f"📄 Attempting plain-text structured read for: {file_path}")
+                logger.info(f"Attempting plain-text structured read for: {file_path}")
                 with open(file_path, "r", encoding="utf-8") as f:
                     text = f.read()
                 return text, [], [{"element_id": "raw-0", "type": "Text", "text": text}]
@@ -135,19 +135,19 @@ class AnonymizationService:
             structured_text = "\n\n".join(el.text.strip() for el in elements if el.text and el.text.strip())
             return structured_text, elements, [el.to_dict() for el in elements]
         except Exception as e:
-            logger.error(f"❌ extract_structured_text() failed: {e}")
+            logger.error(f"extract_structured_text() failed: {e}")
             return None, [], []
 
 
     def extract_text_from_pdf(self, file_path):
         try:
-            logger.info(f"📄 Using unstructured to extract structured PDF text from: {file_path}")
+            logger.info(f"Using unstructured to extract structured PDF text from: {file_path}")
             elements = partition_pdf(filename=file_path)
             structured_text = "\n\n".join(el.text.strip() for el in elements if el.text and el.text.strip())
 
             return structured_text, elements, [el.to_dict() for el in elements]
         except Exception as e:
-            logger.error(f"❌ Structured PDF extraction failed via unstructured: {e}")
+            logger.error(f"Structured PDF extraction failed via unstructured: {e}")
             return None, [], []
 
     def extract_text_from_docx(self, file_path):
@@ -155,7 +155,7 @@ class AnonymizationService:
             doc = Document(file_path)
             return "\n".join([para.text for para in doc.paragraphs])
         except Exception as e:
-            logger.error(f"❌ DOCX text extraction failed: {e}")
+            logger.error(f"DOCX text extraction failed: {e}")
             return None
     
     def _get_presidio_pii_entities(self):
@@ -181,7 +181,7 @@ class AnonymizationService:
           - ORG is deliberately kept (business-context redaction).
         Reuses shared engine instances for performance and memory efficiency.
         """
-        logger.info("🔄 Running Presidio anonymization...")
+        logger.info("Running Presidio anonymization...")
 
         self._ensure_nlp_loaded()
 
@@ -221,7 +221,7 @@ class AnonymizationService:
 
         # ---- spaCy pass on the ORIGINAL text -----------------------------
         if self.nlp is not None:
-            logger.info("🔄 Running SpaCy anonymization...")
+            logger.info("Running SpaCy anonymization...")
             doc = self.nlp(text)
             for ent in doc.ents:
                 if ent.label_ not in SPACY_PII_LABELS:
@@ -263,8 +263,8 @@ class AnonymizationService:
 
         combined_map = {**spacy_map, **presidio_map}
 
-        logger.info(f"✅ Presidio map: {json.dumps(presidio_map, indent=2)}")
-        logger.info(f"✅ SpaCy map: {json.dumps(spacy_map, indent=2)}")
+        logger.info(f"Presidio map: {json.dumps(presidio_map, indent=2)}")
+        logger.info(f"SpaCy map: {json.dumps(spacy_map, indent=2)}")
 
         return final_masked, combined_map, presidio_map, spacy_map
 
@@ -417,7 +417,7 @@ def export_to_markdown(json_path, generate_preview=False):
     import hashlib
 
     md_lines = []
-    toc_lines = ["## 📚 Table of Contents\n"]
+    toc_lines = ["## Table of Contents\n"]
 
     with open(json_path, "r", encoding="utf-8") as f:
         blocks = json.load(f)

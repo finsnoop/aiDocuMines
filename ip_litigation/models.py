@@ -509,7 +509,7 @@ class ValidityChallenge(models.Model):
 
 
 # ═══════════════════════════════════════════════════════════════
-# 🔄 COMPREHENSIVE SERVICE OUTPUT MODELS
+# COMPREHENSIVE SERVICE OUTPUT MODELS
 # ═══════════════════════════════════════════════════════════════
 
 class ServiceExecution(models.Model):

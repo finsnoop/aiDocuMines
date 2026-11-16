@@ -90,7 +90,7 @@ class SubmitOCRAPIView(ClientScopedViewMixin):
         ).first()
 
         if existing_ocr_file and existing_ocr_file.status == "Processed" and existing_ocr_file.ocr_filepath:
-            logger.info(f"⚠️ OCR skipped: File {file_obj.id} already processed with {ocr_option}")
+            logger.info(f"OCR skipped: File {file_obj.id} already processed with {ocr_option}")
             return Response({
                 "ocr_run_id": str(existing_ocr_file.run.id) if existing_ocr_file.run else "N/A",
                 "file_id": file_obj.id,

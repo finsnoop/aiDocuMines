@@ -38,7 +38,7 @@ import secrets
 User = get_user_model()
 
 def log_permission_denied(actor, obj_type, obj_id, action):
-    print(f"🚨 PERMISSION DENIED: User {actor.id} tried to {action} {obj_type} {obj_id} at {timezone.now()}")
+    print(f"PERMISSION DENIED: User {actor.id} tried to {action} {obj_type} {obj_id} at {timezone.now()}")
 
 @shared_task
 def async_bulk_trash_files(file_ids):
@@ -181,7 +181,7 @@ def async_create_file_version(file_id, new_path, user_id):
     FileAuditLog.objects.create(file=file, user=user, action="updated", notes=f"Version {latest_version + 1} saved")
     return {"message": f"Version {latest_version + 1} created", "file_id": file_id}
 
-# 🔁 Async share/unshare
+# Async share/unshare
 
 @shared_task
 def async_share_file_with_users(file_link_id, user_ids, actor_user_id):
@@ -228,7 +228,7 @@ def async_unshare_file_with_users(file_link_id, user_ids, actor_user_id):
     FileAuditLog.objects.create(file=link.file, user=actor, action="updated", notes=f"Unshared with {removed}")
     return {"message": f"Unshared file from users {removed}"}
 
-# 🔗 Async public link actions
+# Async public link actions
 
 @shared_task
 def async_generate_public_link_task(file_link_id, actor_user_id):
@@ -256,7 +256,7 @@ def async_revoke_public_link_task(file_link_id, actor_user_id):
     FileAuditLog.objects.create(file=link.file, user=actor, action="updated", notes="Revoked public link")
     return {"message": "Public link revoked"}
 
-# 🗂️ Folder Audit Logs
+# Folder Audit Logs
 
 @shared_task
 def async_log_folder_action(folder_id, user_id, action, notes=None):

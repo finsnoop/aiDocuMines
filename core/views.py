@@ -52,7 +52,7 @@ from core.access import get_file_for_user, get_scoped_or_404, get_run_for_user, 
 
 logger = logging.getLogger(__name__)
 
-# ✅ Define Swagger parameters
+# Define Swagger parameters
 client_id_param = openapi.Parameter(
     "X-Client-ID", openapi.IN_HEADER, type=openapi.TYPE_STRING, required=True, description="Client ID provided at signup"
 )
@@ -150,7 +150,7 @@ class FileUploadView(APIView):
 
             meta = save_uploaded_file(uploaded, temp_dir)     # md5, size, etc.
 
-            # ---- 1️⃣ same-user duplicate check -----------------------------
+            # ---- 1⃣ same-user duplicate check -----------------------------
             dup_self = File.objects.filter(user=user, md5_hash=meta["md5_hash"]).first()
             if dup_self:
                 if not clone_file:
@@ -167,7 +167,7 @@ class FileUploadView(APIView):
                     }, status=200)
 
                 # clone requested
-                logger.info("📄 Cloning file for user %s : %s", user.id, meta["filename"])
+                logger.info("Cloning file for user %s : %s", user.id, meta["filename"])
                 os.remove(meta["file_path"])  # cleanup temp
                 clone = File.objects.create(
                     run=run,
@@ -184,16 +184,16 @@ class FileUploadView(APIView):
                     extension=dup_self.extension,
                 )
                 register_file_folder_link(clone)
-                # ✅ REMOVED: folder_name logic was creating duplicate root-level folders
+                # REMOVED: folder_name logic was creating duplicate root-level folders
                 # register_file_folder_link already creates the correct folder hierarchy
 
                 file_payload.append(_resp(clone, "File cloned for reuse."))
                 continue  # next upload
 
-            # ---- 2️⃣ cross-user duplicate check ----------------------------
+            # ---- 2⃣ cross-user duplicate check ----------------------------
             dup_other = File.objects.exclude(user=user).filter(md5_hash=meta["md5_hash"]).first()
             if dup_other:
-                logger.info("🔗 Re-using storage from user %s for user %s", dup_other.user_id, user.id)
+                logger.info("Re-using storage from user %s for user %s", dup_other.user_id, user.id)
                 os.remove(meta["file_path"])
                 reused = File.objects.create(
                     run=run,
@@ -209,13 +209,13 @@ class FileUploadView(APIView):
                     extension=dup_other.extension
                 )
                 register_file_folder_link(reused)
-                # ✅ REMOVED: folder_name logic was creating duplicate root-level folders
+                # REMOVED: folder_name logic was creating duplicate root-level folders
                 # register_file_folder_link already creates the correct folder hierarchy
 
                 file_payload.append(_resp(reused, "Duplicate file reused from another user."))
                 continue
 
-            # ---- 3️⃣ brand-new upload --------------------------------------
+            # ---- 3⃣ brand-new upload --------------------------------------
             # If folder_name is provided, include it in the path so register_file_folder_link
             # creates the correct folder hierarchy (e.g., 20260102/create-deal-workspace/file.html)
             folder_name = request.data.get("folder_name") or request.query_params.get("folder_name")
@@ -275,18 +275,18 @@ def queue_post_upload_processing(user, run, fresh, project_id, service_id):
 
             endpoint_response = EndpointResponseTable.objects.create(
                 run=run,
-                client=user,  # ✅ correct field name in model
+                client=user,  # correct field name in model
                 endpoint_name="/api/v1/document-search/index/",
-                response_data={"auto_trigger": True},  # ✅ corresponds to JSONField
-                status="Pending"  # ✅ must match one of the allowed choices
+                response_data={"auto_trigger": True},  # corresponds to JSONField
+                status="Pending"  # must match one of the allowed choices
             )
-            logger.info("✅ Created EndpointResponseTable entry with ID: %s for file_id=%s", endpoint_response.id, fresh.id)
+            logger.info("Created EndpointResponseTable entry with ID: %s for file_id=%s", endpoint_response.id, fresh.id)
 
             index_file.apply_async((fresh.id,), {"force": False}, task_id=str(endpoint_response.id))
-            logger.info("🚀 Indexing task successfully queued for file_id=%s", fresh.id)
+            logger.info("Indexing task successfully queued for file_id=%s", fresh.id)
 
         except Exception as e:
-            logger.exception("❌ Failed to trigger indexing for file_id=%s. Error: %s", fresh.id, str(e))
+            logger.exception("Failed to trigger indexing for file_id=%s. Error: %s", fresh.id, str(e))
 
 
     def trigger_anonymization():
@@ -322,19 +322,19 @@ def queue_post_upload_processing(user, run, fresh, project_id, service_id):
                 response_data={"auto_trigger": True, "file_id": fresh.id, "file_type": file_type},
                 status="Pending"
             )
-            logger.info("🔐 Auto-anonymization queued for file_id=%s (type=%s)", fresh.id, file_type)
+            logger.info("Auto-anonymization queued for file_id=%s (type=%s)", fresh.id, file_type)
         except Exception:
-            logger.exception("❌ Failed to queue anonymization for file_id=%s", fresh.id)
+            logger.exception("Failed to queue anonymization for file_id=%s", fresh.id)
 
 
     if fresh.file_type.lower() not in ["application/pdf", "application/vnd.openxmlformats-officedocument.wordprocessingml.document"]:
-        logger.info("⏭️   Skipping indexing for unsupported type: %s", fresh.file_type)
+        logger.info("Skipping indexing for unsupported type: %s", fresh.file_type)
     elif not getattr(getattr(user, "settings", None), "auto_index_enabled", True):
-        logger.info("⚙️ Auto-indexing disabled for user %s", user.id)
+        logger.info("Auto-indexing disabled for user %s", user.id)
     elif File.objects.filter(user=fresh.user, md5_hash=fresh.md5_hash, vector_chunks__isnull=False).exclude(id=fresh.id).exists():
-        logger.info("♻️ Skipping indexing – vector chunks already exist for file with same MD5: %s", fresh.md5_hash)
+        logger.info("Skipping indexing – vector chunks already exist for file with same MD5: %s", fresh.md5_hash)
     else:
-        logger.info("🧠 Queueing indexing to happen after transaction commit")
+        logger.info("Queueing indexing to happen after transaction commit")
         transaction.on_commit(trigger_indexing)
 
     # NEW:
@@ -512,7 +512,7 @@ class UniversalTaskStatusView(APIView):
         access_token_string = request.headers.get("Authorization", "").split("Bearer ")[-1]
         run_id = request.query_params.get("run_id")
 
-        # ✅ Enforce OAuth2 Authentication
+        # Enforce OAuth2 Authentication
         if not access_token_string:
             return Response({"error": "Authorization token missing"}, status=status.HTTP_401_UNAUTHORIZED)
 
@@ -523,7 +523,7 @@ class UniversalTaskStatusView(APIView):
         if not run_id:
             return Response({"error": "Missing run_id parameter"}, status=status.HTTP_400_BAD_REQUEST)
 
-        # ✅ Fetch task status
+        # Fetch task status
         from core.access import scope_by_owner
         try:
             response_entry = scope_by_owner(request.user, EndpointResponseTable.objects.all(), "run__user") \
@@ -547,7 +547,7 @@ class UniversalTaskStatusView(APIView):
 @method_decorator(csrf_exempt, name="dispatch")
 class MetadataView(APIView):
     """
-    ✅ Triggers metadata extraction for a given file.
+    Triggers metadata extraction for a given file.
     """
     authentication_classes = [OAuth2Authentication]
     permission_classes = [IsAuthenticated, TokenHasReadWriteScope, IsClientOrAdminOrSuperUser]
@@ -562,14 +562,14 @@ class MetadataView(APIView):
         client_id = request.headers.get("X-Client-ID")
         file_id = request.query_params.get("file_id")
 
-        # ✅ Fetch file instance
+        # Fetch file instance
         file_instance = get_file_for_user(request.user, file_id)
 
-        # ✅ Generate a new run_id for the metadata extraction process
+        # Generate a new run_id for the metadata extraction process
         run_id = str(uuid.uuid4())
         run = Run.objects.create(run_id=run_id, user=file_instance.user, status="Processing")
 
-        # ✅ Trigger metadata extraction task
+        # Trigger metadata extraction task
         from .tasks import process_metadata
         process_metadata.delay(file_instance.id, run.run_id)
 
@@ -586,7 +586,7 @@ class MetadataView(APIView):
 
 class FileDownloadView(APIView):
     """
-    ✅ Download a file using file_id, dynamically supporting all common formats.
+    Download a file using file_id, dynamically supporting all common formats.
     """
     authentication_classes = [OAuth2Authentication]
     permission_classes = [IsAuthenticated, TokenHasReadWriteScope, IsClientOrAdminOrSuperUser]
@@ -873,7 +873,7 @@ class FileInsightView(APIView):
                 }
             )
             response_data["report_file"] = report_info
-            logger.info(f"✅ Generated file insight report: {report_info.get('filename')}")
+            logger.info(f"Generated file insight report: {report_info.get('filename')}")
         except Exception as report_error:
             logger.warning(f"Failed to generate report: {report_error}")
             response_data["report_error"] = str(report_error)

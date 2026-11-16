@@ -10,14 +10,14 @@ def load_fernet_key():
 
     try:
         decoded = base64.urlsafe_b64decode(key)
-        print(f"[✅] Decoded length: {len(decoded)} bytes")
+        print(f"Decoded length: {len(decoded)} bytes")
         if len(decoded) != 32:
             raise ValueError("Decoded key is not 32 bytes.")
         fernet = Fernet(key)
-        print("[🔐] Fernet key is valid and usable.")
+        print("Fernet key is valid and usable.")
         return fernet
     except Exception as e:
-        print(f"[❌] Failed to load FIELD_ENCRYPTION_KEY: {str(e)}")
+        print(f"Failed to load FIELD_ENCRYPTION_KEY: {str(e)}")
         return None
 
 if __name__ == "__main__":
@@ -31,7 +31,7 @@ if __name__ == "__main__":
     if crypter:
         msg = b"test-message"
         token = crypter.encrypt(msg)
-        print(f"[🔐] Encrypted: {token}")
+        print(f"Encrypted: {token}")
         decrypted = crypter.decrypt(token)
-        print(f"[🔓] Decrypted: {decrypted}")
+        print(f"Decrypted: {decrypted}")
 

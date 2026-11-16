@@ -244,7 +244,7 @@ class DocumentTypeSummarySerializer(serializers.Serializer):
 
 
 # ═══════════════════════════════════════════════════════════════
-# 💼 PE VALUE METRICS SERIALIZERS
+# PE VALUE METRICS SERIALIZERS
 # ═══════════════════════════════════════════════════════════════
 
 class ClosingChecklistSerializer(serializers.ModelSerializer):
@@ -435,7 +435,7 @@ class ClauseLibraryCreateSerializer(serializers.ModelSerializer):
 
 
 # ═══════════════════════════════════════════════════════════════
-# 📊 PE VALUE ANALYTICS SERIALIZERS
+# PE VALUE ANALYTICS SERIALIZERS
 # ═══════════════════════════════════════════════════════════════
 
 class DealVelocitySummarySerializer(serializers.Serializer):
@@ -477,7 +477,7 @@ class PostCloseObligationSummarySerializer(serializers.Serializer):
 
 
 # ═══════════════════════════════════════════════════════════════
-# 🏢 PANEL MANAGEMENT & RFP SERIALIZERS
+# PANEL MANAGEMENT & RFP SERIALIZERS
 # ═══════════════════════════════════════════════════════════════
 
 class PanelFirmSerializer(serializers.ModelSerializer):
@@ -594,7 +594,7 @@ class EngagementLetterSerializer(serializers.ModelSerializer):
 
 
 # ═══════════════════════════════════════════════════════════════
-# 📋 CLOSING AUTOMATION SERIALIZERS
+# CLOSING AUTOMATION SERIALIZERS
 # ═══════════════════════════════════════════════════════════════
 
 class SignatureTrackerSerializer(serializers.ModelSerializer):
@@ -691,7 +691,7 @@ class ClosingBinderSerializer(serializers.ModelSerializer):
 
 
 # ═══════════════════════════════════════════════════════════════
-# 📊 POST-CLOSE TRACKING SERIALIZERS
+# POST-CLOSE TRACKING SERIALIZERS
 # ═══════════════════════════════════════════════════════════════
 
 class CovenantSerializer(serializers.ModelSerializer):
@@ -752,7 +752,7 @@ class ConsentFilingSerializer(serializers.ModelSerializer):
 
 
 # ═══════════════════════════════════════════════════════════════
-# 📊 ADDITIONAL ANALYTICS SERIALIZERS
+# ADDITIONAL ANALYTICS SERIALIZERS
 # ═══════════════════════════════════════════════════════════════
 
 class PortfolioComplianceSerializer(serializers.Serializer):

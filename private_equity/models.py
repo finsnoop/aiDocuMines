@@ -255,7 +255,7 @@ class DataRoomConnector(models.Model):
 
 
 # ═══════════════════════════════════════════════════════════════
-# 🔄 COMPREHENSIVE SERVICE OUTPUT MODELS
+# COMPREHENSIVE SERVICE OUTPUT MODELS
 # ═══════════════════════════════════════════════════════════════
 
 class ServiceExecution(models.Model):
@@ -418,7 +418,7 @@ class ServiceOutput(models.Model):
 
 
 # ═══════════════════════════════════════════════════════════════
-# 💼 PE VALUE METRICS MODELS - Deal Velocity, Checklists, Obligations
+# PE VALUE METRICS MODELS - Deal Velocity, Checklists, Obligations
 # ═══════════════════════════════════════════════════════════════
 
 class ClosingChecklist(models.Model):
@@ -761,7 +761,7 @@ class ClauseLibrary(models.Model):
 
 
 # ═══════════════════════════════════════════════════════════════
-# 🏢 PANEL MANAGEMENT & RFP MODELS
+# PANEL MANAGEMENT & RFP MODELS
 # ═══════════════════════════════════════════════════════════════
 
 class PanelFirm(models.Model):
@@ -1009,7 +1009,7 @@ class EngagementLetter(models.Model):
 
 
 # ═══════════════════════════════════════════════════════════════
-# 📋 CLOSING AUTOMATION MODELS
+# CLOSING AUTOMATION MODELS
 # ═══════════════════════════════════════════════════════════════
 
 class SignatureTracker(models.Model):
@@ -1191,7 +1191,7 @@ class ClosingBinder(models.Model):
 
 
 # ═══════════════════════════════════════════════════════════════
-# 📊 POST-CLOSE TRACKING MODELS
+# POST-CLOSE TRACKING MODELS
 # ═══════════════════════════════════════════════════════════════
 
 class Covenant(models.Model):
