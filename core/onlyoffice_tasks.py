@@ -69,7 +69,10 @@ def onlyoffice_fetch_and_save(self, file_id: int, file_url: str) -> dict:
         # keep same MIME/extension — still a DOCX for normal edits
         f.md5_hash = new_md5
         f.status = "Saved"
-        f.save(update_fields=["file_size", "md5_hash", "status"])
+        # Saved bytes invalidate old OCR/search/assistant text. Otherwise a successful
+        # edit could keep answering from the previous document indefinitely.
+        f.content = ''
+        f.save(update_fields=["file_size", "md5_hash", "status", "content", "updated_at"])
 
     logger.info("OnlyOffice saved file_id=%s size=%s md5=%s", f.id, new_size, new_md5)
     return {"ok": True, "file_id": f.id, "size": new_size, "md5": new_md5}

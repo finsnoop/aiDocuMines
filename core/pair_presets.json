@@ -1,0 +1,955 @@
+{
+  "version": "pair-v1",
+  "categories": [
+    {
+      "id": "quick",
+      "label": "Quick intelligence"
+    },
+    {
+      "id": "A",
+      "label": "Document understanding and discovery"
+    },
+    {
+      "id": "B",
+      "label": "Metadata and provenance"
+    },
+    {
+      "id": "C",
+      "label": "Cross-document intelligence"
+    },
+    {
+      "id": "D",
+      "label": "Version comparison"
+    },
+    {
+      "id": "E",
+      "label": "Transformation fidelity"
+    },
+    {
+      "id": "F",
+      "label": "Numbers and chronology"
+    },
+    {
+      "id": "G",
+      "label": "Evidence and reasoning"
+    },
+    {
+      "id": "H",
+      "label": "Risk and sensitivity"
+    },
+    {
+      "id": "I",
+      "label": "Completeness and traceability"
+    },
+    {
+      "id": "J",
+      "label": "Decisions and responsibilities"
+    },
+    {
+      "id": "K",
+      "label": "Reusable outputs"
+    }
+  ],
+  "presets": [
+    {
+      "id": "p01",
+      "label": "Summarize Both",
+      "question": "Summarize each document independently, then provide a combined overview.",
+      "category": "quick",
+      "primary": true,
+      "applicability": "any",
+      "prompt_version": "pair-v1"
+    },
+    {
+      "id": "p02",
+      "label": "Compare Documents",
+      "question": "What are the key similarities and differences between these documents?",
+      "category": "quick",
+      "primary": true,
+      "applicability": "any",
+      "prompt_version": "pair-v1"
+    },
+    {
+      "id": "p03",
+      "label": "Identify Changes",
+      "question": "What content has been added, removed, or modified, if these documents are related versions?",
+      "category": "quick",
+      "primary": true,
+      "applicability": "versions",
+      "prompt_version": "pair-v1"
+    },
+    {
+      "id": "p04",
+      "label": "Find Key Insights",
+      "question": "What are the most important findings and insights from these documents?",
+      "category": "quick",
+      "primary": true,
+      "applicability": "any",
+      "prompt_version": "pair-v1"
+    },
+    {
+      "id": "p05",
+      "label": "Identify Risks",
+      "question": "What risks, concerns, or potential problems are evident in either document?",
+      "category": "quick",
+      "primary": true,
+      "applicability": "any",
+      "prompt_version": "pair-v1"
+    },
+    {
+      "id": "p06",
+      "label": "Find Inconsistencies",
+      "question": "What contradictions, inconsistencies, or conflicting information can you identify?",
+      "category": "quick",
+      "primary": true,
+      "applicability": "any",
+      "prompt_version": "pair-v1"
+    },
+    {
+      "id": "p07",
+      "label": "Extract Key Information",
+      "question": "What are the important facts, figures, dates, entities, and conditions?",
+      "category": "quick",
+      "primary": true,
+      "applicability": "any",
+      "prompt_version": "pair-v1"
+    },
+    {
+      "id": "p08",
+      "label": "Identify Gaps",
+      "question": "What information appears incomplete, missing, unclear, or insufficiently explained?",
+      "category": "quick",
+      "primary": true,
+      "applicability": "any",
+      "prompt_version": "pair-v1"
+    },
+    {
+      "id": "p09",
+      "label": "Assess Impact",
+      "question": "What are the potential implications of the differences or information presented?",
+      "category": "quick",
+      "primary": true,
+      "applicability": "any",
+      "prompt_version": "pair-v1"
+    },
+    {
+      "id": "p10",
+      "label": "Verify Accuracy",
+      "question": "Are calculations, factual relationships, and claims internally consistent and supported?",
+      "category": "quick",
+      "primary": true,
+      "applicability": "any",
+      "prompt_version": "pair-v1"
+    },
+    {
+      "id": "p11",
+      "label": "Identify Actions",
+      "question": "What actions, follow-ups, decisions, or responsibilities are explicitly stated or reasonably suggested?",
+      "category": "quick",
+      "primary": true,
+      "applicability": "any",
+      "prompt_version": "pair-v1"
+    },
+    {
+      "id": "p12",
+      "label": "Create Comparison Report",
+      "question": "Produce a structured, evidence-backed comparison of both documents.",
+      "category": "quick",
+      "primary": true,
+      "applicability": "any",
+      "prompt_version": "pair-v1"
+    },
+    {
+      "id": "p13",
+      "label": "What is the primary purpose of each document?",
+      "question": "What is the primary purpose of each document?",
+      "category": "A",
+      "primary": false,
+      "applicability": "any",
+      "prompt_version": "pair-v1"
+    },
+    {
+      "id": "p14",
+      "label": "What problems, needs, or questions does each document address?",
+      "question": "What problems, needs, or questions does each document address?",
+      "category": "A",
+      "primary": false,
+      "applicability": "any",
+      "prompt_version": "pair-v1"
+    },
+    {
+      "id": "p15",
+      "label": "Who appears to be the intended audience for each document?",
+      "question": "Who appears to be the intended audience for each document?",
+      "category": "A",
+      "primary": false,
+      "applicability": "any",
+      "prompt_version": "pair-v1"
+    },
+    {
+      "id": "p16",
+      "label": "What are the main subjects, themes, and topics discussed?",
+      "question": "What are the main subjects, themes, and topics discussed?",
+      "category": "A",
+      "primary": false,
+      "applicability": "any",
+      "prompt_version": "pair-v1"
+    },
+    {
+      "id": "p17",
+      "label": "What conclusions or outcomes does each document present?",
+      "question": "What conclusions or outcomes does each document present?",
+      "category": "A",
+      "primary": false,
+      "applicability": "any",
+      "prompt_version": "pair-v1"
+    },
+    {
+      "id": "p18",
+      "label": "What information makes each document distinctive?",
+      "question": "What information makes each document distinctive?",
+      "category": "A",
+      "primary": false,
+      "applicability": "any",
+      "prompt_version": "pair-v1"
+    },
+    {
+      "id": "p19",
+      "label": "How detailed and specific is each document about its subject matter?",
+      "question": "How detailed and specific is each document about its subject matter?",
+      "category": "A",
+      "primary": false,
+      "applicability": "any",
+      "prompt_version": "pair-v1"
+    },
+    {
+      "id": "p20",
+      "label": "What should a first-time reader understand before using these documents?",
+      "question": "What should a first-time reader understand before using these documents?",
+      "category": "A",
+      "primary": false,
+      "applicability": "any",
+      "prompt_version": "pair-v1"
+    },
+    {
+      "id": "p21",
+      "label": "What are the titles, file names, and document identifiers?",
+      "question": "What are the titles, file names, and document identifiers?",
+      "category": "B",
+      "primary": false,
+      "applicability": "any",
+      "prompt_version": "pair-v1"
+    },
+    {
+      "id": "p22",
+      "label": "Who are the authors, owners, publishers, or responsible organizations, where identified?",
+      "question": "Who are the authors, owners, publishers, or responsible organizations, where identified?",
+      "category": "B",
+      "primary": false,
+      "applicability": "any",
+      "prompt_version": "pair-v1"
+    },
+    {
+      "id": "p23",
+      "label": "What creation, modification, publication, effective, and expiration dates are available?",
+      "question": "What creation, modification, publication, effective, and expiration dates are available?",
+      "category": "B",
+      "primary": false,
+      "applicability": "any",
+      "prompt_version": "pair-v1"
+    },
+    {
+      "id": "p24",
+      "label": "What version numbers, revision histories, approval statuses, or document states are recorded?",
+      "question": "What version numbers, revision histories, approval statuses, or document states are recorded?",
+      "category": "B",
+      "primary": false,
+      "applicability": "any",
+      "prompt_version": "pair-v1"
+    },
+    {
+      "id": "p25",
+      "label": "What file formats, page counts, languages, and structural properties are available?",
+      "question": "What file formats, page counts, languages, and structural properties are available?",
+      "category": "B",
+      "primary": false,
+      "applicability": "any",
+      "prompt_version": "pair-v1"
+    },
+    {
+      "id": "p26",
+      "label": "What appendices, attachments, external documents, or supporting materials are referenced?",
+      "question": "What appendices, attachments, external documents, or supporting materials are referenced?",
+      "category": "B",
+      "primary": false,
+      "applicability": "any",
+      "prompt_version": "pair-v1"
+    },
+    {
+      "id": "p27",
+      "label": "Are there inconsistencies between document metadata and the information contained within the documents?",
+      "question": "Are there inconsistencies between document metadata and the information contained within the documents?",
+      "category": "B",
+      "primary": false,
+      "applicability": "any",
+      "prompt_version": "pair-v1"
+    },
+    {
+      "id": "p28",
+      "label": "What information about the documents' origins, authenticity, or history cannot be established from the available evidence?",
+      "question": "What information about the documents' origins, authenticity, or history cannot be established from the available evidence?",
+      "category": "B",
+      "primary": false,
+      "applicability": "any",
+      "prompt_version": "pair-v1"
+    },
+    {
+      "id": "p29",
+      "label": "Which subjects or concepts are discussed in both documents?",
+      "question": "Which subjects or concepts are discussed in both documents?",
+      "category": "C",
+      "primary": false,
+      "applicability": "any",
+      "prompt_version": "pair-v1"
+    },
+    {
+      "id": "p30",
+      "label": "Which subjects appear in only one document?",
+      "question": "Which subjects appear in only one document?",
+      "category": "C",
+      "primary": false,
+      "applicability": "any",
+      "prompt_version": "pair-v1"
+    },
+    {
+      "id": "p31",
+      "label": "What facts, statements, or observations are consistent across the two documents?",
+      "question": "What facts, statements, or observations are consistent across the two documents?",
+      "category": "C",
+      "primary": false,
+      "applicability": "any",
+      "prompt_version": "pair-v1"
+    },
+    {
+      "id": "p32",
+      "label": "Where do the documents provide different or conflicting information about the same subject?",
+      "question": "Where do the documents provide different or conflicting information about the same subject?",
+      "category": "C",
+      "primary": false,
+      "applicability": "any",
+      "prompt_version": "pair-v1"
+    },
+    {
+      "id": "p33",
+      "label": "What assumptions do the documents share, and where do their assumptions differ?",
+      "question": "What assumptions do the documents share, and where do their assumptions differ?",
+      "category": "C",
+      "primary": false,
+      "applicability": "any",
+      "prompt_version": "pair-v1"
+    },
+    {
+      "id": "p34",
+      "label": "How do the methods, approaches, or reasoning presented in the documents compare?",
+      "question": "How do the methods, approaches, or reasoning presented in the documents compare?",
+      "category": "C",
+      "primary": false,
+      "applicability": "any",
+      "prompt_version": "pair-v1"
+    },
+    {
+      "id": "p35",
+      "label": "Where do their conclusions or recommendations agree or differ?",
+      "question": "Where do their conclusions or recommendations agree or differ?",
+      "category": "C",
+      "primary": false,
+      "applicability": "any",
+      "prompt_version": "pair-v1"
+    },
+    {
+      "id": "p36",
+      "label": "What additional understanding can be gained by considering the two documents together?",
+      "question": "What additional understanding can be gained by considering the two documents together?",
+      "category": "C",
+      "primary": false,
+      "applicability": "any",
+      "prompt_version": "pair-v1"
+    },
+    {
+      "id": "p37",
+      "label": "What sections, paragraphs, or statements have been added?",
+      "question": "What sections, paragraphs, or statements have been added?",
+      "category": "D",
+      "primary": false,
+      "applicability": "versions",
+      "prompt_version": "pair-v1"
+    },
+    {
+      "id": "p38",
+      "label": "What sections, paragraphs, or statements have been removed?",
+      "question": "What sections, paragraphs, or statements have been removed?",
+      "category": "D",
+      "primary": false,
+      "applicability": "versions",
+      "prompt_version": "pair-v1"
+    },
+    {
+      "id": "p39",
+      "label": "Which statements have been revised, and how has their meaning changed?",
+      "question": "Which statements have been revised, and how has their meaning changed?",
+      "category": "D",
+      "primary": false,
+      "applicability": "versions",
+      "prompt_version": "pair-v1"
+    },
+    {
+      "id": "p40",
+      "label": "What numbers, amounts, percentages, or quantitative values have changed?",
+      "question": "What numbers, amounts, percentages, or quantitative values have changed?",
+      "category": "D",
+      "primary": false,
+      "applicability": "versions",
+      "prompt_version": "pair-v1"
+    },
+    {
+      "id": "p41",
+      "label": "What dates, time periods, or deadlines have changed?",
+      "question": "What dates, time periods, or deadlines have changed?",
+      "category": "D",
+      "primary": false,
+      "applicability": "versions",
+      "prompt_version": "pair-v1"
+    },
+    {
+      "id": "p42",
+      "label": "What responsibilities, commitments, conditions, or obligations have changed?",
+      "question": "What responsibilities, commitments, conditions, or obligations have changed?",
+      "category": "D",
+      "primary": false,
+      "applicability": "versions",
+      "prompt_version": "pair-v1"
+    },
+    {
+      "id": "p43",
+      "label": "What changes have been made to exceptions, exclusions, limitations, or qualifying statements?",
+      "question": "What changes have been made to exceptions, exclusions, limitations, or qualifying statements?",
+      "category": "D",
+      "primary": false,
+      "applicability": "versions",
+      "prompt_version": "pair-v1"
+    },
+    {
+      "id": "p44",
+      "label": "Which modifications are likely to have the greatest significance, and why?",
+      "question": "Which modifications are likely to have the greatest significance, and why?",
+      "category": "D",
+      "primary": false,
+      "applicability": "versions",
+      "prompt_version": "pair-v1"
+    },
+    {
+      "id": "p45",
+      "label": "Has all material information from ORIGINAL been preserved in PROCESSED?",
+      "question": "Has all material information from ORIGINAL been preserved in PROCESSED?",
+      "category": "E",
+      "primary": false,
+      "applicability": "transformation",
+      "prompt_version": "pair-v1"
+    },
+    {
+      "id": "p46",
+      "label": "What information has been omitted, introduced, or altered without apparent support from ORIGINAL?",
+      "question": "What information has been omitted, introduced, or altered without apparent support from ORIGINAL?",
+      "category": "E",
+      "primary": false,
+      "applicability": "transformation",
+      "prompt_version": "pair-v1"
+    },
+    {
+      "id": "p47",
+      "label": "Has any information been duplicated, misplaced, or incorrectly associated with other content?",
+      "question": "Has any information been duplicated, misplaced, or incorrectly associated with other content?",
+      "category": "E",
+      "primary": false,
+      "applicability": "transformation",
+      "prompt_version": "pair-v1"
+    },
+    {
+      "id": "p48",
+      "label": "Have tables, numerical values, and structured data been accurately reproduced?",
+      "question": "Have tables, numerical values, and structured data been accurately reproduced?",
+      "category": "E",
+      "primary": false,
+      "applicability": "transformation",
+      "prompt_version": "pair-v1"
+    },
+    {
+      "id": "p49",
+      "label": "Have names, quotations, identifiers, and references been preserved accurately?",
+      "question": "Have names, quotations, identifiers, and references been preserved accurately?",
+      "category": "E",
+      "primary": false,
+      "applicability": "transformation",
+      "prompt_version": "pair-v1"
+    },
+    {
+      "id": "p50",
+      "label": "Have footnotes, annotations, definitions, and important supplementary information been retained?",
+      "question": "Have footnotes, annotations, definitions, and important supplementary information been retained?",
+      "category": "E",
+      "primary": false,
+      "applicability": "transformation",
+      "prompt_version": "pair-v1"
+    },
+    {
+      "id": "p51",
+      "label": "Are there indications of extraction, OCR, formatting, or document-conversion errors?",
+      "question": "Are there indications of extraction, OCR, formatting, or document-conversion errors?",
+      "category": "E",
+      "primary": false,
+      "applicability": "transformation",
+      "prompt_version": "pair-v1"
+    },
+    {
+      "id": "p52",
+      "label": "Does PROCESSED faithfully represent the meaning and conclusions of ORIGINAL? Where does it diverge?",
+      "question": "Does PROCESSED faithfully represent the meaning and conclusions of ORIGINAL? Where does it diverge?",
+      "category": "E",
+      "primary": false,
+      "applicability": "transformation",
+      "prompt_version": "pair-v1"
+    },
+    {
+      "id": "p53",
+      "label": "What numerical values, quantities, amounts, rates, and percentages are presented?",
+      "question": "What numerical values, quantities, amounts, rates, and percentages are presented?",
+      "category": "F",
+      "primary": false,
+      "applicability": "any",
+      "prompt_version": "pair-v1"
+    },
+    {
+      "id": "p54",
+      "label": "Are the calculations and numerical relationships within each document internally accurate?",
+      "question": "Are the calculations and numerical relationships within each document internally accurate?",
+      "category": "F",
+      "primary": false,
+      "applicability": "any",
+      "prompt_version": "pair-v1"
+    },
+    {
+      "id": "p55",
+      "label": "Are numerical values expressed using consistent units, scales, currencies, and conventions?",
+      "question": "Are numerical values expressed using consistent units, scales, currencies, and conventions?",
+      "category": "F",
+      "primary": false,
+      "applicability": "any",
+      "prompt_version": "pair-v1"
+    },
+    {
+      "id": "p56",
+      "label": "Which comparable numerical values differ across the two documents?",
+      "question": "Which comparable numerical values differ across the two documents?",
+      "category": "F",
+      "primary": false,
+      "applicability": "any",
+      "prompt_version": "pair-v1"
+    },
+    {
+      "id": "p57",
+      "label": "What formulas, quantitative assumptions, and calculation methodologies are explicitly described?",
+      "question": "What formulas, quantitative assumptions, and calculation methodologies are explicitly described?",
+      "category": "F",
+      "primary": false,
+      "applicability": "any",
+      "prompt_version": "pair-v1"
+    },
+    {
+      "id": "p58",
+      "label": "What events, milestones, effective dates, and deadlines are identified, and in what sequence?",
+      "question": "What events, milestones, effective dates, and deadlines are identified, and in what sequence?",
+      "category": "F",
+      "primary": false,
+      "applicability": "any",
+      "prompt_version": "pair-v1"
+    },
+    {
+      "id": "p59",
+      "label": "Are any dates, time periods, or chronological sequences inconsistent or ambiguous?",
+      "question": "Are any dates, time periods, or chronological sequences inconsistent or ambiguous?",
+      "category": "F",
+      "primary": false,
+      "applicability": "any",
+      "prompt_version": "pair-v1"
+    },
+    {
+      "id": "p60",
+      "label": "What thresholds, limits, tolerances, triggers, or cutoff values are specified?",
+      "question": "What thresholds, limits, tolerances, triggers, or cutoff values are specified?",
+      "category": "F",
+      "primary": false,
+      "applicability": "any",
+      "prompt_version": "pair-v1"
+    },
+    {
+      "id": "p61",
+      "label": "What evidence is provided to support the main claims and conclusions?",
+      "question": "What evidence is provided to support the main claims and conclusions?",
+      "category": "G",
+      "primary": false,
+      "applicability": "any",
+      "prompt_version": "pair-v1"
+    },
+    {
+      "id": "p62",
+      "label": "Which claims or conclusions lack sufficient supporting information within the documents?",
+      "question": "Which claims or conclusions lack sufficient supporting information within the documents?",
+      "category": "G",
+      "primary": false,
+      "applicability": "any",
+      "prompt_version": "pair-v1"
+    },
+    {
+      "id": "p63",
+      "label": "Are there contradictions or inconsistent statements within ORIGINAL?",
+      "question": "Are there contradictions or inconsistent statements within ORIGINAL?",
+      "category": "G",
+      "primary": false,
+      "applicability": "any",
+      "prompt_version": "pair-v1"
+    },
+    {
+      "id": "p64",
+      "label": "Are there contradictions or inconsistent statements within PROCESSED?",
+      "question": "Are there contradictions or inconsistent statements within PROCESSED?",
+      "category": "G",
+      "primary": false,
+      "applicability": "any",
+      "prompt_version": "pair-v1"
+    },
+    {
+      "id": "p65",
+      "label": "Are important terms or concepts defined or used differently within or between the documents?",
+      "question": "Are important terms or concepts defined or used differently within or between the documents?",
+      "category": "G",
+      "primary": false,
+      "applicability": "any",
+      "prompt_version": "pair-v1"
+    },
+    {
+      "id": "p66",
+      "label": "What statements could reasonably be interpreted in more than one way?",
+      "question": "What statements could reasonably be interpreted in more than one way?",
+      "category": "G",
+      "primary": false,
+      "applicability": "any",
+      "prompt_version": "pair-v1"
+    },
+    {
+      "id": "p67",
+      "label": "Which statements represent established document facts, opinions, assumptions, estimates, or predictions?",
+      "question": "Which statements represent established document facts, opinions, assumptions, estimates, or predictions?",
+      "category": "G",
+      "primary": false,
+      "applicability": "any",
+      "prompt_version": "pair-v1"
+    },
+    {
+      "id": "p68",
+      "label": "What claims would require additional evidence or independent verification before they could be relied upon?",
+      "question": "What claims would require additional evidence or independent verification before they could be relied upon?",
+      "category": "G",
+      "primary": false,
+      "applicability": "any",
+      "prompt_version": "pair-v1"
+    },
+    {
+      "id": "p69",
+      "label": "What potential risks, weaknesses, or uncertainties are apparent from the documents?",
+      "question": "What potential risks, weaknesses, or uncertainties are apparent from the documents?",
+      "category": "H",
+      "primary": false,
+      "applicability": "any",
+      "prompt_version": "pair-v1"
+    },
+    {
+      "id": "p70",
+      "label": "What consequences could arise from relying on contradictory, inaccurate, or incomplete information?",
+      "question": "What consequences could arise from relying on contradictory, inaccurate, or incomplete information?",
+      "category": "H",
+      "primary": false,
+      "applicability": "any",
+      "prompt_version": "pair-v1"
+    },
+    {
+      "id": "p71",
+      "label": "What important limitations, exceptions, exclusions, or qualifications are stated?",
+      "question": "What important limitations, exceptions, exclusions, or qualifications are stated?",
+      "category": "H",
+      "primary": false,
+      "applicability": "any",
+      "prompt_version": "pair-v1"
+    },
+    {
+      "id": "p72",
+      "label": "What potentially sensitive, personal, confidential, or restricted information is present?",
+      "question": "What potentially sensitive, personal, confidential, or restricted information is present?",
+      "category": "H",
+      "primary": false,
+      "applicability": "any",
+      "prompt_version": "pair-v1"
+    },
+    {
+      "id": "p73",
+      "label": "What restrictions on access, use, disclosure, retention, or distribution are explicitly stated?",
+      "question": "What restrictions on access, use, disclosure, retention, or distribution are explicitly stated?",
+      "category": "H",
+      "primary": false,
+      "applicability": "any",
+      "prompt_version": "pair-v1"
+    },
+    {
+      "id": "p74",
+      "label": "Are there unusual values, unexpected statements, or other anomalies that warrant closer examination?",
+      "question": "Are there unusual values, unexpected statements, or other anomalies that warrant closer examination?",
+      "category": "H",
+      "primary": false,
+      "applicability": "any",
+      "prompt_version": "pair-v1"
+    },
+    {
+      "id": "p75",
+      "label": "Which areas warrant priority human review, based on the available evidence?",
+      "question": "Which areas warrant priority human review, based on the available evidence?",
+      "category": "H",
+      "primary": false,
+      "applicability": "any",
+      "prompt_version": "pair-v1"
+    },
+    {
+      "id": "p76",
+      "label": "What potential implications could the identified differences have for decisions, responsibilities, or outcomes?",
+      "question": "What potential implications could the identified differences have for decisions, responsibilities, or outcomes?",
+      "category": "H",
+      "primary": false,
+      "applicability": "any",
+      "prompt_version": "pair-v1"
+    },
+    {
+      "id": "p77",
+      "label": "Which topics, requirements, or information categories are addressed in both documents?",
+      "question": "Which topics, requirements, or information categories are addressed in both documents?",
+      "category": "I",
+      "primary": false,
+      "applicability": "any",
+      "prompt_version": "pair-v1"
+    },
+    {
+      "id": "p78",
+      "label": "What information is included in one document but absent from the other?",
+      "question": "What information is included in one document but absent from the other?",
+      "category": "I",
+      "primary": false,
+      "applicability": "any",
+      "prompt_version": "pair-v1"
+    },
+    {
+      "id": "p79",
+      "label": "What important questions raised by the documents remain unanswered?",
+      "question": "What important questions raised by the documents remain unanswered?",
+      "category": "I",
+      "primary": false,
+      "applicability": "any",
+      "prompt_version": "pair-v1"
+    },
+    {
+      "id": "p80",
+      "label": "Which explicitly stated requirements, objectives, or criteria have not been adequately addressed?",
+      "question": "Which explicitly stated requirements, objectives, or criteria have not been adequately addressed?",
+      "category": "I",
+      "primary": false,
+      "applicability": "any",
+      "prompt_version": "pair-v1"
+    },
+    {
+      "id": "p81",
+      "label": "Can each relevant requirement or criterion be traced to corresponding supporting information?",
+      "question": "Can each relevant requirement or criterion be traced to corresponding supporting information?",
+      "category": "I",
+      "primary": false,
+      "applicability": "any",
+      "prompt_version": "pair-v1"
+    },
+    {
+      "id": "p82",
+      "label": "Which factual assertions, references, or conclusions lack identifiable supporting citations?",
+      "question": "Which factual assertions, references, or conclusions lack identifiable supporting citations?",
+      "category": "I",
+      "primary": false,
+      "applicability": "any",
+      "prompt_version": "pair-v1"
+    },
+    {
+      "id": "p83",
+      "label": "Are the main sections, footnotes, tables, annexures, and appendices internally consistent?",
+      "question": "Are the main sections, footnotes, tables, annexures, and appendices internally consistent?",
+      "category": "I",
+      "primary": false,
+      "applicability": "any",
+      "prompt_version": "pair-v1"
+    },
+    {
+      "id": "p84",
+      "label": "What information gaps prevent a complete or confident assessment?",
+      "question": "What information gaps prevent a complete or confident assessment?",
+      "category": "I",
+      "primary": false,
+      "applicability": "any",
+      "prompt_version": "pair-v1"
+    },
+    {
+      "id": "p85",
+      "label": "What decisions, approvals, or conclusions are explicitly recorded?",
+      "question": "What decisions, approvals, or conclusions are explicitly recorded?",
+      "category": "J",
+      "primary": false,
+      "applicability": "any",
+      "prompt_version": "pair-v1"
+    },
+    {
+      "id": "p86",
+      "label": "What requests, instructions, deliverables, or unresolved matters are identified?",
+      "question": "What requests, instructions, deliverables, or unresolved matters are identified?",
+      "category": "J",
+      "primary": false,
+      "applicability": "any",
+      "prompt_version": "pair-v1"
+    },
+    {
+      "id": "p87",
+      "label": "What responsibilities or commitments are assigned, and to whom?",
+      "question": "What responsibilities or commitments are assigned, and to whom?",
+      "category": "J",
+      "primary": false,
+      "applicability": "any",
+      "prompt_version": "pair-v1"
+    },
+    {
+      "id": "p88",
+      "label": "What deadlines, milestones, or time-sensitive actions are identified?",
+      "question": "What deadlines, milestones, or time-sensitive actions are identified?",
+      "category": "J",
+      "primary": false,
+      "applicability": "any",
+      "prompt_version": "pair-v1"
+    },
+    {
+      "id": "p89",
+      "label": "What dependencies, prerequisites, or conditional actions are described?",
+      "question": "What dependencies, prerequisites, or conditional actions are described?",
+      "category": "J",
+      "primary": false,
+      "applicability": "any",
+      "prompt_version": "pair-v1"
+    },
+    {
+      "id": "p90",
+      "label": "What approvals, authorizations, signatures, or sign-offs are documented or referenced?",
+      "question": "What approvals, authorizations, signatures, or sign-offs are documented or referenced?",
+      "category": "J",
+      "primary": false,
+      "applicability": "any",
+      "prompt_version": "pair-v1"
+    },
+    {
+      "id": "p91",
+      "label": "What factual clarification questions should be directed to the authors or responsible parties?",
+      "question": "What factual clarification questions should be directed to the authors or responsible parties?",
+      "category": "J",
+      "primary": false,
+      "applicability": "any",
+      "prompt_version": "pair-v1"
+    },
+    {
+      "id": "p92",
+      "label": "What follow-up steps are explicitly required or reasonably supported by the documents?",
+      "question": "What follow-up steps are explicitly required or reasonably supported by the documents?",
+      "category": "J",
+      "primary": false,
+      "applicability": "any",
+      "prompt_version": "pair-v1"
+    },
+    {
+      "id": "p93",
+      "label": "Can you create a consolidated glossary of important terms and definitions from both documents?",
+      "question": "Can you create a consolidated glossary of important terms and definitions from both documents?",
+      "category": "K",
+      "primary": false,
+      "applicability": "any",
+      "prompt_version": "pair-v1"
+    },
+    {
+      "id": "p94",
+      "label": "Can you prepare a side-by-side comparison matrix of the key facts, themes, and conclusions?",
+      "question": "Can you prepare a side-by-side comparison matrix of the key facts, themes, and conclusions?",
+      "category": "K",
+      "primary": false,
+      "applicability": "any",
+      "prompt_version": "pair-v1"
+    },
+    {
+      "id": "p95",
+      "label": "Can you construct a chronological timeline of the important events and dates?",
+      "question": "Can you construct a chronological timeline of the important events and dates?",
+      "category": "K",
+      "primary": false,
+      "applicability": "any",
+      "prompt_version": "pair-v1"
+    },
+    {
+      "id": "p96",
+      "label": "Can you consolidate all key numerical information into a structured table?",
+      "question": "Can you consolidate all key numerical information into a structured table?",
+      "category": "K",
+      "primary": false,
+      "applicability": "any",
+      "prompt_version": "pair-v1"
+    },
+    {
+      "id": "p97",
+      "label": "Can you convert the explicitly identified actions and responsibilities into a checklist?",
+      "question": "Can you convert the explicitly identified actions and responsibilities into a checklist?",
+      "category": "K",
+      "primary": false,
+      "applicability": "any",
+      "prompt_version": "pair-v1"
+    },
+    {
+      "id": "p98",
+      "label": "Can you create an evidence index linking important findings to their supporting document locations?",
+      "question": "Can you create an evidence index linking important findings to their supporting document locations?",
+      "category": "K",
+      "primary": false,
+      "applicability": "any",
+      "prompt_version": "pair-v1"
+    },
+    {
+      "id": "p99",
+      "label": "Can you generate a frequently asked questions document based on the information available?",
+      "question": "Can you generate a frequently asked questions document based on the information available?",
+      "category": "K",
+      "primary": false,
+      "applicability": "any",
+      "prompt_version": "pair-v1"
+    },
+    {
+      "id": "p100",
+      "label": "Can you prepare a concise, plain-language briefing that accurately presents the key information to the intended audience?",
+      "question": "Can you prepare a concise, plain-language briefing that accurately presents the key information to the intended audience?",
+      "category": "K",
+      "primary": false,
+      "applicability": "any",
+      "prompt_version": "pair-v1"
+    }
+  ]
+}

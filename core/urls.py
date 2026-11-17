@@ -44,6 +44,7 @@ from .views_matters import (MatterCreateView, MatterDetailView, MatterDocumentsV
 
 from .views_render import FileRenderView, FileRenderContentView
 from .views_assistant import AssistantAskView, AssistantStatusView
+from .views_pair_assistant import PairAssistantView, PairPresetsView
 from .views_backup import BackupDetailView, BackupDownloadView, BackupListView, BackupRestoreView
 urlpatterns = [
     # File Upload Endpoint
@@ -51,6 +52,8 @@ urlpatterns = [
     # Context assistant (chat with a file, folder, matter or project)
     path("assistant/ask/", AssistantAskView.as_view(), name="assistant-ask"),
     path("assistant/status/", AssistantStatusView.as_view(), name="assistant-status"),
+    path("assistant/pair/presets/", PairPresetsView.as_view(), name="pair-assistant-presets"),
+    path("assistant/pair/ask/", PairAssistantView.as_view(), name="pair-assistant-ask"),
     # Platform database backups (platform super-admins)
     path("backups/", BackupListView.as_view(), name="backup-list"),
     path("backups/<str:name>/", BackupDetailView.as_view(), name="backup-detail"),

@@ -146,7 +146,11 @@ def file_text(f: File) -> str:
         logger.info("Text extraction failed for file %s: %s", f.id, exc)
         text = ""
     if text:
-        File.objects.filter(pk=f.pk).update(content=text)
+        # An editor may save newer bytes while extraction is in progress. Never
+        # restore stale text after that save has invalidated the old extraction.
+        current = File.objects.filter(pk=f.pk, updated_at=f.updated_at, md5_hash=f.md5_hash)
+        if not current.update(content=text):
+            return ''
     return text[:MAX_TEXT_PER_FILE]
 
 
