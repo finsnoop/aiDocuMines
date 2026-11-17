@@ -471,6 +471,8 @@ CELERY_TASK_ROUTES = {
     "document_operations.tasks.*": {"queue": CELERY_FAST_QUEUE},
     "document_search.tasks.semantic_search_task": {"queue": CELERY_FAST_QUEUE},
     "core.maintenance.*": {"queue": CELERY_FAST_QUEUE},
+    "integrations.deliver_webhook": {"queue": CELERY_FAST_QUEUE},
+    "integrations.run_connector_job": {"queue": CELERY_FAST_QUEUE},   # network-bound transfers: the threaded lane
     "home_dash_analytics.orchestrator": {"queue": CELERY_FAST_QUEUE},
     "home_dash_analytics.resource_agent": {"queue": CELERY_FAST_QUEUE},
     "home_dash_analytics.cost_agent": {"queue": CELERY_FAST_QUEUE},

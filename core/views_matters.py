@@ -505,8 +505,7 @@ class MatterUploadView(APIView):
 
     def post(self, request, matter_id):
         from core.utils import save_uploaded_file
-        from core.views import queue_post_upload_processing
-        from document_operations.utils import register_file_folder_link
+        from custom_authentication.policies import upload_violation
 
         matter = _get_matter(request.user, matter_id)
         if matter.status == "closed":
@@ -518,83 +517,23 @@ class MatterUploadView(APIView):
             return Response({"error": "Rename this matter before uploading (slashes are not allowed)."},
                             status=status.HTTP_400_BAD_REQUEST)
 
-        user = request.user
-        stamp = datetime.utcnow().strftime("%Y%m%d%H%M%S")
-        base_dir = os.path.join(settings.MEDIA_ROOT, "uploads", str(tenant_id(user) or "personal"), str(user.id),
-                                matter.name, "matter", stamp[:8])
-        temp_dir = os.path.join(base_dir, "temp")
-        os.makedirs(temp_dir, exist_ok=True)
-        run = Run.objects.create(user=user, status="Pending")
-        results = []
-
-        from custom_authentication.policies import upload_violation
-
+        # The shared ingestion path (core/ingest.py): also used by every connector, so all documents arrive alike.
+        from core.ingest import MatterBatch
+        batch = MatterBatch(request.user, matter)
+        run, results = batch.run, []
         for uploaded in uploads:
-            entry = {"filename": uploaded.name}
-            reason = upload_violation(user, uploaded.name, uploaded.size)
-            if reason:
-                entry.update(status="rejected", message=reason)
-                results.append(entry)
+            reason = upload_violation(request.user, uploaded.name, uploaded.size)
+            if reason:                         # checked before anything is written to disk
+                results.append({"filename": uploaded.name, "status": "rejected", "message": reason})
                 continue
             try:
-                meta = save_uploaded_file(uploaded, temp_dir)
+                meta = save_uploaded_file(uploaded, batch.temp_dir())
             except ValueError as exc:
-                entry.update(status="rejected", message=str(exc))
-                results.append(entry)
+                results.append({"filename": uploaded.name, "status": "rejected", "message": str(exc)})
                 continue
-            if not meta.get("file_size"):
-                os.remove(meta["file_path"])
-                entry.update(status="rejected", message="This file is empty.")
-                results.append(entry)
-                continue
-
-            existing = File.objects.filter(user=user, md5_hash=meta["md5_hash"]).first()
-            if existing:
-                os.remove(meta["file_path"])
-                if existing.project_id == matter.name:
-                    entry.update(status="duplicate", file_id=existing.id, message="Already in this matter.")
-                    results.append(entry)
-                    continue
-                copy = File.objects.create(
-                    run=run, storage=existing.storage, filename=existing.filename, filepath=existing.filepath,
-                    file_size=existing.file_size, file_type=existing.file_type, md5_hash=None,
-                    user=user, project_id=matter.name, service_id="matter", origin_file=existing,
-                    extension=existing.extension, content=existing.content, status=existing.status,
-                )
-                register_file_folder_link(copy)
-                entry.update(status="added", file_id=copy.id, message="Added from your existing documents.")
-                results.append(entry)
-                continue
-
-            final_path = os.path.join(base_dir, f"{stamp[8:]}_{meta['filename']}")
-            os.rename(meta["file_path"], final_path)
-            storage = Storage.objects.create(user=user, content_type=ContentType.objects.get_for_model(run),
-                                             object_id=run.run_id, upload_storage_location=final_path)
-            ext = os.path.splitext(meta["filename"])[1].lstrip(".").lower()[:10] or "unknown"
-            try:
-                fresh = File.objects.create(
-                    run=run, storage=storage, filename=meta["filename"], filepath=final_path,
-                    file_size=meta["file_size"],
-                    file_type=meta.get("file_type") or mimetypes.guess_type(meta["filename"])[0] or "application/octet-stream",
-                    md5_hash=meta["md5_hash"], user=user, project_id=matter.name, service_id="matter", extension=ext,
-                )
-            except IntegrityError:
-                entry.update(status="duplicate", message="Already uploaded.")
-                results.append(entry)
-                continue
-            register_file_folder_link(fresh)
-            try:
-                queue_post_upload_processing(user, run, fresh, matter.name, "matter")
-            except Exception:  # processing is best-effort; the document is stored either way
-                logger.exception("Post-upload processing could not be queued for file %s", fresh.id)
-            entry.update(status="uploaded", file_id=fresh.id, message="Uploaded.")
-            results.append(entry)
-
-        try:
-            os.rmdir(temp_dir)
-        except OSError:
-            pass
-        _touch(matter)
+            results.append(batch.add(meta["file_path"], meta["filename"], meta.get("file_size") or 0, meta["md5_hash"],
+                                     meta.get("file_type")))
+        batch.finish()
         ok = sum(1 for r in results if r["status"] in ("uploaded", "added"))
         code = status.HTTP_201_CREATED if ok else status.HTTP_200_OK
         return Response({"matter_id": str(matter.id), "run_id": str(run.run_id), "uploaded": ok, "files": results}, status=code)

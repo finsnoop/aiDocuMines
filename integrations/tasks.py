@@ -178,3 +178,35 @@ def sync_user_to_nextcloud_host(self, user_id, client_id):
         print(f"[sync_user_to_nextcloud_host] ERROR: {str(e)}")
         raise self.retry(exc=e)
 
+
+
+# ── Connectors (Google Drive, Dropbox, OneDrive, …): background transfers and webhook delivery ──
+
+@shared_task(name="integrations.run_connector_job", ignore_result=True, soft_time_limit=3600, time_limit=3700)
+def run_connector_job(job_id):
+    from integrations.connectors import run_job
+    from integrations.models import ConnectorJob
+    job = ConnectorJob.objects.select_related("user").filter(pk=job_id, status="queued").first()
+    if job:
+        run_job(job)
+
+
+@shared_task(bind=True, name="integrations.deliver_webhook", ignore_result=True, max_retries=4, default_retry_delay=30)
+def deliver_webhook(self, account_id, event, data):
+    """POST one signed event; retried with back-off when the receiver is down (never on a 4xx answer)."""
+    from integrations.connectors import deliver
+    from integrations.models import ConnectorAccount
+    from integrations.providers import ConnectorError
+    acc = ConnectorAccount.objects.filter(pk=account_id).first()
+    if not acc or not acc.extra.get("webhook_url"):
+        return
+    try:
+        code = deliver(acc, event, data)
+    except ConnectorError as exc:
+        IntegrationLog.objects.create(user=acc.user, connector=acc.service[:50], status="failed",
+                                      details=f"{event}: {exc}")
+        return
+    except Exception as exc:
+        raise self.retry(exc=exc, countdown=30 * (2 ** self.request.retries))
+    if code >= 500:
+        raise self.retry(countdown=30 * (2 ** self.request.retries))

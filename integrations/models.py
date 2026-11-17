@@ -3,6 +3,8 @@
 from django.db import models
 from django.contrib.auth import get_user_model
 
+from core.fields.encrypted_char import EncryptedCharField
+
 User = get_user_model()
 
 class IntegrationLog(models.Model):
@@ -75,3 +77,47 @@ class ConnectorEndpointRequest(models.Model):
     def __str__(self):
         return f"{self.user_id} requested {self.source}"
 
+
+
+class ConnectorAccount(models.Model):
+    """One user's connection to an external service (OAuth tokens, or a webhook for Zapier / Make).
+
+    Secrets are encrypted at rest (AES-GCM, ENCRYPTION_SECRET_KEY) and never returned by the API.
+    """
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name="connector_accounts")
+    service = models.CharField(max_length=40)
+    account_label = models.CharField(max_length=255, blank=True, default="")   # e.g. the connected email
+    access_token = EncryptedCharField(max_length=8000, blank=True, default="")
+    refresh_token = EncryptedCharField(max_length=8000, blank=True, default="")
+    expires_at = models.DateTimeField(null=True, blank=True)
+    scopes = models.TextField(blank=True, default="")
+    extra = models.JSONField(default=dict, blank=True)        # non-secret: instance URL, site ids, webhook URL
+    webhook_secret = EncryptedCharField(max_length=512, blank=True, default="")   # signs outbound events
+    inbound_token_hash = models.CharField(max_length=64, blank=True, default="", db_index=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        constraints = [models.UniqueConstraint(fields=["user", "service"], name="uniq_user_connector_account")]
+
+    def __str__(self):
+        return f"{self.user_id} -> {self.service}"
+
+
+class ConnectorJob(models.Model):
+    """An import or export between aiDocuMines and a connector, run in the background."""
+    KIND_CHOICES = [("import", "Import"), ("export", "Export")]
+    STATUS_CHOICES = [("queued", "Queued"), ("running", "Running"), ("done", "Done"), ("failed", "Failed")]
+
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name="connector_jobs")
+    service = models.CharField(max_length=40)
+    kind = models.CharField(max_length=10, choices=KIND_CHOICES)
+    status = models.CharField(max_length=10, choices=STATUS_CHOICES, default="queued")
+    request = models.JSONField(default=dict)
+    results = models.JSONField(default=list)
+    error = models.TextField(blank=True, default="")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["-created_at"]

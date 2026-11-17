@@ -366,19 +366,20 @@ class ConnectorImportView(APIView):
             from datetime import datetime
             import tempfile
 
+            from core.ingest import MatterBatch, matter_for_ingest
+            from integrations.connectors import entry_result
+
             user = request.user
             file_ids = request.data.get("file_ids", [])
-            project_id = request.data.get("project_id", "default")
-            service_id = request.data.get("service_id", "nextcloud")
 
             if not file_ids:
                 return Response({"error": "file_ids is required"}, status=status.HTTP_400_BAD_REQUEST)
-
-            run = Run.objects.create(user=user, status="Pending")
-
-            oauth_app = Application.objects.filter(user=user).first()
-            client_id = oauth_app.client_id if oauth_app else str(user.id)
-            timestamp = datetime.utcnow().strftime("%Y%m%d%H%M%S")
+            try:
+                # Into a matter, exactly like Matters -> Upload (core/ingest.py)
+                batch = MatterBatch(user, matter_for_ingest(user, request.data.get("matter_id")), source="nextcloud")
+            except ValueError as exc:
+                return Response({"error": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+            run = batch.run
 
             results = []
             successful = 0
@@ -387,31 +388,12 @@ class ConnectorImportView(APIView):
             for nc_path in file_ids:
                 try:
                     content = nc_download_file(user, nc_path)
-                    filename = nc_path.split("/")[-1] if "/" in nc_path else nc_path
-                    filename = sanitize_filename(filename)
-
-                    with tempfile.NamedTemporaryFile(delete=False, suffix="_" + filename) as tmp:
-                        tmp.write(content)
-                        tmp_path = tmp.name
-
-                    fp = finalize_uploaded_file(
-                        user=user,
-                        run=run,
-                        project_id=project_id,
-                        service_id=service_id,
-                        file_path=tmp_path,
-                        filename=filename,
-                        client_id=client_id,
-                        folder_name=None,
-                        timestamp=timestamp,
-                    )
-
-                    results.append({
-                        "external_id": nc_path,
-                        "file_id": fp["file_id"],
-                        "filename": filename,
-                        "status": "success",
-                    })
+                    filename = sanitize_filename(nc_path.split("/")[-1] if "/" in nc_path else nc_path)
+                    result = entry_result(batch.add_stream(filename, iter([content])), external_id=nc_path)
+                    results.append(result)
+                    if result["status"] != "success":
+                        failed += 1
+                        continue
                     successful += 1
 
                 except Exception as e:
@@ -424,9 +406,9 @@ class ConnectorImportView(APIView):
                     })
                     failed += 1
 
+            batch.finish()
             UserInsights.objects.filter(user=user).delete()
             generate_insights_for_user.delay(user.id)
-            process_bulk_metadata.delay(str(run.run_id))
 
             return Response({
                 "run_id": str(run.run_id),
