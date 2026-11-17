@@ -1,7 +1,7 @@
 """
 POST /api/v1/core/assistant/ask/
 {
-  "context":  {"type": "file|folder|matter|project", "id": ..., "project_id": ..., "service_id": ...},
+  "context":  {"type": "file|folder|matter|project|documents", "id": ..., "project_id": ..., "service_id": ...},
   "question": "What is the notice period?",
   "history":  [{"role": "user|assistant", "content": "..."}],   optional, last 10 used
   "web":      false,                                            include public web results
@@ -11,6 +11,10 @@ POST /api/v1/core/assistant/ask/
     "web": "used|off|disabled|not_configured|not_permitted", "context": {type, label, files_in_scope, files_read}}
 
 GET /api/v1/core/assistant/status/  -> what the caller may do (assistant, web) for the UI.
+
+The Documents page uses {"type":"documents", "file_ids":[...]} for an explicit
+selection (at most 200), or {"type":"documents", "filters":{...}} for its full
+filtered library. Both are resolved on the server against the caller's ACLs.
 """
 import logging
 import os
@@ -64,8 +68,6 @@ class AssistantAskView(APIView):
     throttle_classes = [AssistantThrottle]
 
     def post(self, request):
-        from grid_documents_interrogation.utils import dispatch_to_llm
-
         user = request.user
         if not _assistant_allowed(user):
             return Response({"error": "The assistant is not available for your role or organisation."},
@@ -75,8 +77,20 @@ class AssistantAskView(APIView):
             return Response({"error": "Ask a question."}, status=status.HTTP_400_BAD_REQUEST)
         question = question[:MAX_QUESTION]
 
-        ctx = resolve_context(user, request.data.get("context") or {})   # raises 404 when not readable
+        ctx = resolve_context(user, request.data.get("context", {}))   # raises 404 when not readable
         sources = build_sources(question, ctx, user)
+
+        # Empty filtered libraries have no evidence to send to a model. Return
+        # an honest result even when no local AI provider is configured.
+        if ctx.kind == "documents" and not sources:
+            answer = ("No accessible documents match these filters. Change the filters or select documents to ask about."
+                      if not ctx.files else
+                      "No readable document text was found in this selection. Open the documents or run text extraction before asking about their contents.")
+            _log(user, ctx, request.data.get("context") or {}, question, 0, "off")
+            return Response({"answer": answer, "sources": [], "web_sources": [], "web": "off",
+                             "context": _context_response(ctx), "model": {"provider": None, "model": None}})
+
+        from grid_documents_interrogation.utils import dispatch_to_llm
 
         web_state, web_results = "off", []
         if request.data.get("web"):
@@ -121,10 +135,20 @@ class AssistantAskView(APIView):
             "sources": sources,
             "web_sources": [{"label": f"W{i + 1}", "title": w["title"], "url": w["url"]} for i, w in enumerate(web_results)],
             "web": web_state,
-            "context": {"type": ctx.kind, "label": ctx.label, "files_in_scope": ctx.total_in_scope,
-                        "files_read": len(ctx.files)},
+            "context": _context_response(ctx),
             "model": {"provider": provider, "model": model},
         })
+
+
+def _context_response(ctx):
+    result = {"type": ctx.kind, "label": ctx.label, "files_in_scope": ctx.total_in_scope,
+              "files_read": len(ctx.files)}
+    if ctx.kind == "documents":
+        result.update({"scope_mode": ctx.scope_mode, "count_is_capped": ctx.count_is_capped,
+                       "coverage": "partial" if ctx.coverage_partial or ctx.count_is_capped or len(ctx.files) < ctx.total_in_scope else "complete"})
+        if ctx.scope_mode == "filters":
+            result["filters"] = ctx.filters
+    return result
 
 
 def _log(user, ctx, spec, question, n_sources, web_state):

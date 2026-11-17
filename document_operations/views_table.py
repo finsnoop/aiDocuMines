@@ -8,22 +8,16 @@ Built for very large libraries: rows come one page at a time from an indexed
 ordering, and the total is counted exactly only up to 10,000 (then "10,000+"),
 because exact counts over billions of rows are slow and nobody pages that far.
 """
-from django.db.models import Q
+from django.db.models import Case, IntegerField, Q, Value, When
+from django.http import Http404
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from core.access import accessible_files
+from core.access import can_access_file, get_folder_for_user, is_platform_superuser, is_tenant_admin, tenant_id, user_role_names
+from .document_query import COUNT_CAP, FILTER_FIELDS, accessible_document_query, document_filters, folder_ids_below
 
-COUNT_CAP = 10_000
 MAX_PAGE_SIZE = 100
-ORDERING = {
-    "name": "filename", "-name": "-filename",
-    "size": "file_size", "-size": "-file_size",
-    "modified": "updated_at", "-modified": "-updated_at",
-    "matter": "project_id", "-matter": "-project_id",
-    "created": "created_at", "-created": "-created_at",
-}
 
 
 def _int(v, default, lo, hi):
@@ -42,37 +36,9 @@ class DocumentTableView(APIView):
         page = _int(qp.get("page"), 1, 1, 100_000)
         size = _int(qp.get("page_size"), 50, 1, MAX_PAGE_SIZE)
 
-        qs = accessible_files(user).exclude(document_type="deliverable")
-        scope = qp.get("scope", "all")
-        if scope == "mine":
-            qs = qs.filter(user=user)
-        elif scope == "shared":
-            qs = qs.exclude(user=user)
-        search = (qp.get("search") or "").strip()[:200]
-        if search:
-            qs = qs.filter(Q(filename__icontains=search) | Q(project_id__icontains=search))
-        for field in ("project_id", "service_id"):
-            if qp.get(field):
-                qs = qs.filter(**{field: qp[field][:255]})
-        if qp.get("extension"):
-            qs = qs.filter(extension__iexact=qp["extension"][:10])
-        folder = (qp.get("folder") or "").strip()
-        if folder:
-            # A folder chosen in the Locations tree: documents in it and in every folder below it. Starts from
-            # the caller's accessible files, so naming someone else's folder reveals nothing new.
-            import uuid
-            from core.assistant import _folder_ids_below
-            from document_operations.models import FileFolderLink
-            try:
-                root = uuid.UUID(folder)
-            except ValueError:
-                return Response({"error": "Unknown folder."}, status=400)
-            in_folder = FileFolderLink.objects.filter(folder_id__in=_folder_ids_below(root), is_trashed=False)
-            qs = qs.filter(id__in=in_folder.values("file_id"))
-
-        ordering = ORDERING.get(qp.get("ordering", ""), "-updated_at")
+        qs = accessible_document_query(user, {name: qp[name] for name in FILTER_FIELDS if name in qp})
         start = (page - 1) * size
-        rows = list(qs.select_related("user").order_by(ordering, "-id")[start: start + size + 1])
+        rows = list(qs.select_related("user")[start: start + size + 1])
         has_next = len(rows) > size
         rows = rows[:size]
 
@@ -112,10 +78,8 @@ class DocumentFacetsView(APIView):
     LIMIT = 200
 
     def get(self, request):
-        qs = accessible_files(request.user).exclude(document_type="deliverable").order_by()
-        project = (request.query_params.get("project_id") or "").strip()[:255]
-        if project:
-            qs = qs.filter(project_id=project)
+        filters = {"project_id": request.query_params["project_id"]} if "project_id" in request.query_params else {}
+        qs = accessible_document_query(request.user, filters).order_by()
 
         def distinct(field):
             return sorted({v for v in qs.values_list(field, flat=True).distinct()[: self.LIMIT] if v})
@@ -125,3 +89,69 @@ class DocumentFacetsView(APIView):
             "services": distinct("service_id"),
             "extensions": [e.lower() for e in distinct("extension")],
         })
+
+
+class DocumentActionContextView(APIView):
+    """Resolve one row lazily to the link identity used by Sidebar operations.
+
+    A file can have aliases in private folders. Reading the file is insufficient
+    to expose one of those folders, so only links in viewable folders are used.
+    No links are fetched per row during normal table pagination.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, file_id):
+        from core.utils import get_logical_path
+        from document_operations.models import EffectiveAccess, FileFolderLink
+
+        user = request.user
+        f = accessible_document_query(user).select_related("user").filter(pk=file_id).first()
+        if f is None:
+            raise Http404("File not found.")
+        filters = document_filters({"folder": request.query_params.get("folder")})
+        links = FileFolderLink.objects.filter(file=f, is_trashed=False, folder__is_trashed=False)
+        if not is_platform_superuser(user):
+            folders = Q(folder__user=user)
+            tid = tenant_id(user)
+            if tid is not None:
+                same_tenant = Q(folder__user__client_id=tid)
+                if is_tenant_admin(user):
+                    folders |= same_tenant
+                else:
+                    granted = EffectiveAccess.objects.filter(user=user, can_download=True, folder__isnull=False)
+                    folders |= same_tenant & Q(folder_id__in=granted.values("folder_id"))
+            links = links.filter(folders)
+        if filters.get("folder"):
+            import uuid
+            folder = get_folder_for_user(user, uuid.UUID(filters["folder"]), "view")
+            if folder.is_trashed:
+                raise Http404("Folder not found.")
+            links = links.filter(folder_id__in=folder_ids_below(folder.pk))
+        preference = []
+        if filters.get("folder"):
+            preference.append(When(folder_id=filters["folder"], then=Value(0)))
+        preference.append(When(folder__user=user, then=Value(1)))
+        link = links.select_related("folder").order_by(
+            Case(*preference, default=Value(2), output_field=IntegerField()), "pk").first()
+        restricted = user_role_names(user) == {"Guest"}
+        permissions = {"read": True}
+        permissions.update({action: not restricted and can_access_file(user, f, action)
+                            and (link is not None or action == "process")
+                            for action in ("rename", "move", "delete", "share", "process")})
+        node = None
+        if link is not None:
+            url = get_logical_path(f.filepath, f.filename)
+            node = {
+                "key": str(link.pk), "id": link.pk, "fileFolderLinkId": link.pk,
+                "label": f.filename, "name": f.filename,
+                "extention": (f.extension or "").lower(), "size": f.file_size,
+                "download_url": url, "created_at": f.created_at, "updated_at": f.updated_at,
+                "data": {"type": "file", "file_id": f.id, "project_id": f.project_id,
+                         "service_id": f.service_id, "folder_id": str(link.folder_id),
+                         "parent_folder_id": str(link.folder_id), "file_size": f.file_size,
+                         "download_url": url, "is_trashed": False},
+            }
+        return Response({"node": node, "permissions": permissions,
+                         "file": {"id": f.id, "filename": f.filename, "extension": f.extension,
+                                  "file_size": f.file_size, "matter": f.project_id, "service": f.service_id,
+                                  "created_at": f.created_at, "updated_at": f.updated_at}})

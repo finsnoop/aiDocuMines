@@ -22,7 +22,7 @@ from .views import (
     FileAliasView, FileAliasDetailView, FolderAliasView, FolderAliasDetailView,
 )
 
-from .views_table import DocumentFacetsView, DocumentTableView
+from .views_table import DocumentActionContextView, DocumentFacetsView, DocumentTableView
 
 urlpatterns = [
     # FOLDER OPERATIONS
@@ -31,6 +31,7 @@ urlpatterns = [
     # Flat, paginated document table (all accessible documents)
     path("table/", DocumentTableView.as_view(), name="document_table"),
     path("table/facets/", DocumentFacetsView.as_view(), name="document_table_facets"),
+    path("table/<int:file_id>/context/", DocumentActionContextView.as_view(), name="document_action_context"),
     path("folders/", FolderListCreateView.as_view(), name="folder_list_create"),
     path("folders/create-child/", CreateChildFolderView.as_view(), name="folder_create_child"),
     path("files/<int:pk>/trash/", TrashSingleFileView.as_view(), name="trash-file"),
