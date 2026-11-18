@@ -32,7 +32,7 @@ for arg in "$@"; do
 done
 
 APP_CONTAINERS=(aidocumines_web aidocumines_celery aidocumines_celery_fast aidocumines_celery_beat aidocumines_file_monitor)
-INFRA_CONTAINERS=(aidocumines_api_layer_db aidocumines_redis aidocumines_milvus aidocumines_elasticsearch aidocumines_litellm)
+INFRA_CONTAINERS=(aidocumines_api_layer_db aidocumines_redis aidocumines_milvus_etcd aidocumines_milvus aidocumines_elasticsearch aidocumines_ollama aidocumines_litellm)
 
 # ──────────────────────────────────────────────────────────
 # Preflight: refuse to restart into a configuration that cannot start
@@ -105,11 +105,34 @@ restart_app_containers() {
   done
 }
 
+# A failed dependency may be Milvus or a worker, even while PostgreSQL is healthy.
+# Report state and the right log command without dumping environment/configuration.
+report_unready_containers() {
+  local name status health code oom
+  for name in "${INFRA_CONTAINERS[@]}" "${APP_CONTAINERS[@]}" onlyoffice-db onlyoffice; do
+    status=$(docker inspect --format '{{.State.Status}}' "$name" 2>/dev/null | tr -d '[:space:]' || true)
+    [ -n "$status" ] || continue
+    health=$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' "$name" 2>/dev/null | tr -d '[:space:]' || true)
+    if [ "$status" = running ]; then
+      case "$health" in healthy|none|starting) continue ;; esac
+    fi
+    code=$(docker inspect --format '{{.State.ExitCode}}' "$name" 2>/dev/null | tr -d '[:space:]' || true)
+    oom=$(docker inspect --format '{{.State.OOMKilled}}' "$name" 2>/dev/null | tr -d '[:space:]' || true)
+    printf '%s: status=%s health=%s exit=%s oom=%s\n' "$name" "$status" "${health:-none}" "$code" "$oom"
+    printf 'Inspect logs: docker logs --tail 120 %s\n' "$name"
+  done
+}
+
 # The compose project the running containers belong to (so `up` updates them in place
 # instead of colliding with them under a different project name).
 PROJECT="$(docker inspect --format '{{ index .Config.Labels "com.docker.compose.project" }}' aidocumines_web 2>/dev/null | tr -d '[:space:]' || true)"
 COMPOSE=(docker compose -f docker-compose.yml)
 [ -n "$PROJECT" ] && COMPOSE=(docker compose -p "$PROJECT" -f docker-compose.yml)
+source ./deploy/recovery-lock.sh
+# Explicit queue purges / legacy restarts must not race an offline metadata backup either.
+if [ "$PURGE" -eq 1 ] || [ "$RESTART_ONLY" -eq 1 ]; then
+  acquire_recovery_lock wait || exit 1
+fi
 
 # ──────────────────────────────────────────────────────────
 # Optional: empty the task queues before the workers come back
@@ -141,12 +164,39 @@ else
     echo -e "${RED}   serving. Do NOT restart them by hand — the pulled code expects the new database TLS settings.${NC}"
     exit 1
   fi
+  # Fetch the metadata image before stopping the old embedded store. Cached images
+  # allow a subsequent deployment to proceed without contacting the registry.
+  if ! docker image inspect quay.io/coreos/etcd:v3.5.23 >/dev/null 2>&1; then
+    if ! "${COMPOSE[@]}" pull milvus_etcd; then
+      echo -e "${RED}✗  Could not fetch the Milvus metadata image. Metadata preparation was not started.${NC}"
+      exit 1
+    fi
+  fi
+  if [ -z "$PROJECT" ]; then
+    # On a fresh installation there is no web container label yet. Ask Compose
+    # for its resolved project name, honoring COMPOSE_PROJECT_NAME and name:.
+    # Only that non-secret top-level value is emitted by the filter.
+    PROJECT=$("${COMPOSE[@]}" config --format yaml | sed -n 's/^name:[[:space:]]*//p' | tr -d "\"'[:space:]") || exit 1
+    if [[ ! "$PROJECT" =~ ^[a-z0-9][a-z0-9_-]*$ ]]; then
+      echo -e "${RED}✗  Could not resolve the Compose project identity; metadata preparation was not started.${NC}"
+      exit 1
+    fi
+  fi
+  # The active watchdog must not restart embedded Milvus while its metadata is
+  # being backed up, or between preparation and the new Compose handoff.
+  acquire_recovery_lock wait || exit 1
+  if ! AIDOCUMINES_COMPOSE_PROJECT="$PROJECT" bash ./deploy/prepare-milvus-etcd.sh; then
+    echo -e "${RED}✗  Milvus metadata preparation failed. Deployment was stopped before 'docker compose up'.${NC}"
+    exit 1
+  fi
   if "${COMPOSE[@]}" up -d --remove-orphans; then
     echo -e "${GREEN}✓  compose file applied (migrations ran in db_prepare)${NC}"
     # Containers whose settings did not change were left running: restart them for the new code.
     restart_app_containers
   else
-    echo -e "${RED}✗  'docker compose up' failed (see the message above). Check: docker compose ps -a; docker logs aidocumines_api_layer_db${NC}"
+    echo -e "${RED}✗  'docker compose up' failed. Container status and affected log commands follow:${NC}"
+    "${COMPOSE[@]}" ps -a || true
+    report_unready_containers
     exit 1
   fi
 fi

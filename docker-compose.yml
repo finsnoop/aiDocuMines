@@ -335,19 +335,51 @@ services:
       db_prepare: { condition: service_completed_successfully }
     networks: [captain-overlay-network]
 
-  # Milvus standalone with its own embedded etcd and local disk storage: one container,
-  # no MinIO (its Docker Hub images are no longer published). Data lives in milvus-data.
+  # Keep the existing embedded-etcd member directory, but run the SAME etcd
+  # version separately so leader election finishes before Milvus initializes
+  # sessions. Run deploy/prepare-milvus-etcd.sh before applying this
+  # migration to an existing deployment. Never start both metadata writers.
+  milvus_etcd:
+    image: quay.io/coreos/etcd:v3.5.23
+    container_name: aidocumines_milvus_etcd
+    restart: unless-stopped
+    mem_limit: ${MILVUS_ETCD_MEM_LIMIT:-512m}
+    logging: *logging
+    command:
+      - etcd
+      - --name=default
+      - --data-dir=/var/lib/milvus/etcd
+      - --listen-client-urls=http://0.0.0.0:2379
+      - --advertise-client-urls=http://milvus_etcd:2379
+      - --listen-peer-urls=http://localhost:2380
+      - --initial-advertise-peer-urls=http://localhost:2380
+      - --initial-cluster=default=http://localhost:2380
+      - --quota-backend-bytes=4294967296
+      - --auto-compaction-mode=revision
+      - --auto-compaction-retention=1000
+    volumes:
+      - milvus-data:/var/lib/milvus
+    networks: [milvus-metadata]
+    healthcheck:
+      test: [CMD, etcdctl, --endpoints=http://127.0.0.1:2379, --command-timeout=5s, endpoint, health]
+      interval: 5s
+      timeout: 8s
+      start_period: 20s
+      retries: 20
+
+  # Vector/RocksMQ/local storage and the Milvus image stay unchanged. Metadata
+  # has no host ports and is isolated from the shared CapRover network.
   milvus:
     image: milvusdb/milvus:v2.6.17
     container_name: aidocumines_milvus
+    entrypoint: [/tini, --, /bin/sh, /milvus/wait-for-etcd.sh]
     command: ["milvus", "run", "standalone"]
     restart: unless-stopped
     mem_limit: ${MILVUS_MEM_LIMIT:-4g}
     logging: *logging
     environment:
-      ETCD_USE_EMBED: "true"
-      ETCD_DATA_DIR: /var/lib/milvus/etcd
-      ETCD_CONFIG_PATH: /milvus/configs/embedEtcd.yaml
+      ETCD_USE_EMBED: "false"
+      ETCD_ENDPOINTS: milvus_etcd:2379
       COMMON_STORAGETYPE: local
       DEPLOY_MODE: STANDALONE
     ports:
@@ -355,14 +387,16 @@ services:
       - "127.0.0.1:9091:9091"
     volumes:
       - milvus-data:/var/lib/milvus
-      - ./deploy/milvus/embedEtcd.yaml:/milvus/configs/embedEtcd.yaml:ro
+      - ./deploy/milvus/wait-for-etcd.sh:/milvus/wait-for-etcd.sh:ro
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:9091/healthz"]
       interval: 20s
       timeout: 5s
       start_period: 90s
       retries: 10
-    networks: [captain-overlay-network]
+    depends_on:
+      milvus_etcd: { condition: service_healthy }
+    networks: [captain-overlay-network, milvus-metadata]
 
   elasticsearch:
     image: docker.elastic.co/elasticsearch/elasticsearch:8.19.25
@@ -454,6 +488,8 @@ volumes:
   onlyoffice_postgresql:
 
 networks:
+  milvus-metadata:
+    internal: true
   captain-overlay-network:
     external: true
 

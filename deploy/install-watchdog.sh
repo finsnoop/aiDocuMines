@@ -11,6 +11,13 @@ SCRIPT="$ROOT/deploy/watchdog.sh"
 [ "$(id -u)" -eq 0 ] || { echo "Run as root (sudo)." >&2; exit 1; }
 chmod +x "$SCRIPT"
 
+# The timer cannot recover containers after boot unless Docker itself starts at boot.
+# Surface the real systemctl error and stop before enabling the watchdog if this fails.
+if ! systemctl enable docker; then
+  echo "ERROR: Could not enable Docker at boot. Watchdog installation did not complete." >&2
+  exit 1
+fi
+
 cat > /etc/systemd/system/aidocumines-watchdog.service <<EOF
 [Unit]
 Description=aiDocuMines container watchdog
@@ -37,8 +44,6 @@ EOF
 
 systemctl daemon-reload
 systemctl enable --now aidocumines-watchdog.timer
-# Docker itself must come back after a reboot or a crash of the daemon.
-systemctl enable docker >/dev/null 2>&1 || true
 echo "Watchdog installed. Next runs:"
 systemctl list-timers aidocumines-watchdog.timer --no-pager || true
 
