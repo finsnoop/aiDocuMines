@@ -96,12 +96,12 @@ class DocumentTableTests(TestCase):
             FileFolderLink.objects.create(file=f, folder=folder)
         names = sorted(d["filename"] for d in self._get(self.user, f"?folder={top.id}&page_size=100")["results"])
         self.assertEqual(names, ["msa.pdf", "nda-signed.pdf"])
-        # someone else's folder id never shows them anything they cannot already open
+        # someone else's folder id reveals nothing, not even that the folder exists
         theirs = get_or_create_folder_tree(["Private"], user=self.stranger, project_id="Atlas", service_id="matter")
-        self.assertEqual(self._get(self.user, f"?folder={theirs.id}")["results"], [])
         from rest_framework.test import APIClient
         c2 = APIClient()
         c2.force_authenticate(user=self.user)
+        self.assertEqual(c2.get(f"/api/v1/documents/table/?folder={theirs.id}").status_code, 404)
         self.assertEqual(c2.get("/api/v1/documents/table/?folder=not-a-uuid").status_code, 400)
 
     def test_facets(self):

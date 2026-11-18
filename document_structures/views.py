@@ -6,6 +6,7 @@ from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
 from django.shortcuts import get_object_or_404
+from django.db import transaction
 from oauth2_provider.contrib.rest_framework import TokenHasReadWriteScope
 from custom_authentication.authentication import ClientBoundOAuth2Authentication as OAuth2Authentication
 from custom_authentication.permissions import IsClientOrAdminOrSuperUser
@@ -15,7 +16,7 @@ from drf_yasg import openapi
 
 from core.models import File
 from document_structures import models, tasks, serializers
-from core.access import get_file_for_user, get_scoped_or_404, get_run_for_user, scope_by_file, scope_by_owner
+from core.access import get_file_for_user, get_scoped_or_404, get_run_for_user, scope_by_file, scope_by_owner, user_has_perm
 
 logger = logging.getLogger(__name__)
 
@@ -62,6 +63,8 @@ class SubmitDocumentPartitionAPIView(APIView):
         client_secret = request.headers.get("X-Client-Secret")
         file_id = request.query_params.get("file_id")
         partition_strategy = request.query_params.get("partition_strategy", "partition_auto")
+        if partition_strategy not in {"partition_pdf", "partition_text", "partition_auto"}:
+            return Response({"error": "Unknown partition strategy."}, status=400)
 
         # New parameters for report generation
         project_id = request.query_params.get("project_id")
@@ -74,11 +77,10 @@ class SubmitDocumentPartitionAPIView(APIView):
         user = request.user
         if not user:
             return Response({"error": "Invalid client ID"}, status=status.HTTP_403_FORBIDDEN)
+        if not user_has_perm(user, "structure.analyze"):
+            return Response({"error": "Your role cannot analyze document structure."}, status=403)
 
-        file_instance = get_file_for_user(request.user, file_id)
-
-        if str(file_instance.user.id) != str(user.id):
-            return Response({"error": "You are not authorized to process this file."}, status=status.HTTP_403_FORBIDDEN)
+        file_instance = get_file_for_user(request.user, file_id, "process")
 
         force = request.query_params.get("force", "false").lower() == "true"
 
@@ -96,11 +98,6 @@ class SubmitDocumentPartitionAPIView(APIView):
                 "status": existing.status
             }, status=status.HTTP_200_OK)
 
-        # Optional safety: delete old run if forcing
-        if existing and force:
-            logger.warning(f"Force rerun requested. Deleting previous run {existing.id}")
-            existing.delete()
-
         # Create new structure run
         ds_run = models.DocumentStructureRun.objects.create(
             id=str(uuid.uuid4()),
@@ -112,13 +109,13 @@ class SubmitDocumentPartitionAPIView(APIView):
         )
 
         # Pass report generation parameters to the task
-        tasks.run_document_partition_task.delay(
+        transaction.on_commit(lambda: tasks.run_document_partition_task.delay(
             str(ds_run.id),
             store_embeddings=True,
-            project_id=project_id,
-            service_id=service_id,
+            project_id=file_instance.project_id,
+            service_id=file_instance.service_id,
             generate_report=generate_report
-        )
+        ))
 
         return Response({
             "document_structure_run_id": str(ds_run.id),
@@ -155,10 +152,7 @@ class DocumentStructureRunStatusAPIView(APIView):
         if not user:
             return Response({"error": "Invalid client ID"}, status=status.HTTP_403_FORBIDDEN)
 
-        ds_run = get_object_or_404(models.DocumentStructureRun, id=ds_run_id)
-
-        if str(ds_run.user.id) != str(user.id):
-            return Response({"error": "Not authorized to view this document structure run."}, status=status.HTTP_403_FORBIDDEN)
+        ds_run = get_scoped_or_404(user, models.DocumentStructureRun, "file", id=ds_run_id)
 
         serialized = serializers.DocumentStructureRunSerializer(ds_run)
         data = serialized.data

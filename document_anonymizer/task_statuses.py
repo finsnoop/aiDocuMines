@@ -9,6 +9,7 @@ from drf_yasg.utils import swagger_auto_schema
 from drf_yasg import openapi
 
 from core.models import File
+from core.utils import get_logical_path
 from document_anonymizer.models import AnonymizationRun, Anonymize, DeAnonymize
 
 import logging
@@ -118,7 +119,7 @@ class AnonymizationTaskStatusView(APIView):
             status_val = run_instance.status
             error_msg = getattr(run_instance, "error_message", None)
 
-            if status_val in {"Queued", "Processing"}:
+            if status_val in {"Pending", "Queued", "Processing"}:
                 return Response({
                     "anonymization_run_id": str(run_instance.id),
                     "original_file_id": None,
@@ -153,12 +154,14 @@ class AnonymizationTaskStatusView(APIView):
         entity_mapping = anonymized_file.spacy_masking_map or anonymized_file.presidio_masking_map or {}
 
         # Limit registered outputs to anonymized folder only (avoid mixing unrelated run files)
-        registered_outputs = list(
-            File.objects.filter(run=anonymized_file.original_file.run)
-            .exclude(id=anonymized_file.original_file.id)
-            .filter(filepath__icontains="/anonymized/")
-            .values("id", "filename", "filepath")
-        )
+        from core.access import accessible_files
+        paths = [anonymized_file.anonymized_filepath, anonymized_file.anonymized_html_filepath,
+                 anonymized_file.anonymized_structured_filepath]
+        registered_outputs = [{"id": f.pk, "filename": f.filename,
+                               "filepath": get_logical_path(f.filepath, f.filename)}
+            for f in accessible_files(request.user).filter(user_id=anonymized_file.original_file.user_id,
+                filepath__in=[p for p in paths if p])]
+
 
         return Response({
             "anonymization_run_id": str(run_instance.id),
@@ -170,20 +173,20 @@ class AnonymizationTaskStatusView(APIView):
             "project_id": anonymized_file.original_file.project_id,
             "service_id": anonymized_file.original_file.service_id,
             "client_name": getattr(run_instance, "client_name", None),
-            "original_file_path": anonymized_file.original_file.filepath,
-            "anonymized_file_path": anonymized_file.anonymized_filepath,
-            "anonymized_html_path": anonymized_file.anonymized_html_filepath,
-            "anonymized_markdown_path": anonymized_file.anonymized_markdown_filepath,
-            "anonymized_structured_path": anonymized_file.anonymized_structured_filepath,
+            "original_file_path": get_logical_path(anonymized_file.original_file.filepath),
+            "anonymized_file_path": get_logical_path(anonymized_file.anonymized_filepath),
+            "anonymized_html_path": get_logical_path(anonymized_file.anonymized_html_filepath),
+            "anonymized_markdown_path": get_logical_path(anonymized_file.anonymized_markdown_filepath),
+            "anonymized_structured_path": get_logical_path(anonymized_file.anonymized_structured_filepath),
             "deanonymized_file_path": de_anonymized_file.unmasked_filepath if de_anonymized_file else "N/A",
             "created_at": anonymized_file.created_at.strftime("%Y-%m-%d %H:%M:%S"),
             "updated_at": anonymized_file.updated_at.strftime("%Y-%m-%d %H:%M:%S"),
             "entity_mapping": entity_mapping,
             "outputs": {
-                "txt": anonymized_file.anonymized_filepath,
-                "html": anonymized_file.anonymized_html_filepath,
-                "markdown": anonymized_file.anonymized_markdown_filepath,
-                "structured": anonymized_file.anonymized_structured_filepath,
+                "txt": get_logical_path(anonymized_file.anonymized_filepath),
+                "html": get_logical_path(anonymized_file.anonymized_html_filepath),
+                "markdown": get_logical_path(anonymized_file.anonymized_markdown_filepath),
+                "structured": get_logical_path(anonymized_file.anonymized_structured_filepath),
                 "deanonymized": de_anonymized_file.unmasked_filepath if de_anonymized_file else None
             },
             "registered_outputs": registered_outputs

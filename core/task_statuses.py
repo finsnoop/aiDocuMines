@@ -1,5 +1,5 @@
 from django.shortcuts import get_object_or_404
-from django.http import FileResponse, JsonResponse
+from django.http import FileResponse, JsonResponse, Http404
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
@@ -88,54 +88,39 @@ class MetadataStatusView(APIView):
         responses={200: "Success", 404: "Not Found"},
     )
     def get(self, request):
-        client_id = request.headers.get("X-Client-ID")
-        file_id = request.query_params.get("file_id")
-
-        # Fetch metadata entry for the given file_id
         from core.access import get_file_for_user
-        metadata_entry = get_object_or_404(Metadata, file=get_file_for_user(request.user, file_id))
-
-        return Response(
-            {
-                "file_id": metadata_entry.file.id,
-                "filename": metadata_entry.file.filename,
-                "file_size": metadata_entry.file.file_size,
-                "format": metadata_entry.format,
-                "md5_hash": metadata_entry.md5_hash,
-                "created_at": metadata_entry.created_at,
-                "updated_at": metadata_entry.updated_at,
-                "title": metadata_entry.title,
-                "author": metadata_entry.author,
-                "subject": metadata_entry.subject,
-                "keywords": metadata_entry.keywords,
-                "creator": metadata_entry.creator,
-                "producer": metadata_entry.producer,
-                "creationdate": metadata_entry.creationdate,
-                "moddate": metadata_entry.moddate,
-                "last_modified_by": metadata_entry.last_modified_by,
-                "category": metadata_entry.category,
-                "content_status": metadata_entry.content_status,
-                "revision": metadata_entry.revision,
-                "trapped": metadata_entry.trapped,
-                "encryption": metadata_entry.encryption,
-                "page_count": metadata_entry.page_count,
-                "is_encrypted": metadata_entry.is_encrypted,
-                "fonts": metadata_entry.fonts,
-                "page_rotation": metadata_entry.page_rotation,
-                "pdfminer_info": metadata_entry.pdfminer_info,
-                "metadata_stream": metadata_entry.metadata_stream,
-                "tagged": metadata_entry.tagged,
-                "userproperties": metadata_entry.userproperties,
-                "suspects": metadata_entry.suspects,
-                "form": metadata_entry.form,
-                "javascript": metadata_entry.javascript,
-                "pages": metadata_entry.pages,
-                "encrypted": metadata_entry.encrypted,
-                "page_size": metadata_entry.page_size,
-                "optimized": metadata_entry.optimized,
-                "pdf_version": metadata_entry.pdf_version,
-                "word_count": metadata_entry.word_count,
-            },
-            status=status.HTTP_200_OK,
-        )
-        
+        file = get_file_for_user(request.user, request.query_params.get("file_id"))
+        run_id = request.query_params.get("run_id")
+        association = None
+        if run_id:
+            try:
+                parsed = uuid.UUID(str(run_id))
+            except (ValueError, TypeError):
+                raise Http404("Metadata run not found.")
+            association = EndpointResponseTable.objects.filter(
+                run_id=parsed, client_id=file.user_id, endpoint_name="MetadataView",
+                response_data__file_id=file.pk).select_related("run").order_by("-created_at").first()
+            if association is None:
+                raise Http404("Metadata run not found.")
+            state = association.status
+            if state != "Completed":
+                return Response({"status": state, "metadata": None,
+                                 "error_message": (association.response_data or {}).get("error") if state == "Failed" else None},
+                                status=202 if state in {"Pending", "Processing"} else 200)
+            metadata_entry = Metadata.objects.filter(
+                pk=(association.response_data or {}).get("metadata_id"), file=file).first()
+            if metadata_entry is None:
+                return Response({"status": "Failed", "metadata": None,
+                                 "error_message": "The saved metadata is unavailable. Request extraction again."})
+        else:
+            metadata_entry = Metadata.objects.filter(file=file).order_by("-updated_at", "-pk").first()
+            if metadata_entry is None:
+                raise Http404("Metadata has not been extracted yet.")
+        names = ("format", "md5_hash", "created_at", "updated_at", "title", "author", "subject", "keywords",
+                 "creator", "producer", "creationdate", "moddate", "last_modified_by", "category", "content_status",
+                 "revision", "trapped", "encryption", "page_count", "is_encrypted", "fonts", "page_rotation",
+                 "pdfminer_info", "metadata_stream", "custom_metadata", "tagged", "userproperties", "suspects", "form",
+                 "javascript", "pages", "encrypted", "page_size", "optimized", "pdf_version", "word_count")
+        data = {"file_id": file.pk, "filename": file.filename, "file_size": file.file_size,
+                **{name: getattr(metadata_entry, name) for name in names}}
+        return Response({"status": "Completed", "metadata": data, "error_message": None} if run_id else data)

@@ -24,285 +24,147 @@ logger = logging.getLogger(__name__)
 from django.utils.functional import SimpleLazyObject
 service = SimpleLazyObject(get_shared_anonymization_service)
 
-@shared_task
-def anonymize_document_task(file_id, file_type="plain", run_id=None):
-    logger.info(f"Starting anonymization for file_id={file_id} (type={file_type})")
-    file_entry = get_object_or_404(File, id=file_id)
-
-    def mark_run_failed(msg: str):
-        logger.error(f"{msg}")
-        if run_id:
-            try:
-                run = AnonymizationRun.objects.get(id=run_id)
-                run.status = "Failed"
-                # only if your model has error_message; if not, drop this line
-                if hasattr(run, "error_message"):
-                    run.error_message = msg
-                run.save(update_fields=["status"] + (["error_message"] if hasattr(run, "error_message") else []))
-            except AnonymizationRun.DoesNotExist:
-                logger.error(f"AnonymizationRun {run_id} not found to mark as Failed")
-
-    if not os.path.exists(file_entry.filepath):
-        logger.error(f"File not found: {file_entry.filepath}")
-        return {"error": "File not found", "file_id": file_id}
-
-
-    # Normalize file_type
-    file_type = (file_type or "plain").lower().strip()
+def submit_anonymization(file, actor, file_type="plain"):
+    from core.processing import processing_file, source_version
+    from django.core.cache import cache
+    file_type = (file_type or "plain").strip().lower()
     if file_type in {"txt", "text"}:
         file_type = "plain"
-
-
-    # EARLY EXIT: Already anonymized
-    existing = Anonymize.objects.filter(original_file=file_entry, file_type=file_type, is_active=True).first()
-    if existing:
-        logger.info(f"Skipping duplicate anonymization. File ID {file_id} already has active anonymized output (ID: {existing.id})")
-        return {
-            "status": "Already Anonymized",
-            "anonymized_id": str(existing.id),
-            "file_id": file_id,
-            "message": "An active anonymization already exists for this file."
-        }
-
-    anonymized_dir = os.path.join(os.path.dirname(file_entry.filepath), "anonymized")
-    os.makedirs(anonymized_dir, exist_ok=True)
-
-    base_filename = f"anonymized_{uuid.uuid4()}"
-    txt_path = os.path.join(anonymized_dir, f"{base_filename}.txt")
-    json_path = os.path.join(anonymized_dir, f"{base_filename}.json")
-    html_path = os.path.join(anonymized_dir, f"{base_filename}.html")
-    structured_json_path = os.path.join(anonymized_dir, f"{base_filename}_structured.json")
-    structured_txt_path = os.path.join(anonymized_dir, f"{base_filename}_structured.txt")
-    structured_html_path = os.path.join(anonymized_dir, f"{base_filename}_structured.html")
-
-    # Structured extraction (PDF/DOCX only)
-    '''
-    try:
-        structured_text, _, elements_json = service.extract_structured_text(file_entry.filepath)
-    except Exception as e:
-        mark_run_failed(f"Structured text extraction crashed: {e}")
-        return {"error": "Structured extraction crashed", "file_id": file_id}
-
-    if not structured_text:
-        mark_run_failed("Empty structured content (unsupported type or zero text).")
-        return {"error": "Empty structured content", "file_id": file_id}
-    '''
-
-    # after: graceful fallback to raw extraction
-    structured_text, elements, elements_json = service.extract_structured_text(file_entry.filepath)
-    raw_text = None
-
-    if not structured_text:
-        raw_text, _, _ = service.extract_text_from_file(file_entry.filepath)
-        if not raw_text:
-            mark_run_failed("No extractable content.")
-            return {"error": "No extractable content", "file_id": file_id}
-        # make a single synthetic block so the rest of the pipeline can run uniformly
-        elements_json = [{"element_id": "raw-0", "type": "Text", "text": raw_text}]
-        structured_text = raw_text                  # ensure downstream writes/HTML have text
-
-    #try:
-    #    structured_text, _, elements_json = service.extract_structured_text(file_entry.filepath)
-    #except Exception as e:
-    #    logger.exception(f"Structured text extraction failed: {e}")
-    #    return {"error": "Structured extraction crashed", "file_id": file_id}
-
-    # if not structured_text:
-    #    return {"error": "Empty structured content", "file_id": file_id}
-
-    updated_blocks = []
-    global_combined_map = {}
-    global_presidio_map = {}
-    global_spacy_map = {}
-
-    for block in elements_json:
-        original_text = block.get("text", "")
-        masked_text, combined_map, presidio_map, spacy_map = service.anonymize_text(original_text)
-        block["text"] = masked_text
-        updated_blocks.append(block)
-        global_combined_map.update(combined_map)
-        global_presidio_map.update(presidio_map)
-        global_spacy_map.update(spacy_map)
-
-    final_masked_doc = "\n\n".join(block["text"] for block in updated_blocks)
-
-    with open(txt_path, "w", encoding="utf-8") as f:
-        f.write(final_masked_doc)
-    with open(json_path, "w", encoding="utf-8") as f:
-        json.dump(global_combined_map, f, indent=4)
-
-    ''' 
-    with open(structured_json_path, "w", encoding="utf-8") as f:
-        json.dump(updated_blocks, f, indent=2)
-    with open(structured_txt_path, "w", encoding="utf-8") as f:
-        f.write(structured_text)
-
-    try:
-        html_content = generate_anonymized_html(final_masked_doc, global_combined_map)
-        with open(html_path, "w", encoding="utf-8") as f:
-            f.write(html_content)
-    except Exception as e:
-        logger.warning(f"HTML generation failed: {e}")
-        html_path = None
-
-    try:
-        raw_html = generate_anonymized_html(structured_text, {})
-        with open(structured_html_path, "w", encoding="utf-8") as f:
-            f.write(raw_html)
-    except Exception as e:
-        logger.warning(f"Structured HTML generation failed: {e}")
-        structured_html_path = None
-    '''
-    
-    # these are fine once structured_text is guaranteed non-None
-    with open(structured_json_path, "w", encoding="utf-8") as f:
-        json.dump(updated_blocks, f, indent=2)
-    with open(structured_txt_path, "w", encoding="utf-8") as f:
-        f.write(structured_text)
-
-    try:
-        html_content = generate_anonymized_html(final_masked_doc, global_combined_map)
-        with open(html_path, "w", encoding="utf-8") as f:
-            f.write(html_content)
-    except Exception as e:
-        logger.warning(f"HTML generation failed: {e}")
-        html_path = None
-
-    try:
-        raw_html = generate_anonymized_html(structured_text, {})  # structured_text is a string now
-        with open(structured_html_path, "w", encoding="utf-8") as f:
-            f.write(raw_html)
-    except Exception as e:
-        logger.warning(f"Structured HTML generation failed: {e}")
-        structured_html_path = None
-
-
-    # risk_result = service.compute_risk_score(final_masked_doc, global_presidio_map, global_spacy_map)
-
-
-    # Get original text from File model (prefer DB content, else read file)
-    '''
-    original_for_risk = file_entry.content
-    if not original_for_risk:
-        try:
-            with open(file_entry.filepath, "r", encoding="utf-8") as f:
-                original_for_risk = f.read()
-        except Exception:
-            original_for_risk = final_masked_doc  # last resort fallback
-    '''
-
-    original_for_risk = file_entry.content
-    if not original_for_risk:
-        try:
-            extracted_text, _, _ = service.extract_text_from_file(file_entry.filepath)
-            original_for_risk = extracted_text or ""
-        except Exception:
-            original_for_risk = ""
-
-    if not original_for_risk.strip():
-        original_for_risk = final_masked_doc  # last resort
-
-
-    risk_result = service.compute_risk_score(original_for_risk, global_presidio_map, global_spacy_map)
-
-    if run_id:
-        anonymization_run = get_object_or_404(AnonymizationRun, id=run_id)
-        anonymization_run.status = "Completed"
-        anonymization_run.save(update_fields=["status"])
-        # run = file_entry.run 
-    else:
-        anonymization_run = AnonymizationRun.objects.create(
-                project_id=file_entry.project_id,
-                service_id=file_entry.service_id,
-                client=getattr(file_entry.user, 'client', None),
-                client_name=file_entry.user.username or file_entry.user.email,
-                status="Completed",
-                anonymization_type="Presidio-Spacy"
-                )
-
-        # run = file_entry.run # Still fallback to the File’s Run
-
+    if file_type not in {"plain", "structured"}:
+        raise ValueError("file_type must be plain or structured.")
     with transaction.atomic():
-        
-        existing = Anonymize.objects.filter(original_file=file_entry, file_type=file_type, is_active=True).first()
-        if existing:
-            return {
-                    "status": "Already Anonymized",
-                    "anonymized_id": str(existing.id),
-                    "file_id": file_id,
-                    "message": "An active anonymization already exists for this file."
-                    }
-
-        Anonymize.objects.filter(original_file=file_entry, file_type=file_type, is_active=True).update(is_active=False)
-
-        Anonymize.objects.create(
-            original_file=file_entry,
-            run=anonymization_run,
-            file_type=file_type,
-            is_active=True,
-            anonymized_filepath=txt_path,
-            anonymized_html_filepath=html_path,
-            entity_mapping_filepath=json_path,
-            anonymized_structured_filepath=structured_json_path if file_type == "structured" else None,
-            anonymized_structured_txt_filepath=structured_txt_path if file_type == "structured" else None,
-            anonymized_structured_html_filepath=structured_html_path if file_type == "structured" else None,
-            anonymized_markdown_filepath=None,
-            presidio_masking_map=global_presidio_map,
-            spacy_masking_map=global_spacy_map,
-            risk_score=risk_result["risk_score"],
-            risk_level=risk_result["risk_level"],
-            risk_breakdown=risk_result["breakdown"],
-            status="Completed"
-        )
+        File.objects.select_for_update().get(pk=file.pk)
+        actor, file = processing_file(file.pk, actor.pk, permission="anonymization.submit")
+        active = Anonymize.objects.filter(original_file=file, file_type=file_type, is_active=True).select_related("run").first()
+        if active and active.run:
+            if active.run.status in {"Pending", "Processing"}:
+                return active.run, False
+            if active.status == "Completed" and cache.get(f"explicit-anonymization-source:{active.run_id}") == source_version(file):
+                return active.run, False
+            active.is_active = False
+            active.save(update_fields=["is_active"])
+        run = AnonymizationRun.objects.create(project_id=file.project_id, service_id=file.service_id,
+            client=actor.client, client_name=actor.username or actor.email, status="Pending",
+            anonymization_type="Presidio-Spacy")
+        Anonymize.objects.create(original_file=file, run=run, file_type=file_type, is_active=True, status="Processing")
+        transaction.on_commit(lambda: anonymize_document_task.delay(file.pk, file_type, str(run.pk), user_id=actor.pk))
+        return run, True
 
 
-        # Register each generated file in the File table
-        user = file_entry.user
-        project_id = file_entry.project_id
-        service_id = file_entry.service_id
-
-        registered_files = []
-
-        upload_run = file_entry.run  # This is from core.models.Run
-
-        for path in [
-            txt_path,
-            json_path,
-            html_path,
-            structured_json_path,
-            structured_txt_path,
-            structured_html_path
-        ]:
-            if path and os.path.exists(path):
-                registered = register_generated_file(
-                    file_path=path,
-                    user=user,
-                    run=upload_run,
-                    project_id=project_id,
-                    service_id=service_id,
-                    folder_name="anonymized"
-                )
-                registered_files.append({
-                    "filename": registered.filename,
-                    "file_id": registered.id,
-                    "path": registered.filepath
-                })
-
-    return {
-        "file_id": file_id,
-        #"anonymization_run_id": str(run.id),
-        "anonymization_run_id": str(anonymization_run.id),
-        "file_type": file_type,
-        "status": "Completed",
-        "registered_outputs": registered_files
-    }
+@shared_task(time_limit=1800, soft_time_limit=1740)
+def anonymize_document_task(file_id, file_type="plain", run_id=None, user_id=None):
+    """Publish redacted outputs only after source and requester revalidation."""
+    from django.core.cache import cache
+    from core.processing import processing_file, source_version, unchanged_source
+    from document_search.text_policy import shared_file_text
+    run = AnonymizationRun.objects.get(pk=run_id) if run_id else None
+    entry = None
+    try:
+        file_type = (file_type or "plain").lower().strip()
+        if file_type in {"txt", "text"}:
+            file_type = "plain"
+        if file_type not in {"plain", "structured"}:
+            raise ValueError("Invalid anonymization output type.")
+        actor, file = processing_file(file_id, user_id, run=run, permission="anonymization.submit")
+        if run is None:
+            run = AnonymizationRun.objects.create(project_id=file.project_id, service_id=file.service_id,
+                client=actor.client, client_name=actor.username or actor.email, status="Processing")
+        version = source_version(file)
+        run.status = "Processing"
+        run.save(update_fields=["status", "updated_at"])
+        # Native-first preparation, with conditional PDF OCR only because this
+        # requested anonymization needs text. Image OCR remains a separate action.
+        text = shared_file_text(file, allow_ocr=True)
+        if not text.strip():
+            raise ValueError("No readable source text. Run OCR for an image or review the PDF.")
+        structured_text, _, blocks = service.extract_structured_text(file.filepath)
+        if not structured_text or not blocks:
+            blocks = [{"element_id": "text-0", "type": "Text", "text": text}]
+        updated_blocks, combined, presidio, spacy = [], {}, {}, {}
+        for source_block in blocks:
+            block = dict(source_block)
+            masked, mapping, presidio_map, spacy_map = service.anonymize_text(block.get("text", ""))
+            block["text"] = masked
+            updated_blocks.append(block)
+            combined.update(mapping)
+            presidio.update(presidio_map)
+            spacy.update(spacy_map)
+        masked_text = "\n\n".join(block["text"] for block in updated_blocks)
+        risk = service.compute_risk_score(text, presidio, spacy)
+        output_dir = os.path.join(os.path.dirname(file.filepath), "anonymized", str(run.pk))
+        os.makedirs(output_dir, exist_ok=True)
+        txt_path = os.path.join(output_dir, "anonymized.txt")
+        html_path = os.path.join(output_dir, "anonymized.html")
+        structured_path = os.path.join(output_dir, "anonymized_structured.json")
+        mapping_path = os.path.join(output_dir, "private_entity_mapping.json")
+        with open(txt_path, "w", encoding="utf-8") as stream:
+            stream.write(masked_text)
+        with open(html_path, "w", encoding="utf-8") as stream:
+            stream.write(generate_anonymized_html(masked_text, {}))
+        with open(structured_path, "w", encoding="utf-8") as stream:
+            json.dump(updated_blocks, stream, ensure_ascii=False, indent=2)
+        # Reversal mappings are private processing data. They are never indexed
+        # or registered as an anonymized document that a user might share.
+        with open(mapping_path, "w", encoding="utf-8") as stream:
+            json.dump(combined, stream, ensure_ascii=False, indent=2)
+        os.chmod(mapping_path, 0o600)
+        with transaction.atomic():
+            actor, file = unchanged_source(file.pk, actor.pk, version, run=run, permission="anonymization.submit")
+            File.objects.select_for_update().get(pk=file.pk)
+            entry = Anonymize.objects.filter(original_file=file, file_type=file_type, is_active=True).first()
+            if entry and entry.run_id != run.pk:
+                entry.is_active = False
+                entry.save(update_fields=["is_active"])
+                entry = None
+            if entry is None:
+                entry = Anonymize(original_file=file, run=run, file_type=file_type, is_active=True)
+            entry.anonymized_filepath = txt_path
+            entry.anonymized_html_filepath = html_path
+            entry.entity_mapping_filepath = mapping_path
+            entry.anonymized_structured_filepath = structured_path if file_type == "structured" else None
+            entry.anonymized_structured_txt_filepath = txt_path if file_type == "structured" else None
+            entry.anonymized_structured_html_filepath = html_path if file_type == "structured" else None
+            entry.presidio_masking_map = presidio
+            entry.spacy_masking_map = spacy
+            entry.risk_score, entry.risk_level = risk["risk_score"], risk["risk_level"]
+            entry.risk_breakdown = risk["breakdown"]
+            entry.risk_contributions = risk.get("contributions")
+            entry.status = "Completed"
+            entry.save()
+            paths = [txt_path, html_path] + ([structured_path] if file_type == "structured" else [])
+            outputs = [register_generated_file(file_path=path, user=file.user, run=file.run,
+                project_id=file.project_id, service_id=file.service_id, folder_name="anonymized",
+                source_file=file, actor=actor, expected_source_version=version, permission="anonymization.submit") for path in paths]
+            unchanged_source(file.pk, actor.pk, version, run=run, permission="anonymization.submit")
+            run.status, run.error_message = "Completed", ""
+            run.save(update_fields=["status", "error_message", "updated_at"])
+        try:
+            cache.set(f"explicit-anonymization-source:{run.pk}", version, timeout=86400)
+        except Exception:
+            logger.warning("Could not cache completed source version for %s", run.pk)
+        from core.utils import get_logical_path
+        return {"file_id": file.pk, "anonymization_run_id": str(run.pk), "file_type": file_type,
+            "status": "Completed", "registered_outputs": [{"file_id": f.pk, "filename": f.filename,
+                "path": get_logical_path(f.filepath, f.filename)} for f in outputs]}
+    except Exception:
+        logger.exception("Requested anonymization failed: %s", run_id)
+        error = "Anonymization failed. Check source text and processing service, then retry."
+        if run is not None:
+            run.status, run.error_message = "Failed", error
+            run.save(update_fields=["status", "error_message", "updated_at"])
+            Anonymize.objects.filter(run=run).update(status="Failed")
+        return {"status": "Failed", "error": error, "file_id": file_id,
+                "anonymization_run_id": str(run.pk) if run else None}
 
 
 @shared_task
-def deanonymize_document_task(file_id):
+def deanonymize_document_task(file_id, user_id=None):
     logger.info(f"Starting de-anonymization for file_id={file_id}")
 
-    instance = get_object_or_404(Anonymize, original_file_id=file_id, is_active=True, file_type="plain")
+    from core.processing import processing_file, source_version, unchanged_source
+    actor, source = processing_file(file_id, user_id, permission="anonymization.submit")
+    version = source_version(source)
+    instance = get_object_or_404(Anonymize, original_file=source, is_active=True, file_type="plain")
 
     if not os.path.exists(instance.anonymized_filepath):
         return {"error": "Masked file not found", "file_id": file_id}
@@ -324,6 +186,9 @@ def deanonymize_document_task(file_id):
         f.write(final_text)
 
     with transaction.atomic():
+        actor, source = unchanged_source(source.pk, actor.pk, version, permission="anonymization.submit")
+        registered = register_generated_file(file_path=txt_path, user=source.user, run=source.run,
+            project_id=source.project_id, service_id=source.service_id, folder_name="deanonymized", source_file=source, actor=actor, expected_source_version=version, permission="anonymization.submit")
         DeAnonymize.objects.create(
             file=instance.original_file,
             unmasked_text=final_text,
@@ -338,55 +203,37 @@ def deanonymize_document_task(file_id):
 
 
 @shared_task
-def compute_risk_score_task(file_id):
-    logger.info(f"Computing risk score for file_id={file_id}")
-    file_entry = get_object_or_404(File, id=file_id)
-    # instance = get_object_or_404(Anonymize, original_file=file_entry, is_active=True)
-    instance = Anonymize.objects.filter(original_file=file_entry, is_active=True).first()
-    if not instance:
-        return {"error": "No active anonymized file found."}
-
-    if not instance.anonymized_filepath or not os.path.exists(instance.anonymized_filepath):
-        return {"error": "Masked file not found"}
-
-    # with open(instance.anonymized_filepath, "r", encoding="utf-8") as f:
-    #     masked_text = f.read()
-
-    # presidio_map = instance.presidio_masking_map or {}
-    # spacy_map = instance.spacy_masking_map or {}
-
-    # risk_result = service.compute_risk_score(masked_text, presidio_map, spacy_map)
-
-    presidio_map = instance.presidio_masking_map or {}
-    spacy_map = instance.spacy_masking_map or {}
-
-    # Prefer original content from File, fallback to reading from disk
-    original_for_risk = file_entry.content
-    if not original_for_risk:
+def compute_risk_score_task(file_id, user_id=None):
+    """An explicit privacy assessment can run without creating anonymized files."""
+    from core.processing import processing_file, source_version, unchanged_source
+    from document_search.text_policy import shared_file_text
+    from core.models import Metadata
+    actor, file = processing_file(file_id, user_id, permission="anonymization.submit")
+    version = source_version(file)
+    text = shared_file_text(file, allow_ocr=True)
+    if not text.strip():
+        return {"error": "No readable source text. Run OCR for an image or review the PDF.", "status": "Failed"}
+    _, _, presidio, spacy = service.anonymize_text(text)
+    result = service.compute_risk_score(text, presidio, spacy)
+    with transaction.atomic():
+        actor, file = unchanged_source(file.pk, actor.pk, version, permission="anonymization.submit")
+        File.objects.select_for_update().get(pk=file.pk)
+        metadata = Metadata.objects.filter(file=file).order_by("-metadata_id").first()
+        if metadata is None:
+            metadata = Metadata(file=file)
         try:
-            with open(file_entry.filepath, "r", encoding="utf-8") as f:
-                original_for_risk = f.read()
-        except Exception:
-            original_for_risk = None
-
-    if not original_for_risk:
-        return {"error": "No source text available for risk scoring"}
-
-    risk_result = service.compute_risk_score(original_for_risk, presidio_map, spacy_map)
-
-    instance.risk_score = risk_result["risk_score"]
-    instance.risk_level = risk_result["risk_level"]
-    instance.risk_breakdown = risk_result["breakdown"]
-    instance.risk_contributions = risk_result.get("contributions")
-    instance.save(update_fields=["risk_score", "risk_level", "risk_breakdown", "risk_contributions", "updated_at"])
-
-    return {
-        "file_id": file_id,
-        "risk_score": risk_result["risk_score"],
-        "risk_level": risk_result["risk_level"],
-        "breakdown": risk_result["breakdown"],
-        "contributions": risk_result.get("contributions"),
-    }
+            custom = json.loads(metadata.custom_metadata or "{}")
+        except (TypeError, ValueError):
+            custom = {}
+        if not isinstance(custom, dict):
+            custom = {"extracted": custom}
+        custom["privacy_risk"] = {**result, "requested_by": actor.pk, "source_version": list(version)}
+        metadata.custom_metadata = json.dumps(custom)
+        metadata.save()
+        Anonymize.objects.filter(original_file=file, is_active=True, status="Completed").update(
+            risk_score=result["risk_score"], risk_level=result["risk_level"], risk_breakdown=result["breakdown"],
+            risk_contributions=result.get("contributions"))
+    return {"file_id": file.pk, "status": "Completed", **result}
 
 
 @shared_task

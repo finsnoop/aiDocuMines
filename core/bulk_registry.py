@@ -19,14 +19,26 @@ def _bulk_call_adapter(task_func, *, single_file_param=True, user_id_param=True,
     
     When called with multi_file=True, file_ids is passed directly as the file_ids param.
     """
-    def adapter(file_id_or_ids, user_id, **kwargs):
+    def adapter(file_id_or_ids, actor_id, **kwargs):
+        user_id = actor_id
         multi_file = kwargs.pop('multi_file', False)
         inline = kwargs.pop('inline', False)
+        protected = {'file_id', 'file_ids', 'user_id', 'requested_by_id', 'run_id',
+                     'translation_run_id', 'project_id', 'service_id'}
+        options = {key: value for key, value in (extra_params or {}).items() if key not in protected}
+        options.update({key: kwargs[key] for key in options if key in kwargs and key not in protected})
+        def create_run(source_id):
+            # Creators opt into service options explicitly; source and actor
+            # identity always come from the validated bulk job arguments.
+            from inspect import signature
+            accepted = signature(run_creator).parameters
+            return run_creator(source_id, user_id, **{key: value for key, value in options.items()
+                                                     if key in accepted and key not in protected})
         args = {}
         if multi_file:
             args['file_ids'] = file_id_or_ids
             if run_creator and file_id_or_ids:
-                args.update(run_creator(file_id_or_ids[0], user_id))
+                args.update(create_run(file_id_or_ids[0]))
         elif single_file_param:
             args[file_param_name] = file_id_or_ids
         else:
@@ -34,9 +46,8 @@ def _bulk_call_adapter(task_func, *, single_file_param=True, user_id_param=True,
         if user_id_param:
             args['user_id'] = user_id
         if run_creator and not multi_file:
-            args.update(run_creator(file_id_or_ids, user_id))
-        if extra_params:
-            args.update(extra_params)
+            args.update(create_run(file_id_or_ids))
+        args.update(options)
         # inline=True runs the service in the calling worker and returns its
         # result, so bulk jobs report real completion and real errors.
         return task_func.apply(kwargs=args) if inline else task_func.delay(**args)
@@ -151,22 +162,39 @@ def _create_run(file_id, user_id, model_cls, status_default='Pending', user_fiel
     return {id_field: run_obj.id}
 
 
-def _run_ocr(file_id, user_id):
+def _run_ocr(file_id, user_id, ocr_option='basic'):
     from document_ocr.models import OCRRun
-    run = OCRRun.objects.create(status='Pending', **_tenant_fields(user_id))
+    from core.models import File
+    file = File.objects.get(pk=file_id)
+    from document_ocr.tasks import normalize_ocr_option
+    run = OCRRun.objects.create(status='Pending', project_id=file.project_id, service_id=file.service_id,
+                                ocr_option=normalize_ocr_option(ocr_option), **_tenant_fields(user_id))
     return {'run_id': run.id}
 
 
 def _run_anonymization(file_id, user_id):
     from document_anonymizer.models import AnonymizationRun
-    run = AnonymizationRun.objects.create(status='Pending', **_tenant_fields(user_id))
+    from core.models import File
+    file = File.objects.get(pk=file_id)
+    run = AnonymizationRun.objects.create(status='Pending', project_id=file.project_id, service_id=file.service_id, **_tenant_fields(user_id))
     return {'run_id': run.id}
 
 
-def _run_translation(file_id, user_id):
-    from document_translation.models import TranslationRun
-    run = TranslationRun.objects.create(status='Pending', **_tenant_fields(user_id))
-    return {'translation_run_id': run.id}
+def _run_translation(file_id, user_id, from_language='auto', to_language='en'):
+    from document_translation.models import TranslationRun, TranslationLanguage
+    if not isinstance(from_language, str) or not isinstance(to_language, str):
+        raise ValueError('Translation language codes must be text.')
+    if from_language != 'auto' and not TranslationLanguage.objects.filter(code=from_language).exists():
+        raise ValueError('Unknown source language.')
+    if not TranslationLanguage.objects.filter(code=to_language).exists():
+        raise ValueError('Unknown target language.')
+    from core.access import get_file_for_user
+    actor = _actor(file_id, user_id)
+    source = get_file_for_user(actor, file_id, 'process')
+    run = TranslationRun.objects.create(status='Pending', project_id=source.project_id,
+                                        service_id=source.service_id, from_language=from_language, to_language=to_language,
+                                        **_tenant_fields(user_id))
+    return {'translation_run_id': run.id, 'requested_by_id': user_id}
 
 
 def _run_pe(file_id, user_id):
@@ -312,7 +340,7 @@ def discover_and_register():
             call_adapter=_bulk_call_adapter(
                 anonymize_document_task,
                 single_file_param=True,
-                user_id_param=False,
+                user_id_param=True,
                 file_param_name='file_id',
                 run_creator=_run_anonymization,
                 extra_params={'file_type': 'plain'},
@@ -332,7 +360,7 @@ def discover_and_register():
             call_adapter=_bulk_call_adapter(
                 process_ocr,
                 single_file_param=True,
-                user_id_param=False,
+                user_id_param=True,
                 file_param_name='file_id',
                 run_creator=_run_ocr,
                 extra_params={'ocr_option': 'basic'},

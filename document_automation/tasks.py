@@ -23,6 +23,8 @@ def process_automation_task(run_id):
     automation_run.save()
 
     try:
+        if template.file_id is None:
+            raise FileNotFoundError("This template has no source document. Reattach its source before running it.")
         if not os.path.exists(template.file.filepath):
             raise FileNotFoundError(f"Template file not found: {template.file.filepath}")
 
@@ -143,7 +145,7 @@ def process_automation_task(run_id):
 
 
 def _extract_and_store_fields(template):
-    if not os.path.exists(template.file.filepath):
+    if template.file_id is None or not os.path.exists(template.file.filepath):
         return
 
     field_names = extract_template_fields(template.file.filepath, template.template_type)

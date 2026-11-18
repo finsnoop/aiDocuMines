@@ -3,7 +3,7 @@ The one way documents enter aiDocuMines: into a matter, exactly as Matters -> Ne
 
 Every source uses it (the Matters page, Nextcloud, Google Drive and the other connectors, Zapier / Make uploads),
 so storage, the sidebar's matter / service / date hierarchy, duplicate handling, upload policy and the processing
-chain (text extraction, indexing, classification, anonymisation) are the same whatever the origin.
+chain (text extraction, indexing, classification) are the same whatever the origin. Anonymisation is requested separately.
 
     stored at  MEDIA_ROOT/uploads/<organisation>/<user>/<matter name>/matter/<YYYYMMDD>/<HHMMSS>_<filename>
     recorded   File(project_id=<matter name>, service_id="matter"), linked into the folder tree

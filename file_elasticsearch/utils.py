@@ -26,13 +26,14 @@ def create_index():
 
 def _build_doc(file_instance):
     """Build a FileIndex document dict from a File model instance."""
-    from document_search.utils import extract_text
+    from document_search.text_policy import shared_file_text
     client_id = None
     if file_instance.user and file_instance.user.client:
         client_id = str(file_instance.user.client.id)
     elif hasattr(file_instance, "client_id") and file_instance.client_id:
         client_id = str(file_instance.client_id)
-    content_text = extract_text(file_instance.filepath) if file_instance.filepath else ""
+    allow_ocr = getattr(getattr(file_instance.user, "settings", None), "auto_index_enabled", True)
+    content_text = shared_file_text(file_instance, allow_ocr=allow_ocr) if file_instance.filepath else ""
     return {
         "_id": str(file_instance.id),
         "_index": "files",

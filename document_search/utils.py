@@ -129,8 +129,37 @@ def _extract_pdf(path: Path) -> str:
     try:
         with fitz.open(str(path)) as doc:
             return "\n".join(page.get_text() for page in doc)
-    except Exception as e:
-        LOGGER.error("PDF extract failed [%s]: %s", path.name, e)
+    except Exception as exc:
+        LOGGER.error("PDF extract failed [%s]: %s", path.name, exc)
+        return ""
+
+
+def _ocr_pdf_for_text(path: Path) -> str:
+    """Bounded text-only fallback for a PDF with no native text.
+
+    This does not launch the explicit OCR product pipeline, produce files or
+    anonymize anything. It is called only by a downstream consumer opting in.
+    """
+    if fitz is None or Image is None or pytesseract is None:
+        return ""
+    max_pages = max(1, min(int(os.getenv("OCR_TEXT_MAX_PAGES", "50")), 200))
+    timeout = max(1, min(int(os.getenv("OCR_TEXT_PAGE_TIMEOUT", "15")), 60))
+    try:
+        with fitz.open(str(path)) as doc:
+            if doc.page_count > max_pages:
+                LOGGER.warning("PDF text OCR exceeds the %s-page fallback limit; use explicit OCR.", max_pages)
+                return ""
+            parts = []
+            for page in doc:
+                # A blank page has no text to recover. Do not rasterize it.
+                if not page.get_images() and not page.get_drawings():
+                    continue
+                pix = page.get_pixmap(dpi=150, colorspace=fitz.csRGB, alpha=False)
+                with Image.frombytes("RGB", (pix.width, pix.height), pix.samples) as image:
+                    parts.append(pytesseract.image_to_string(image, timeout=timeout))
+            return "\n".join(part for part in parts if part).replace("\x00", "").strip()
+    except Exception as exc:
+        LOGGER.warning("PDF text OCR fallback failed for %s: %s", path.name, exc)
         return ""
 
 
@@ -275,20 +304,29 @@ _EXTRACTORS = {
 }
 
 
-def extract_text(path: str | os.PathLike) -> str:
-    """Extract raw text from any supported filetype. Falls back through multiple extractors."""
+def extract_text(path: str | os.PathLike, *, allow_ocr: bool = False) -> str:
+    """Extract native text; opt-in downstream PDF OCR only when native text is empty.
+
+    Image uploads and ordinary classification/preview calls never run OCR.
+    Explicit OCR product requests continue through document_ocr, independently.
+    """
     p = Path(path)
     if not p.exists():
         LOGGER.warning("File not found: %s", path)
         return ""
     ext = p.suffix.lower()
 
-    # Try unstructured first for PDF/DOCX/HTML (best quality)
+    if ext == ".pdf":
+        native = _extract_pdf(p).replace("\x00", "").strip()
+        # Any readable native text, even a short note, is sufficient: a word
+        # count threshold must never force OCR on a valid text PDF.
+        return native or (_ocr_pdf_for_text(p) if allow_ocr else "")
+    if ext in {".jpg", ".jpeg", ".png", ".tif", ".tiff", ".bmp", ".webp", ".gif", ".heic"}:
+        return ""  # image OCR requires an explicit user OCR request
+
+    # PDF's automatic Unstructured strategy can silently select OCR; PDFs are
+    # deliberately handled above without ever entering that path.
     try:
-        if ext == ".pdf":
-            from unstructured.partition.pdf import partition_pdf
-            elements = partition_pdf(filename=str(p))
-            return "\n\n".join(el.text for el in elements if el.text)
         if ext == ".docx":
             from unstructured.partition.docx import partition_docx
             elements = partition_docx(filename=str(p))
@@ -310,7 +348,7 @@ def extract_text(path: str | os.PathLike) -> str:
     # Last-resort Tika fallback for any type
     try:
         from tika import parser as tika_parser
-        parsed = tika_parser.from_file(str(p))
+        parsed = tika_parser.from_file(str(p), headers={"X-Tika-OCRskipOcr": "true", "X-Tika-PDFOcrStrategy": "no_ocr"})
         content = (parsed.get("content") or "").strip()
         if content:
             return content
@@ -326,12 +364,19 @@ def compute_chunks(
     path: str | os.PathLike,
     chunk_size: int = None,
     overlap: int = None,
+    *,
+    file=None,
+    allow_ocr: bool = False,
 ) -> Tuple[List[str], List[List[float]]]:
     if chunk_size is None:
         chunk_size = CHUNK_SIZE
     if overlap is None:
         overlap = CHUNK_OVERLAP
-    text = extract_text(path)
+    if file is not None:
+        from document_search.text_policy import shared_file_text
+        text = shared_file_text(file, allow_ocr=allow_ocr)
+    else:
+        text = extract_text(path, allow_ocr=allow_ocr)
     if not text.strip():
         return [], []
     chunks = split_text(text, chunk_size, overlap)

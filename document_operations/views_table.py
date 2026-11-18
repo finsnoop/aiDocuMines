@@ -14,7 +14,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from core.access import can_access_file, get_folder_for_user, is_platform_superuser, is_tenant_admin, tenant_id, user_role_names
+from core.access import can_access_file, can_access_folder, get_folder_for_user, is_platform_superuser, is_tenant_admin, tenant_id, user_role_names
 from .document_query import COUNT_CAP, FILTER_FIELDS, accessible_document_query, document_filters, folder_ids_below
 
 MAX_PAGE_SIZE = 100
@@ -134,10 +134,15 @@ class DocumentActionContextView(APIView):
         link = links.select_related("folder").order_by(
             Case(*preference, default=Value(2), output_field=IntegerField()), "pk").first()
         restricted = user_role_names(user) == {"Guest"}
-        permissions = {"read": True}
+        permissions = {"read": True, "download": can_access_file(user, f, "download"),
+                       "versions": link is not None}
         permissions.update({action: not restricted and can_access_file(user, f, action)
                             and (link is not None or action == "process")
-                            for action in ("rename", "move", "delete", "share", "process")})
+                            for action in ("rename", "move", "delete", "share", "process", "duplicate", "zip", "protect", "restore")})
+        permissions["copy"] = not restricted and permissions["download"] and link is not None
+        permissions["duplicate"] = permissions["duplicate"] and can_access_folder(user, link.folder, "manage")
+        if permissions["move"] and f.user_id != user.pk and not is_tenant_admin(user):
+            permissions["move"] = can_access_file(user, f, "share")
         node = None
         if link is not None:
             url = get_logical_path(f.filepath, f.filename)

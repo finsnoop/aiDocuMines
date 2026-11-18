@@ -58,14 +58,28 @@ def health_check(request):
     return JsonResponse({"status": "ok"}, status=200)
 
 
+def accessible_templates(user):
+    """Retained definitions use a persisted owner after their source is removed."""
+    queryset = AutomationTemplate.objects.all()
+    attached = scope_by_file(user, queryset, "file").values("pk")
+    detached = scope_by_owner(user, queryset.filter(file__isnull=True), "owner").values("pk")
+    return queryset.filter(models.Q(pk__in=attached) | models.Q(pk__in=detached))
+
+
 
 
 class AutomationTemplateListCreateView(generics.ListCreateAPIView):
     queryset = AutomationTemplate.objects.all()
 
     def get_queryset(self):
-        from core.access import scope_by_file
-        return scope_by_file(self.request.user, AutomationTemplate.objects.all(), "file")
+        return accessible_templates(self.request.user)
+    def perform_create(self, serializer):
+        file = serializer.validated_data.get("file")
+        if file is None:
+            from rest_framework.exceptions import ValidationError
+            raise ValidationError({"file": "A source document is required for a new template."})
+        get_file_for_user(self.request.user, file.pk, "process")
+        serializer.save(owner=self.request.user, client_name=self.request.user.username or self.request.user.email)
     serializer_class = AutomationTemplateSerializer
     authentication_classes = [OAuth2Authentication]
     permission_classes = [TokenHasReadWriteScope]
@@ -91,8 +105,7 @@ class AutomationTemplateDetailView(generics.RetrieveAPIView):
     queryset = AutomationTemplate.objects.all()
 
     def get_queryset(self):
-        from core.access import scope_by_file
-        return scope_by_file(self.request.user, AutomationTemplate.objects.all(), "file")
+        return accessible_templates(self.request.user)
     serializer_class = AutomationTemplateSerializer
     authentication_classes = [OAuth2Authentication]
     permission_classes = [TokenHasReadWriteScope]
@@ -131,10 +144,10 @@ class SubmitAutomationAPIView(APIView):
         if not user:
             return Response({"error": "Invalid client ID"}, status=status.HTTP_401_UNAUTHORIZED)
 
-        template = get_object_or_404(AutomationTemplate, id=template_id)
-
-        if template.file.user != user:
-            raise PermissionDenied("You are not authorized to use this template.")
+        template = get_object_or_404(accessible_templates(user), id=template_id)
+        if template.file_id is None:
+            return Response({"error": "This template has no source document. Reattach its source before running it."}, status=409)
+        get_file_for_user(user, template.file_id, "process")
 
         if not os.path.exists(template.file.filepath):
             return Response({"error": "Template file not found."}, status=status.HTTP_404_NOT_FOUND)
@@ -361,7 +374,7 @@ class TemplateFieldExtractView(APIView):
             return Response({"error": "Missing `template_id` parameter"}, status=status.HTTP_400_BAD_REQUEST)
 
         from core.access import get_scoped_or_404
-        template = get_scoped_or_404(request.user, AutomationTemplate, "file", id=template_id)
+        template = get_object_or_404(accessible_templates(request.user), id=template_id)
         fields = TemplateField.objects.filter(template=template).order_by('order')
         serializer = TemplateFieldSerializer(fields, many=True)
 
@@ -398,10 +411,10 @@ class BulkSubmitAutomationAPIView(APIView):
         if not user:
             return Response({"error": "Invalid client ID"}, status=status.HTTP_401_UNAUTHORIZED)
 
-        template = get_object_or_404(AutomationTemplate, id=template_id)
-
-        if template.file.user != user:
-            raise PermissionDenied("You are not authorized to use this template.")
+        template = get_object_or_404(accessible_templates(user), id=template_id)
+        if template.file_id is None:
+            return Response({"error": "This template has no source document. Reattach its source before running it."}, status=409)
+        get_file_for_user(user, template.file_id, "process")
 
         if not os.path.exists(template.file.filepath):
             return Response({"error": "Template file not found."}, status=status.HTTP_404_NOT_FOUND)

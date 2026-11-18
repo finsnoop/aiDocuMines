@@ -19,7 +19,8 @@ from core.models import File
 from core.tenancy import ClientScopedViewMixin
 from custom_authentication.permissions import IsAdminOrManagerMutation
 from document_anonymizer.models import Anonymize, DeAnonymize, AnonymizationRun
-from document_anonymizer.tasks import anonymize_document_task, deanonymize_document_task
+from document_anonymizer.tasks import anonymize_document_task, deanonymize_document_task, submit_anonymization
+from custom_authentication.rbac import CanSubmitAnonymization
 from document_anonymizer.llm_orchestrator import query_model  # New import
 
 from rest_framework.views import APIView
@@ -106,7 +107,7 @@ def resolve_token_user(request):
 
 class SubmitAnonymizationAPIView(ClientScopedViewMixin):
     authentication_classes = [OAuth2Authentication]
-    permission_classes = [IsAuthenticated, TokenHasReadWriteScope, IsClientOrAdminOrSuperUser]
+    permission_classes = [IsAuthenticated, TokenHasReadWriteScope, CanSubmitAnonymization]
 
     @swagger_auto_schema(
         manual_parameters=[
@@ -117,69 +118,20 @@ class SubmitAnonymizationAPIView(ClientScopedViewMixin):
             service_id_param,
             file_type_param
         ],
-        operation_description="Starts anonymization using the default Presidio → spaCy pipeline. You can optionally specify the file_type (plain or structured)."
+        operation_description="Starts anonymization using the default Presidio â†’ spaCy pipeline. You can optionally specify the file_type (plain or structured)."
     )
     def post(self, request):
-        client_id = request.headers.get("X-Client-ID")
-        client_secret = request.headers.get("X-Client-Secret")
-        file_id = request.query_params.get("file_id")
-        project_id = request.query_params.get("project_id")
-        service_id = request.query_params.get("service_id")
-        file_type = request.query_params.get("file_type", "plain").lower()
-
-        if not all([file_id, project_id, service_id]):
-            return Response({"error": "Missing required parameters"}, status=status.HTTP_400_BAD_REQUEST)
-
-        user = request.user   # identity from the bearer token, never from a header
-        file_instance = self.get_object_by_client(File.objects.filter(project_id=project_id, service_id=service_id), id=file_id)
-
-        if str(file_instance.user.id) != str(user.id):
-            raise PermissionDenied("You are not authorized to process this file.")
-
-        if not os.path.exists(file_instance.filepath):
-            return Response({"error": "File not found."}, status=status.HTTP_404_NOT_FOUND)
-
-        # CHECK FOR EXISTING COMPLETED ANONYMIZATION
-        existing = Anonymize.objects.filter(
-            original_file=file_instance,
-            file_type=file_type,
-            status="Completed",
-            is_active=True
-        ).first()
-
-        if existing:
-            return Response({
-                "message": "This file has already been anonymized.",
-                "anonymized_id": str(existing.id),
-                "anonymized_filepath": existing.anonymized_filepath,
-                "anonymized_structured_filepath": existing.anonymized_structured_filepath,
-                "status": "Completed"
-            }, status=status.HTTP_200_OK)
-
-        # Proceed with new anonymization with client FK
-        anonymization_run = AnonymizationRun.objects.create(
-            id=str(uuid.uuid4()),
-            project_id=project_id,
-            service_id=service_id,
-            client=request.user.client,
-            client_name=user.username or user.email,
-            status="Processing",
-            anonymization_type="Presidio-Spacy"
-        )
-
-        anonymize_document_task.delay(file_id, file_type, str(anonymization_run.id))
-
-        return Response({
-            "anonymization_run_id": str(anonymization_run.id),
-            "file_id": str(file_instance.id),
-            "status": "Processing"
-        }, status=status.HTTP_202_ACCEPTED)
-
-
-
-
-
-
+        file_id = request.query_params.get("file_id") or request.data.get("file_id")
+        file = get_file_for_user(request.user, file_id, "process")
+        if not os.path.isfile(file.filepath):
+            return Response({"error": "File not found."}, status=404)
+        try:
+            run, queued = submit_anonymization(file, request.user,
+                request.query_params.get("file_type") or request.data.get("file_type", "plain"))
+        except ValueError as exc:
+            return Response({"error": str(exc)}, status=400)
+        return Response({"anonymization_run_id": str(run.pk), "file_id": str(file.pk),
+            "status": run.status, "queued": queued}, status=200 if run.status == "Completed" else 202)
 
 
 
@@ -211,7 +163,8 @@ class DownloadAnonymizedFileAPIView(ClientScopedViewMixin):
             return Response({"error": "Invalid client ID"}, status=403)
 
         self.get_object_by_client(File.objects.all(), id=file_id)
-        anonymized_file = get_scoped_or_404(request.user, Anonymize, 'original_file', original_file_id=file_id, file_type=file_type, is_active=True)
+        output_type = request.query_params.get("output_type") or (file_type if file_type in {"plain", "structured"} else "plain")
+        anonymized_file = get_scoped_or_404(request.user, Anonymize, 'original_file', original_file_id=file_id, file_type=output_type, is_active=True, status="Completed")
         de_anonymized_file = scope_by_file(request.user, DeAnonymize.objects.filter(file_id=file_id), 'file').first()
 
         if file_type == "structured":
@@ -223,10 +176,15 @@ class DownloadAnonymizedFileAPIView(ClientScopedViewMixin):
                 return Response(data, content_type="application/json") if structured_blocks else FileResponse(open(path, "rb"))
 
         if file_type == "json":
-            if not os.path.exists(anonymized_file.entity_mapping_filepath):
-                return Response({"error": "JSON file not found."}, status=404)
-            with open(anonymized_file.entity_mapping_filepath, "r", encoding="utf-8") as f:
-                return Response(json.load(f), content_type="application/json")
+            # JSON exports are redacted document blocks, never reversal maps.
+            path = anonymized_file.anonymized_structured_filepath
+            if path and os.path.isfile(path):
+                with open(path, "r", encoding="utf-8") as stream:
+                    return Response(json.load(stream), content_type="application/json")
+            if anonymized_file.anonymized_filepath and os.path.isfile(anonymized_file.anonymized_filepath):
+                with open(anonymized_file.anonymized_filepath, "r", encoding="utf-8") as stream:
+                    return Response([{"type": "Text", "text": stream.read()}], content_type="application/json")
+            return Response({"error": "Redacted JSON is not available."}, status=404)
 
         if file_type == "html":
             if not os.path.exists(anonymized_file.anonymized_html_filepath):
@@ -236,6 +194,7 @@ class DownloadAnonymizedFileAPIView(ClientScopedViewMixin):
         file_path_map = {
             "original": anonymized_file.original_file.filepath,
             "anonymized": anonymized_file.anonymized_filepath,
+            "plain": anonymized_file.anonymized_filepath,
             "deanonymized": de_anonymized_file.unmasked_filepath if de_anonymized_file else None
         }
 
@@ -251,8 +210,10 @@ class SubmitDeAnonymizationAPIView(APIView):
     @swagger_auto_schema(manual_parameters=[client_id_param, file_id_param])
     def post(self, request):
         file_id = request.query_params.get("file_id")
-        anonymized_file = get_scoped_or_404(request.user, Anonymize, 'original_file', original_file_id=file_id)
-        deanonymize_document_task.delay(file_id)
+        from core.processing import processing_file
+        processing_file(file_id, request.user.pk, permission="anonymization.submit")
+        anonymized_file = get_scoped_or_404(request.user, Anonymize, 'original_file', original_file_id=file_id, file_type="plain", is_active=True)
+        deanonymize_document_task.delay(file_id, user_id=request.user.pk)
         return Response({
             "message": "De-anonymization started.",
             "file_id": str(file_id),
@@ -346,7 +307,9 @@ class ExportBlocksView(APIView):
         file_id = request.data.get("file_id")
         export_format = request.data.get("export_format")
 
-        instance = get_scoped_or_404(request.user, Anonymize, 'original_file', original_file_id=file_id, is_active=True, file_type="structured")
+        from core.processing import processing_file
+        processing_file(file_id, request.user.pk, permission="anonymization.submit")
+        instance = get_scoped_or_404(request.user, Anonymize, 'original_file', original_file_id=file_id, is_active=True, file_type="structured", status="Completed")
         path = instance.anonymized_structured_filepath
 
         if export_format == "markdown":
@@ -356,7 +319,14 @@ class ExportBlocksView(APIView):
         else:
             return Response({"error": "Invalid export format"}, status=400)
 
-        return Response({"download": export_path})
+        from core.processing import processing_file
+        from core.utils import register_generated_file
+        actor, source = processing_file(file_id, request.user.pk, permission="anonymization.submit")
+        output = register_generated_file(file_path=export_path, user=source.user, run=source.run,
+            project_id=source.project_id, service_id=source.service_id, folder_name="anonymized",
+            source_file=source, actor=actor, permission="anonymization.submit")
+        return Response({"file_id": output.pk, "filename": output.filename,
+            "download": f"/api/v1/core/download/?file_id={output.pk}"})
 
 
 
@@ -475,8 +445,9 @@ class DocumentRiskScoreView(APIView):
             return Response({"error": "file_id is required"}, status=400)
 
         # Check if risk score already exists in DB or cache in future
-        get_file_for_user(request.user, file_id)
-        task = register_task(request.user, compute_risk_score_task.delay(file_id), "risk")
+        from core.processing import processing_file
+        processing_file(file_id, request.user.pk, permission="anonymization.submit")
+        task = register_task(request.user, compute_risk_score_task.delay(file_id, user_id=request.user.pk), "risk")
         return Response({"task_id": task.id, "status": "Risk analysis started"}, status=202)
 
 

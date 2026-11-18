@@ -104,71 +104,34 @@ class OCRService:
 
 
     def apply_ocr(self, file_id, file_path, ocr_option="Basic-ocr"):
-        """Applies OCR to a given PDF file and saves the OCRed file."""
+        """Process one PDF in an isolated job directory; surface subprocess errors."""
         if not file_path or not self.is_pdf(file_path):
-            logger.info(f"Skipping OCR: File {file_path} is not a PDF.")
-            return None
-
-        # Ensure the OCR directories exist without redundancy
-        ocr_dir = os.path.join(os.path.dirname(file_path), "ocr", ocr_option.lower())  # Ensure OCR option directory
-        tmp_dir = os.path.join(ocr_dir, "tmp")  # Ensure tmp is under the OCR option directory
-        os.makedirs(tmp_dir, exist_ok=True)  # Ensure tmp exists
-
-        # Store OCR output in `tmp/`
-        ocr_output_path = os.path.join(tmp_dir, f"ocr-{uuid.uuid4()}.pdf")  # Save OCR output directly in tmp/
-
-        try:
-            logger.info(f"Applying OCR to {file_path}")
-
-            if ocr_option.lower() == "basic-ocr":
-                cmd = [
-                    "ocrmypdf",
-                    "--optimize", "1",
-                    "--force-ocr",
-                    "--rotate-pages",
-                    file_path,
-                    ocr_output_path
-                ]
-                process = subprocess.run(cmd, capture_output=True, text=True)
-
-            elif ocr_option.lower() == "advanced-ocr":
-                # Advanced OCR using Tesseract via ImageMagick and pypdf
-                output_image_pattern = file_path.replace('.pdf', '_page_%d.png')
-                cmd_convert = [
-                    'magick',
-                    '-density', '300',  # High DPI for better OCR accuracy
-                    file_path,
-                    output_image_pattern
-                ]
-                subprocess.run(cmd_convert, check=True)
-
-                ocr_output_files = []
-                for image_file in sorted(glob.glob(output_image_pattern.replace('%d', '*'))):
-                    ocr_output_pdf = image_file.replace('.png', '.pdf')
-                    cmd_ocr = [
-                        'tesseract',
-                        image_file,
-                        ocr_output_pdf.replace('.pdf', ''),
-                        '--oem', '1',
-                        '--psm', '3',
-                        'pdf'
-                    ]
-                    subprocess.run(cmd_ocr, check=True)
-                    ocr_output_files.append(ocr_output_pdf)
-
-                if ocr_output_files:
-                    self.merge_pdf(ocr_output_files, ocr_output_path, ocr_option)
-
-            else:
-                raise ValueError("Invalid OCR option provided.")
-
-            logger.info(f"OCR applied successfully using {ocr_option}. Output saved to {ocr_output_path}")
-            return ocr_output_path
-
-        except subprocess.CalledProcessError as e:
-            logger.error(f"OCR processing failed: {e.stderr}")
-            return None
-
+            raise ValueError("OCR requires a readable PDF or a converted image.")
+        option = str(ocr_option).lower()
+        output_path = os.path.join(os.path.dirname(file_path), f"ocr-{uuid.uuid4()}.pdf")
+        if option in {"basic", "basic-ocr"}:
+            subprocess.run(["ocrmypdf", "--skip-text", "--rotate-pages", "--optimize", "0", "--jobs", "1",
+                file_path, output_path], check=True, capture_output=True, text=True, timeout=1800)
+        elif option in {"advanced", "advanced-ocr"}:
+            import fitz
+            import pytesseract
+            from PIL import Image
+            import io
+            with fitz.open(file_path) as source, fitz.open() as result:
+                for page in source:
+                    pixmap = page.get_pixmap(dpi=200)
+                    with Image.open(io.BytesIO(pixmap.tobytes("png"))) as image:
+                        data = pytesseract.image_to_pdf_or_hocr(image, extension="pdf", timeout=300)
+                    with fitz.open("pdf", data) as processed:
+                        result.insert_pdf(processed)
+                if source.get_toc():
+                    result.set_toc(source.get_toc())
+                result.save(output_path)
+        else:
+            raise ValueError("Invalid OCR option.")
+        if not os.path.isfile(output_path) or not os.path.getsize(output_path):
+            raise ValueError("OCR produced no output.")
+        return output_path
 
 
     def merge_pdf(self, ocr_output_files, output_path, ocr_option):

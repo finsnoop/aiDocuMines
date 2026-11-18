@@ -221,6 +221,13 @@ def build_intelligence(run_id):
         if tenant_id(user) != run.tenant_id or not user.is_active:
             raise ValueError('Access changed before execution.')
         config = configured_model(user)
+        from custom_authentication.models import OrganisationPolicy
+        from .agents import cost as cost_agent
+        if OrganisationPolicy.objects.filter(client_id=run.tenant_id, assistant_enabled=False).exists():
+            raise ValueError('AI is disabled by organisation policy.')
+        allowed, why = cost_agent.allow(run.tenant_id)
+        if not allowed:
+            raise ValueError(why)
         rules = list(IntelligenceRule.objects.filter(tenant_id=run.tenant_id, enabled=True)
                      .values('id', 'name', 'instruction', 'document_category'))
         for file_id in run.file_ids:
@@ -234,7 +241,15 @@ def build_intelligence(run_id):
                     raise ValueError('Source is outside this tenant.')
                 text = file.content or ''
                 if not text.strip():
-                    raise ValueError('No extracted text. Process the source document first.')
+                    # This is a requested analysis, not a periodic OCR sweep. Prepare
+                    # missing PDF text only after checking the actor and source ACL.
+                    from document_search.text_policy import shared_file_text
+                    text = shared_file_text(file, allow_ocr=True)
+                    file.refresh_from_db()
+                    if (file.content or '').strip() != text.strip():
+                        raise ValueError('Source changed during text preparation; rerun required.')
+                if not text.strip():
+                    raise ValueError('No extracted text. Run OCR explicitly for an image source or review the PDF.')
                 if len(text) > 240000:
                     raise ValueError('Source exceeds the analysis limit; split it before analysis.')
                 digest = source_hash(text)

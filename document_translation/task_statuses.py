@@ -5,6 +5,7 @@ from django.http import FileResponse, Http404
 from django.shortcuts import get_object_or_404
 from oauth2_provider.models import Application
 from core.models import File
+from core.utils import get_logical_path
 from document_translation.models import TranslationRun, TranslationFile
 from document_translation.utils import get_language_name
 import logging
@@ -61,7 +62,7 @@ class TranslationTaskStatusView(APIView):
         client_id = request.headers.get("X-Client-ID")
         client_secret = request.headers.get("X-Client-Secret")
         file_id = request.query_params.get("file_id")
-        run_id = request.query_params.get("run_id")
+        run_id = request.query_params.get("run_id") or request.query_params.get("translation_run_id")
 
         if not file_id and not run_id:
             return Response({"error": "Missing required parameters"}, status=400)
@@ -93,11 +94,12 @@ class TranslationTaskStatusView(APIView):
 
         # Prefer the translation file matching file_id if provided
         if file_instance:
-            translation_file = TranslationFile.objects.filter(
+            translation_file = scope_by_file(request.user, TranslationFile.objects.filter(
                 run=run_instance, original_file=file_instance
-            ).order_by("-created_at").first()
+            ), 'original_file').order_by("-created_at").first()
         else:
-            translation_file = TranslationFile.objects.filter(run=run_instance).order_by("-created_at").first()
+            translation_file = scope_by_file(request.user, TranslationFile.objects.filter(run=run_instance),
+                                             'original_file').order_by("-created_at").first()
 
         if not translation_file:
             return Response({"error": "No translation file found for the provided details"}, status=404)
@@ -113,8 +115,8 @@ class TranslationTaskStatusView(APIView):
             "project_id": translation_file.original_file.project_id,
             "service_id": translation_file.original_file.service_id,
             "client_name": run_instance.client_name,
-            "original_file_path": translation_file.original_file.filepath,
-            "translated_file_path": translation_file.translated_filepath,
+            "original_file_path": get_logical_path(translation_file.original_file.filepath),
+            "translated_file_path": get_logical_path(translation_file.translated_filepath),
             "created_at": translation_file.created_at.strftime("%Y-%m-%d %H:%M:%S"),
             "updated_at": translation_file.updated_at.strftime("%Y-%m-%d %H:%M:%S"),
         }
@@ -133,7 +135,7 @@ class TranslationTaskStatusView(APIView):
                 continue
             
             # Find the File record for this translated file
-            file_record = File.objects.filter(filepath=tf.translated_filepath).first()
+            file_record = File.objects.filter(filepath=tf.translated_filepath, user=tf.original_file.user).first()
             
             registered_outputs.append({
                 "translated_file_id": str(tf.id),
@@ -141,7 +143,7 @@ class TranslationTaskStatusView(APIView):
                 "language": tf.run.to_language,
                 "language_name": get_language_name(tf.run.to_language),
                 "filename": os.path.basename(tf.translated_filepath) if tf.translated_filepath else None,
-                "filepath": tf.translated_filepath,
+                "filepath": get_logical_path(tf.translated_filepath),
                 "status": tf.run.status,
                 # Optional convenience link if you expose a download route:
                 # "download_url": f"/api/v1/translation/download/?file_id={tf.original_file.id}&file_type=translated&language={tf.run.to_language}",
@@ -214,18 +216,13 @@ class TranslationFileDownloadView(APIView):
             return Response({"error": "Invalid client ID"}, status=403)
 
         # Fetch the translation file filtered by `file_id` & `language`
+        source = get_file_for_user(request.user, file_id, "download")
         translation_file = TranslationFile.objects.filter(
-            original_file__id=file_id,
-            run__to_language=language  # Ensure the translation matches the requested language
-        ).first()
+            original_file=source, run__to_language=language, status="Completed"
+        ).order_by("-created_at").first()
 
         if not translation_file:
             return Response({"error": f"No translated file found for file_id={file_id} in language={language}"}, status=404)
-
-        # Check if the user owns this file
-        if translation_file.original_file.user != user:
-            logger.error(f"Unauthorized access attempt: {user.username} tried to access file {file_id}")
-            return Response({"error": "Unauthorized"}, status=403)
 
         # Determine the file path
         if file_type == "original":

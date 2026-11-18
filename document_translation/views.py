@@ -30,7 +30,7 @@ from custom_authentication.permissions import IsClientOrAdminOrSuperUser
 
 from django.http import FileResponse, Http404
 from django.utils.encoding import smart_str
-from core.access import get_file_for_user, get_scoped_or_404, get_run_for_user, scope_by_file, scope_by_owner
+from core.access import get_file_for_user, get_scoped_or_404, get_run_for_user, scope_by_file, scope_by_owner, user_has_perm
 
 
 logger = logging.getLogger(__name__)
@@ -96,10 +96,9 @@ class SubmitTranslationAPIView(ClientScopedViewMixin):
             return Response({"error": "Invalid client ID"}, status=status.HTTP_401_UNAUTHORIZED)
 
         # Get the file instance scoped by client
-        file_instance = self.get_object_by_client(File.objects.all(), id=file_id)
-
-        if file_instance.user != user:
-            raise PermissionDenied("You are not authorized to translate this file.")
+        if not user_has_perm(user, "translation.submit"):
+            raise PermissionDenied("Your role cannot translate documents.")
+        file_instance = get_file_for_user(user, file_id, "process")
 
         if not os.path.exists(file_instance.filepath):
             return Response({"error": "File not found."}, status=status.HTTP_404_NOT_FOUND)
@@ -121,7 +120,11 @@ class SubmitTranslationAPIView(ClientScopedViewMixin):
             client_name=user.username if user and user.username else user.email
         )
 
-        translate_document_task.delay(file_id, str(translation_run.id), from_lang, to_lang)
+        TranslationFile.objects.create(run=translation_run, original_file=file_instance,
+                                       original_filepath=file_instance.filepath, status="Processing")
+        from django.db import transaction
+        transaction.on_commit(lambda: translate_document_task.delay(
+            file_instance.pk, str(translation_run.id), from_lang, to_lang, requested_by_id=user.pk))
 
         response_data = {
             "translation_run_id": str(translation_run.id),

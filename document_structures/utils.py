@@ -68,8 +68,23 @@ def run_partition(file: File, partition_strategy: str) -> list:
     file_path = file.filepath
     logger.warning(f"→ Partitioning file: {file_path} | strategy={partition_strategy}")
 
-    if partition_strategy == "partition_pdf":
-        elements = partition_pdf(filename=file_path)
+    if os.path.splitext(str(file_path))[1].lower() in {".jpg", ".jpeg", ".png", ".tif", ".tiff", ".bmp", ".webp", ".gif", ".heic"}:
+        raise ValueError("Image structure analysis requires an explicit OCR request first. Analyze the resulting document.")
+    if str(file_path).lower().endswith(".pdf"):
+        from document_search.text_policy import shared_file_text
+        text = shared_file_text(file, allow_ocr=True)
+        if not text.strip():
+            raise ValueError("No readable PDF text is available. Use explicit OCR for documents beyond the fallback limits.")
+        if partition_strategy == "partition_text":
+            elements = partition_text(text=text)
+        else:
+            # 'auto' may select OCR even for native PDFs. Preserve native layout
+            # extraction while keeping OCR under the shared conditional policy.
+            elements = partition_pdf(filename=file_path, strategy="fast")
+            if not elements:
+                elements = partition_text(text=text)
+    elif partition_strategy == "partition_pdf":
+        raise ValueError("PDF partitioning requires a PDF document.")
     elif partition_strategy == "partition_text":
         elements = partition_text(filename=file_path)
     elif partition_strategy == "partition_auto":

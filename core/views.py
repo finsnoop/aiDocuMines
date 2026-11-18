@@ -45,8 +45,6 @@ from platform_data_insights.models import UserInsights
 
 from core.tasks import process_bulk_metadata
 
-from document_anonymizer.models import AnonymizationRun
-from document_anonymizer.tasks import anonymize_document_task, compute_risk_score_task
 from core.access import get_file_for_user, get_scoped_or_404, get_run_for_user, scope_by_file, scope_by_owner
 
 
@@ -268,7 +266,7 @@ class FileUploadView(APIView):
 
 
 def queue_post_upload_processing(user, run, fresh, project_id, service_id):
-    """Text extraction, search indexing, auto-anonymisation and insights for a newly stored file."""
+    """Queue searchable content and insights; anonymization/risk scoring require an explicit request."""
     def trigger_indexing():
         try:
             from core.models import EndpointResponseTable
@@ -289,44 +287,6 @@ def queue_post_upload_processing(user, run, fresh, project_id, service_id):
             logger.exception("Failed to trigger indexing for file_id=%s. Error: %s", fresh.id, str(e))
 
 
-    def trigger_anonymization():
-        try:
-            # Decide anonymization file_type for your pipeline
-            # Use "structured" if you want JSON blocks; fallback to "plain"
-            file_type = "structured" if fresh.file_type.lower() in [
-                "application/pdf",
-                "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-            ] else "plain"
-
-            # Create a run record to track this anonymization
-            anon_run = AnonymizationRun.objects.create(
-                project_id=project_id,
-                service_id=service_id,
-                client=getattr(user, 'client', None),
-                client_name=user.username or user.email,
-                status="Processing",
-                anonymization_type="Presidio"  # or "Presidio-Spacy" to match your choice
-            )
-
-            # Queue anonymization (idempotence handled inside the task if you prefer)
-            anonymize_document_task.apply_async((fresh.id, file_type, str(anon_run.id)))
-
-            # If your anonymize task doesn’t already compute risk, also queue this:
-            compute_risk_score_task.apply_async((fresh.id,), countdown=0)
-
-            # (Optional) log to EndpointResponseTable (like you do for indexing)
-            EndpointResponseTable.objects.create(
-                run=run,
-                client=user,
-                endpoint_name="/api/v1/document-anonymizer/submit-anonymization/",
-                response_data={"auto_trigger": True, "file_id": fresh.id, "file_type": file_type},
-                status="Pending"
-            )
-            logger.info("Auto-anonymization queued for file_id=%s (type=%s)", fresh.id, file_type)
-        except Exception:
-            logger.exception("Failed to queue anonymization for file_id=%s", fresh.id)
-
-
     if fresh.file_type.lower() not in ["application/pdf", "application/vnd.openxmlformats-officedocument.wordprocessingml.document"]:
         logger.info("Skipping indexing for unsupported type: %s", fresh.file_type)
     elif not getattr(getattr(user, "settings", None), "auto_index_enabled", True):
@@ -342,9 +302,6 @@ def queue_post_upload_processing(user, run, fresh, project_id, service_id):
 
     # Classify EVERY upload (also types that are not indexed, and MD5 duplicates).
     transaction.on_commit(lambda: classify_file.delay(fresh.id))
-
-    # queue after transaction commits (same pattern you use for indexing)
-    transaction.on_commit(trigger_anonymization)
 
     # Delete any old cached insights
     UserInsights.objects.filter(user=user).delete()
@@ -435,30 +392,6 @@ def finalize_uploaded_file(*, user, run, project_id, service_id, file_path, file
         except Exception as e:
             logger.exception("Failed to trigger indexing for file_id=%s. Error: %s", fresh.id, str(e))
 
-    def trigger_anonymization():
-        try:
-            file_type_anon = "structured" if fresh.file_type.lower() in [
-                "application/pdf",
-                "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-            ] else "plain"
-            anon_run = AnonymizationRun.objects.create(
-                project_id=project_id,
-                service_id=service_id,
-                client_name=user.username or user.email,
-                status="Processing",
-                anonymization_type="Presidio"
-            )
-            anonymize_document_task.apply_async((fresh.id, file_type_anon, str(anon_run.id)))
-            EndpointResponseTable.objects.create(
-                run=run,
-                client=user,
-                endpoint_name="/api/v1/document-anonymizer/submit-anonymization/",
-                response_data={"auto_trigger": True, "file_id": fresh.id, "file_type": file_type_anon},
-                status="Pending"
-            )
-        except Exception:
-            logger.exception("Failed to queue anonymization for file_id=%s", fresh.id)
-
     supported_types = ["application/pdf", "application/vnd.openxmlformats-officedocument.wordprocessingml.document"]
     if fresh.file_type.lower() not in supported_types:
         logger.info("Skipping indexing for unsupported type: %s", fresh.file_type)
@@ -472,8 +405,6 @@ def finalize_uploaded_file(*, user, run, project_id, service_id, file_path, file
 
     transaction.on_commit(lambda: extract_document_text_task.delay(fresh.id))
     transaction.on_commit(lambda: classify_file.delay(fresh.id))
-    transaction.on_commit(trigger_anonymization)
-    transaction.on_commit(lambda: compute_risk_score_task.apply_async((fresh.id,), countdown=0))
 
     return _resp(fresh, "File uploaded successfully.")
 
@@ -568,10 +499,12 @@ class MetadataView(APIView):
         # Generate a new run_id for the metadata extraction process
         run_id = str(uuid.uuid4())
         run = Run.objects.create(run_id=run_id, user=file_instance.user, status="Processing")
+        EndpointResponseTable.objects.create(run=run, client=file_instance.user, endpoint_name="MetadataView",
+            status="Pending", response_data={"file_id": file_instance.pk, "filename": file_instance.filename})
 
         # Trigger metadata extraction task
         from .tasks import process_metadata
-        process_metadata.delay(file_instance.id, run.run_id)
+        transaction.on_commit(lambda: process_metadata.delay(file_instance.id, run.run_id, requested_by_id=request.user.pk))
 
         return Response(
             {
@@ -589,7 +522,7 @@ class FileDownloadView(APIView):
     Download a file using file_id, dynamically supporting all common formats.
     """
     authentication_classes = [OAuth2Authentication]
-    permission_classes = [IsAuthenticated, TokenHasReadWriteScope, IsClientOrAdminOrSuperUser]
+    permission_classes = [IsAuthenticated, TokenHasReadWriteScope]
 
     @swagger_auto_schema(
         operation_description="Download a file using file_id. Supports multiple file types.",

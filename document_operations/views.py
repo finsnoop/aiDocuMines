@@ -33,7 +33,6 @@ from .tasks import (
     async_duplicate_file,
     async_copy_file,
     async_zip_files,
-    async_password_protect_file,
 )
 
 import os
@@ -52,11 +51,57 @@ from .tasks import async_grant_public_link
 from .utils import update_access_level_for_user, same_tenant
 from .models import FileAccessEntry
 from django.contrib.auth import get_user_model
-from document_operations.utils import set_password_protection
 from document_operations.models import FileAuditLog
 from rest_framework.parsers import JSONParser, MultiPartParser, FormParser  # Import this at the top
+from celery.result import AsyncResult
+from core.task_access import register_task, require_task_owner
+from django.contrib.auth.hashers import make_password, check_password
+from django.urls import reverse
+from django.utils import timezone
+from django.core.cache import cache
+from django.http import Http404
 
 User = get_user_model()
+
+
+def queue_operation(request, task, *args, message="Document operation queued.", **kwargs):
+    source_ids = []
+    action = "view"
+    name = task.name.rsplit(".", 1)[-1]
+    if name in {"async_rename_file", "async_copy_file"}:
+        source_ids = [args[0]]
+        action = "rename" if name == "async_rename_file" else "download"
+    elif name in {"async_duplicate_file", "async_bulk_move_files_to_folder", "async_bulk_trash_files", "async_zip_files"}:
+        link_ids = [args[0]] if name == "async_duplicate_file" else args[0]
+        source_ids = list(FileFolderLink.objects.filter(pk__in=link_ids).values_list("file_id", flat=True))
+        action = {"async_duplicate_file": "duplicate", "async_bulk_move_files_to_folder": "move",
+                  "async_bulk_trash_files": "delete", "async_zip_files": "zip"}[name]
+    result = register_task(request.user, task.delay(*args, actor_user_id=request.user.pk, **kwargs), "document_operation")
+    cache.set(f"document_operation_context:{result.id}", {"tenant_id": access.tenant_id(request.user),
+              "source_ids": source_ids, "action": action}, timeout=int(getattr(settings, "CELERY_RESULT_EXPIRES", 86400)))
+    return Response({"message": message, "task_id": result.id, "status": "pending"}, status=202)
+
+
+class DocumentOperationStatusView(APIView):
+    authentication_classes = [OAuth2Authentication]
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, task_id):
+        require_task_owner(request.user, task_id, "document_operation")
+        context = cache.get(f"document_operation_context:{task_id}")
+        if not context or context.get("tenant_id") != access.tenant_id(request.user) or access.user_role_names(request.user) == {"Guest"}:
+            raise Http404
+        for file_id in context.get("source_ids", []):
+            access.get_file_for_user(request.user, file_id, context["action"])
+        task = AsyncResult(task_id)
+        if task.failed():
+            return Response({"task_id": task_id, "status": "failure", "error": "The document operation failed. Check that the document still exists and you still have permission."})
+        if not task.ready():
+            return Response({"task_id": task_id, "status": "pending"})
+        result = task.result
+        if not isinstance(result, dict) or result.get("error"):
+            return Response({"task_id": task_id, "status": "failure", "error": "The document operation could not be completed."})
+        return Response({"task_id": task_id, "status": "success", "result": result})
 
 
 
@@ -73,7 +118,7 @@ class FolderDetailView(APIView):
     ?include_files=false  → omit the file listings
     """
     authentication_classes = [OAuth2Authentication]
-    permission_classes = [IsAuthenticated, IsClientOrAdminOrSuperUser, HasEffectiveAccess]
+    permission_classes = [IsAuthenticated, HasEffectiveAccess]
 
     def get(self, request, pk):
         folder = access.get_folder_for_user(request.user, pk, "view")
@@ -89,7 +134,7 @@ class FolderDetailView(APIView):
 
 class FileDetailView(APIView):
     authentication_classes = [OAuth2Authentication]
-    permission_classes = [IsAuthenticated, IsClientOrAdminOrSuperUser, HasEffectiveAccess]
+    permission_classes = [IsAuthenticated, HasEffectiveAccess]
 
     def get(self, request, pk):
         file_link = access.get_file_link_for_user(request.user, pk, "view")
@@ -111,17 +156,9 @@ class RenameFileView(APIView):
         except ValueError:
             return Response({"error": "Invalid file name."}, status=400)
 
-        # Audit log
         file_link = access.get_file_link_for_user(request.user, pk, "rename")
-        FileAuditLog.objects.create(
-            file=file_link.file,
-            user=request.user,
-            action="renamed",
-            extra={"new_name": new_name}
-        )
 
-        async_rename_file.delay(file_link.file.id, new_name)
-        return Response({"message": "File rename initiated."}, status=202)
+        return queue_operation(request, async_rename_file, file_link.file.id, new_name, message="File rename queued.", expected_updated_at=file_link.file.updated_at.isoformat())
 
 
 class RenameFolderView(APIView):
@@ -134,8 +171,7 @@ class RenameFolderView(APIView):
             return Response({"error": "Missing new_name"}, status=400)
 
         folder = access.get_folder_for_user(request.user, pk, "manage")
-        async_rename_folder.delay(str(folder.id), str(new_name)[:255])
-        return Response({"message": "Folder rename initiated."}, status=202)
+        return queue_operation(request, async_rename_folder, str(folder.id), str(new_name)[:255], message="Folder rename queued.")
 
 
 class TrashFilesView(APIView):
@@ -144,14 +180,13 @@ class TrashFilesView(APIView):
 
     def post(self, request):
         file_ids = request.data.get("file_ids", [])
-        if not file_ids:
+        if not isinstance(file_ids, list) or not file_ids or len(file_ids) > 1000 or any(isinstance(i, bool) or not str(i).isdigit() or int(i) < 1 for i in file_ids):
             return Response({"error": "Missing file_ids list."}, status=400)
 
         # Every id must be a file the caller may delete; one foreign id fails the whole request.
         file_ids = [link.id for link in access.get_file_links_for_user(request.user, file_ids, "delete")]
 
-        async_bulk_trash_files.delay(file_ids)
-        return Response({"message": "Files trash initiated."}, status=202)
+        return queue_operation(request, async_bulk_trash_files, file_ids, message="Files archive queued.")
 
 
 class MoveFilesView(APIView):
@@ -161,14 +196,13 @@ class MoveFilesView(APIView):
     def post(self, request):
         file_ids = request.data.get("file_ids", [])
         target_folder = request.data.get("target_folder")
-        if not file_ids or not target_folder:
-            return Response({"error": "Missing file_ids or target_folder."}, status=400)
+        if not isinstance(file_ids, list) or not file_ids or len(file_ids) > 1000 or not target_folder or any(isinstance(i, bool) or not str(i).isdigit() or int(i) < 1 for i in file_ids):
+            return Response({"error": "Provide a file_ids list and target_folder."}, status=400)
 
         file_ids = [link.id for link in access.get_file_links_for_user(request.user, file_ids, "move")]
         target_folder = str(access.get_folder_for_user(request.user, target_folder, "manage").id)
 
-        async_bulk_move_files_to_folder.delay(file_ids, target_folder)
-        return Response({"message": "Files move initiated."}, status=202)
+        return queue_operation(request, async_bulk_move_files_to_folder, file_ids, target_folder, message="Files move queued.")
 
 
 class DeleteFileView(APIView):
@@ -194,28 +228,9 @@ class DeleteFolderView(APIView):
     permission_classes = [IsAuthenticated, IsClientOrAdminOrSuperUser, IsOwner, HasEffectiveAccess]
 
     def delete(self, request, pk):
-        import os
-        from core.models import File as CoreFile
-
+        from document_operations.utils import delete_folder
         folder = access.get_folder_for_user(request.user, pk, "manage")
-
-        # Collect all file paths before cascade delete removes the DB rows
-        filepaths = self._collect_folder_filepaths(folder)
-        # Collect child folder filepaths too (Django cascade deletes subfolders)
-        for child in folder.subfolders.all():
-            filepaths.extend(self._collect_folder_filepaths(child))
-
-        folder.delete()
-
-        # Remove physical files from disk
-        for fpath in filepaths:
-            if fpath and os.path.isfile(fpath):
-                try:
-                    os.remove(fpath)
-                except OSError:
-                    pass
-
-        return Response({"message": "Folder deleted."}, status=200)
+        return Response(delete_folder(folder.pk, actor=request.user))
 
     def _collect_folder_filepaths(self, folder):
         """Recursively collect absolute file paths from a folder and its subfolders."""
@@ -233,9 +248,9 @@ class DuplicateFileView(APIView):
     permission_classes = [IsAuthenticated, IsClientOrAdminOrSuperUser, IsOwner, HasEffectiveAccess]
 
     def post(self, request, pk):
-        access.get_file_link_for_user(request.user, pk, "rename")
-        async_duplicate_file.delay(pk)
-        return Response({"message": "File duplication initiated."}, status=202)
+        link = access.get_file_link_for_user(request.user, pk, "duplicate")
+        access.get_folder_for_user(request.user, link.folder_id, "manage")
+        return queue_operation(request, async_duplicate_file, pk, message="File duplication queued.")
 
 
 class CopyFileView(APIView):
@@ -249,8 +264,7 @@ class CopyFileView(APIView):
 
         file_link = access.get_file_link_for_user(request.user, pk, "view")
         target_folder = str(access.get_folder_for_user(request.user, target_folder, "manage").id)
-        async_copy_file.delay(file_link.file.id, target_folder)
-        return Response({"message": "File copy initiated."}, status=202)
+        return queue_operation(request, async_copy_file, file_link.file.id, target_folder, message="File copy queued.")
 
 
 class ZipFilesView(APIView):
@@ -259,12 +273,11 @@ class ZipFilesView(APIView):
 
     def post(self, request):
         file_ids = request.data.get("file_ids", [])
-        if not file_ids:
+        if not isinstance(file_ids, list) or not file_ids or len(file_ids) > 1000 or any(isinstance(i, bool) or not str(i).isdigit() or int(i) < 1 for i in file_ids):
             return Response({"error": "Missing file_ids"}, status=400)
 
-        file_ids = [link.id for link in access.get_file_links_for_user(request.user, file_ids, "download")]
-        async_zip_files.delay(file_ids)
-        return Response({"message": "Zip operation initiated."}, status=202)
+        file_ids = [link.id for link in access.get_file_links_for_user(request.user, file_ids, "zip")]
+        return queue_operation(request, async_zip_files, file_ids, message="Archive creation queued.")
 
 
 class ProtectFileView(APIView):
@@ -272,21 +285,19 @@ class ProtectFileView(APIView):
     permission_classes = [IsAuthenticated, IsClientOrAdminOrSuperUser, HasEffectiveAccess]
 
     def post(self, request, pk):
-        password_hint = request.data.get("password_hint")
-        if not password_hint:
-            return Response({"error": "Missing password_hint"}, status=400)
-
-        # Audit log
-        file_link = access.get_file_link_for_user(request.user, pk, "rename")
-        FileAuditLog.objects.create(
-            file=file_link.file,
-            user=request.user,
-            action="updated",
-            extra={"protection": "password", "hint": password_hint}
-        )
-
-        async_password_protect_file.delay(file_link.id, password_hint)
-        return Response({"message": "Password protection initiated."}, status=202)
+        link = access.get_file_link_for_user(request.user, pk, "protect")
+        password = request.data.get("password")
+        hint = request.data.get("password_hint", "")
+        if not isinstance(password, str) or not 8 <= len(password) <= 128:
+            return Response({"error": "Use a password between 8 and 128 characters."}, status=400)
+        if not isinstance(hint, str) or len(hint) > 255:
+            return Response({"error": "Password hint must be at most 255 characters."}, status=400)
+        link.password_hash = make_password(password)
+        link.password_hint = hint
+        link.password_protected = True
+        link.save(update_fields=["password_hash", "password_hint", "password_protected"])
+        FileAuditLog.objects.create(file=link.file, user=request.user, action="password_set")
+        return Response({"message": "Public access now requires the password.", "password_protected": True})
 
 
 class RestoreFileView(APIView):
@@ -294,7 +305,7 @@ class RestoreFileView(APIView):
     permission_classes = [IsAuthenticated, IsClientOrAdminOrSuperUser, HasEffectiveAccess]
 
     def post(self, request, pk):
-        access.get_file_link_for_user(request.user, pk, "delete")
+        access.get_file_link_for_user(request.user, pk, "restore")
         restore_file_from_trash(pk, actor=request.user)
         return Response({"message": "File restored."}, status=status.HTTP_200_OK)
 
@@ -311,7 +322,7 @@ class RestoreFolderView(APIView):
 
 class ListFileVersionsView(APIView):
     authentication_classes = [OAuth2Authentication]
-    permission_classes = [IsAuthenticated, IsClientOrAdminOrSuperUser, HasEffectiveAccess]
+    permission_classes = [IsAuthenticated, HasEffectiveAccess]
 
     def get(self, request, pk):
         file_link = access.get_file_link_for_user(request.user, pk, "view")
@@ -330,36 +341,17 @@ class RestoreFileVersionView(APIView):
     permission_classes = [IsAuthenticated, IsClientOrAdminOrSuperUser, HasEffectiveAccess]
 
     def post(self, request, pk, version_number):
-        file_link = access.get_file_link_for_user(request.user, pk, "rename")
-        file = file_link.file
-
+        from document_operations.actions import restore_version
+        access.get_file_link_for_user(request.user, pk, "restore")
         try:
-            version = get_object_or_404(file.versions, version_number=version_number)
+            result = restore_version(pk, version_number, request.user)
         except FileVersion.DoesNotExist:
-            return Response({"error": "Version not found."}, status=status.HTTP_404_NOT_FOUND)
-
-        # Ensure the source file path exists
-        if not os.path.exists(version.file_path):
-            return Response({"error": "Version file is missing on disk."}, status=status.HTTP_404_NOT_FOUND)
-
-        # Create a backup of the current file (optional)
-        backup_dir = os.path.join(settings.MEDIA_ROOT, "backups", str(file.id))
-        os.makedirs(backup_dir, exist_ok=True)
-
-        backup_path = os.path.join(backup_dir, f"backup_{file.filename}")
-        if os.path.exists(file.file.path):
-            shutil.copy(file.file.path, backup_path)
-
-        try:
-            # Restore the selected version (overwrite the current file)
-            shutil.copy(version.file_path, file.file.path)
-        except Exception as e:
-            return Response({"error": f"Restore failed: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
-        return Response({
-            "message": f"Successfully restored file to version {version_number}.",
-            "backup_created_at": backup_path
-        }, status=status.HTTP_200_OK)
+            return Response({"error": "Version not found."}, status=404)
+        except FileNotFoundError:
+            return Response({"error": "The requested version or current document is missing from storage."}, status=404)
+        except ValueError as exc:
+            return Response({"error": str(exc)}, status=409)
+        return Response(result)
 
 
 class SharedFilesView(APIView):
@@ -402,14 +394,18 @@ class ShareFileView(APIView):
 
         user_ids = request.data.get("user_ids", []) or []
         emails = request.data.get("emails", []) or []
+        if not isinstance(user_ids, list) or not isinstance(emails, list) or any(not isinstance(email, str) for email in emails):
+            return Response({"error": "Provide user_ids and emails as lists."}, status=400)
         level = request.data.get("access_level", "read")
+        if level not in {"read", "write", "owner"}:
+            return Response({"error": "Invalid access_level."}, status=400)
         owner = file_link.file.user
         if not same_tenant(request.user, owner):
             return Response({"error": "You can only share files inside your organisation."}, status=403)
 
         access_map = {
-            "read":  {"can_read": True},
-            "write": {"can_read": True, "can_write": True},
+            "read":  {"can_read": True, "can_write": False, "can_delete": False, "can_share": False},
+            "write": {"can_read": True, "can_write": True, "can_delete": False, "can_share": False},
             "owner": {"can_read": True, "can_write": True, "can_delete": True, "can_share": True}
         }
         perms = access_map.get(level, {"can_read": True})
@@ -461,12 +457,17 @@ class ShareFileView(APIView):
 
 
 class UnshareFileView(APIView):
-    permission_classes = [IsAuthenticated, HasEffectiveAccess]
+    permission_classes = [IsAuthenticated, IsClientOrAdminOrSuperUser, HasEffectiveAccess]
 
     def post(self, request, pk):
         file_link = access.get_file_link_for_user(request.user, pk, "share")
 
+        from document_operations.models import EffectiveAccess
         FileAccessEntry.objects.filter(file_link=file_link).delete()
+        EffectiveAccess.objects.filter(file=file_link.file).delete()
+        file_link.shared_with.clear()
+        from document_operations.utils import revoke_public_link
+        revoke_public_link(file_link)
         file_link.is_shared = False
         file_link.save()
 
@@ -475,7 +476,7 @@ class UnshareFileView(APIView):
 
 class FilePreviewView(APIView):
     authentication_classes = [OAuth2Authentication]
-    permission_classes = [IsAuthenticated, IsClientOrAdminOrSuperUser, HasEffectiveAccess]
+    permission_classes = [IsAuthenticated, HasEffectiveAccess]
 
     def get(self, request, pk):
         file_link = access.get_file_link_for_user(request.user, pk, "view")
@@ -496,7 +497,7 @@ class FilePreviewView(APIView):
 
 class FileAuditLogView(APIView):
     authentication_classes = [OAuth2Authentication]
-    permission_classes = [IsAuthenticated, IsClientOrAdminOrSuperUser, HasEffectiveAccess]
+    permission_classes = [IsAuthenticated, HasEffectiveAccess]
 
     def get(self, request, pk):
         file_link = access.get_file_link_for_user(request.user, pk, "view")
@@ -521,7 +522,7 @@ class FileAuditLogView(APIView):
         access_data = [
             {
                 "type": "Access",
-                "user": e.user.email,
+                "user": e.user.email if e.user else None,
                 "granted_by": e.granted_by.email if e.granted_by else None,
                 "access": {
                     "read": e.can_read,
@@ -576,19 +577,18 @@ class UnhideFolderView(APIView):
 
 
 class BulkTrashFoldersView(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, IsClientOrAdminOrSuperUser]
 
     def post(self, request):
         folder_ids = request.data.get("folder_ids", [])
         if not folder_ids:
             return Response({"error": "Missing folder_ids list."}, status=400)
         folder_ids = [str(access.get_folder_for_user(request.user, fid, "manage").id) for fid in folder_ids]
-        async_bulk_trash_folders.delay(folder_ids)
-        return Response({"message": "Bulk folder trash initiated."}, status=202)
+        return queue_operation(request, async_bulk_trash_folders, folder_ids, message="Folder archive queued.")
 
 
 class BulkRestoreFoldersView(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, IsClientOrAdminOrSuperUser]
 
     def post(self, request):
         folder_ids = request.data.get("folder_ids", [])
@@ -613,8 +613,7 @@ class BulkDeleteFoldersView(APIView):
             return Response({"error": "Missing folder_ids list."}, status=400)
         # Organisation admins may only delete folders of their own organisation.
         folder_ids = [str(access.get_folder_for_user(request.user, fid, "manage").id) for fid in folder_ids]
-        async_bulk_delete_folders.delay(folder_ids)
-        return Response({"message": "Bulk folder delete initiated."}, status=202)
+        return queue_operation(request, async_bulk_delete_folders, folder_ids, message="Folder deletion queued.")
 
 
 class SharedTreeView(APIView):
@@ -676,15 +675,16 @@ class SharedTreeView(APIView):
 
 
 class PublicSharedFileView(RetrieveAPIView):
+    authentication_classes = []
     permission_classes = []  # public access
 
     def get(self, request, share_token):
-        link = get_object_or_404(FileFolderLink, public_token=share_token, is_public=True)
-        serializer = FileFolderLinkSerializer(link)
-        return Response({
-            "shared_file": serializer.data,
-            "preview_url": link.file.file.url  # Optional: direct link
-        })
+        link, error = public_file_link(request, share_token)
+        if error is not None:
+            return error
+        return Response({"filename": link.file.filename, "mime_type": link.file.file_type,
+                         "file_size": link.file.file_size, "password_protected": link.password_protected,
+                         "content_url": reverse("public_file_content", kwargs={"share_token": share_token})})
 
 
 # document_operations/views.py
@@ -1086,21 +1086,20 @@ class ShareWithGroupView(APIView):
 
         group_name = request.data.get("group_name")
         level = request.data.get("access_level", "read")
+        if level not in {"read", "write", "owner"}:
+            return Response({"error": "Invalid access_level."}, status=400)
         group = get_object_or_404(Group, name=group_name)
         owner = file_link.file.user
         if not same_tenant(request.user, owner):
             return Response({"error": "You can only share files inside your organisation."}, status=403)
 
         perms = {
-            "read":  {"can_read": True},
-            "write": {"can_read": True, "can_write": True},
+            "read":  {"can_read": True, "can_write": False, "can_delete": False, "can_share": False},
+            "write": {"can_read": True, "can_write": True, "can_delete": False, "can_share": False},
             "owner": {"can_read": True, "can_write": True, "can_share": True, "can_delete": True}
         }.get(level, {"can_read": True})
 
-        recipients = [
-            user for user in group.user_set.all()
-            if same_tenant(owner, user)
-        ]
+        recipients = list(User.objects.filter(groups=group, client_id=owner.client_id, is_active=True))
         if not recipients:
             return Response({"error": "No users in that group belong to your organisation."}, status=403)
 
@@ -1140,6 +1139,8 @@ class SetAccessLevelView(APIView):
 
         user_id = request.data.get("user_id")
         level = request.data.get("access_level", "read")
+        if level not in {"read", "write", "owner"}:
+            return Response({"error": "Invalid access_level."}, status=400)
 
         result = update_access_level_for_user(file_link, user_id, level, request.user)
         return Response(result, status=200)
@@ -1150,21 +1151,19 @@ class GrantPublicLinkView(APIView):
     permission_classes = [IsAuthenticated, IsClientOrAdminOrSuperUser, HasEffectiveAccess]
 
     def post(self, request, pk):
-        file_link = access.get_file_link_for_user(request.user, pk, "share")
-
-        FileAuditLog.objects.create(
-            file=file_link.file,
-            user=request.user,
-            action="shared",
-            extra={"shared_as": "public"}
-        )
-
-        async_grant_public_link.delay(file_link.id)
-        return Response({"message": "Public access link is being generated."}, status=202)
+        from document_operations.utils import generate_public_link
+        link = access.get_file_link_for_user(request.user, pk, "share")
+        if link.is_trashed or link.folder.is_trashed:
+            return Response({"error": "Restore the document before sharing it."}, status=400)
+        token = generate_public_link(link, actor=request.user)
+        path = reverse("public_file_access", kwargs={"share_token": token})
+        base = getattr(settings, "PUBLIC_SHARE_BASE_URL", "").rstrip("/")
+        public_url = f"{base}/share/{token}" if base else request.build_absolute_uri(path)
+        return Response({"message": "Public access link created.", "public_token": token, "public_url": public_url})
 
 
 class FileColorTagView(APIView):
-    permission_classes = [IsAuthenticated, HasEffectiveAccess]
+    permission_classes = [IsAuthenticated, IsClientOrAdminOrSuperUser, HasEffectiveAccess]
 
     @swagger_auto_schema(
         operation_description="Set or update color tag on a file",
@@ -1193,7 +1192,7 @@ class FileColorTagView(APIView):
 
 
 class FolderColorTagView(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, IsClientOrAdminOrSuperUser]
 
     @swagger_auto_schema(
         operation_description="Set or update color tag on a folder",
@@ -1233,17 +1232,18 @@ class FileAliasView(APIView):
         responses={201: FileAliasSerializer()}
     )
     def post(self, request, pk):
-        file_link = access.get_file_link_for_user(request.user, pk, "view")
+        if not IsClientOrAdminOrSuperUser().has_permission(request, self):
+            return Response({"error": "This account cannot change document aliases."}, status=403)
+        file_link = access.get_file_link_for_user(request.user, pk, "rename")
         alias_name = request.data.get('alias_name')
-        if not alias_name:
-            return Response({'error': 'alias_name is required'}, status=400)
-        alias = FileAlias.objects.create(
-            file_link=file_link,
-            alias_name=alias_name,
-            created_by=request.user
+        if not isinstance(alias_name, str) or not alias_name.strip() or len(alias_name) > 255:
+            return Response({'error': 'alias_name must contain 1 to 255 characters'}, status=400)
+        alias_name = alias_name.strip()
+        alias, created = FileAlias.objects.get_or_create(
+            file_link=file_link, alias_name=str(alias_name)[:255], defaults={"created_by": request.user}
         )
         serializer = FileAliasSerializer(alias)
-        return Response(serializer.data, status=201)
+        return Response(serializer.data, status=201 if created else 200)
 
     def get(self, request, pk):
         file_link = access.get_file_link_for_user(request.user, pk, "view")
@@ -1253,7 +1253,7 @@ class FileAliasView(APIView):
 
 
 class FileAliasDetailView(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, IsClientOrAdminOrSuperUser]
 
     def delete(self, request, pk, alias_id):
         access.get_file_link_for_user(request.user, pk, "rename")
@@ -1274,17 +1274,18 @@ class FolderAliasView(APIView):
         responses={201: FolderAliasSerializer()}
     )
     def post(self, request, pk):
+        if not IsClientOrAdminOrSuperUser().has_permission(request, self):
+            return Response({"error": "This account cannot change folder aliases."}, status=403)
         folder = access.get_folder_for_user(request.user, pk, "manage")
         alias_name = request.data.get('alias_name')
-        if not alias_name:
-            return Response({'error': 'alias_name is required'}, status=400)
-        alias = FolderAlias.objects.create(
-            folder=folder,
-            alias_name=alias_name,
-            created_by=request.user
+        if not isinstance(alias_name, str) or not alias_name.strip() or len(alias_name) > 255:
+            return Response({'error': 'alias_name must contain 1 to 255 characters'}, status=400)
+        alias_name = alias_name.strip()
+        alias, created = FolderAlias.objects.get_or_create(
+            folder=folder, alias_name=str(alias_name)[:255], defaults={"created_by": request.user}
         )
         serializer = FolderAliasSerializer(alias)
-        return Response(serializer.data, status=201)
+        return Response(serializer.data, status=201 if created else 200)
 
     def get(self, request, pk):
         folder = access.get_folder_for_user(request.user, pk, "manage")
@@ -1294,7 +1295,7 @@ class FolderAliasView(APIView):
 
 
 class FolderAliasDetailView(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, IsClientOrAdminOrSuperUser]
 
     def delete(self, request, pk, alias_id):
         access.get_folder_for_user(request.user, pk, "manage")
@@ -1341,3 +1342,25 @@ def _looks_like_uuid(value):
         return True
     except ValueError:
         return False
+
+
+def public_file_link(request, token):
+    link = get_object_or_404(FileFolderLink.objects.select_related("file", "folder"),
+                             public_token=token, is_public=True, is_trashed=False, folder__is_trashed=False)
+    if link.password_protected and (not link.password_hash or not check_password(request.headers.get("X-Share-Password", ""), link.password_hash)):
+        return None, Response({"password_required": True, "password_hint": link.password_hint or ""}, status=401)
+    if not link.file.filepath or not os.path.isfile(link.file.filepath):
+        return None, Response({"error": "This shared document is unavailable."}, status=404)
+    return link, None
+
+
+class PublicSharedFileContentView(APIView):
+    authentication_classes = []
+    permission_classes = []
+
+    def get(self, request, share_token):
+        from core.file_responses import download_response
+        link, error = public_file_link(request, share_token)
+        if error is not None:
+            return error
+        return download_response(link.file.filepath, link.file.filename, inline=request.query_params.get("inline") == "true")

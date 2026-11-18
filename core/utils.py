@@ -9,6 +9,7 @@ import hashlib
 import subprocess
 from pathlib import Path
 from datetime import datetime, timedelta
+from html import escape
 import xml.etree.ElementTree as ET
 
 from django.conf import settings
@@ -609,55 +610,72 @@ def get_datetime_folder_from_dd_run(dd_run) -> str:
     return datetime.now().strftime("%Y%m%d")
 
 
-def register_generated_file(file_path, user, run, project_id, service_id, folder_name="generated"):
+def register_generated_file(file_path, user, run, project_id, service_id, folder_name="generated", *, source_file=None, actor=None, expected_source_version=None, permission="document.update"):
+    """Persist an output and its folder link, without orphan storage rows.
+
+    A processor keeps the original matter/owner. An authorised same-tenant
+    requester also receives read access to the result they explicitly created.
+    Content de-duplication never reuses an unrelated matter's file.
     """
-    Registers any generated file (e.g., translated, anonymized) in the File table
-    using a flexible GenericForeignKey to support any run type.
-    """
-    if not os.path.exists(file_path):
-        raise FileNotFoundError(f"Cannot register missing file: {file_path}")
-
-    # Calculate MD5
-    with open(file_path, "rb") as f:
-        md5_hash = hashlib.md5(f.read()).hexdigest()
-
-    # ContentType for the given run instance
-    content_type = ContentType.objects.get_for_model(run)
-
-    # Create Storage with generic linkage
-    storage = Storage.objects.create(
-        user=user,
-        content_type=content_type,
-        object_id=run.pk,
-        upload_storage_location=file_path,
-        output_storage_location=None,
-    )
-
-    # De-dup by md5 for this user
-    existing = File.objects.filter(md5_hash=md5_hash, user=user).first()
-    if existing:
-        return existing
-
+    from django.db import transaction
     from core.models import Run as RunModel
-    file_instance = File.objects.create(
-        run=run if isinstance(run, RunModel) else None,
-        storage=storage,
-        filename=os.path.basename(file_path),
-        filepath=file_path,
-        file_size=os.path.getsize(file_path),
-        file_type=mimetypes.guess_type(file_path)[0] or os.path.splitext(file_path)[1].lstrip("."),
-        md5_hash=md5_hash,
-        user=user,
-        project_id=project_id,
-        service_id=service_id,
-    )
-
-    # Create folder link based on file path structure
-    # This creates the proper nested folder hierarchy (e.g., 20250101/translations/Spanish)
-    # and links the file to the leaf folder
-    register_file_folder_link(file_instance)
-
-    return file_instance
+    from core.access import can_access_file, is_platform_superuser
+    from document_operations.models import EffectiveAccess
+    if not os.path.isfile(file_path):
+        raise FileNotFoundError("Cannot register a missing output file.")
+    if source_file is not None and actor is not None:
+        if not can_access_file(actor, source_file, "process") or (actor.client_id != user.client_id and not is_platform_superuser(actor)):
+            raise PermissionError("Source access changed before output registration.")
+    actor_tenant = getattr(actor, "client_id", None)
+    if source_file is not None and actor is not None and expected_source_version is None:
+        from core.processing import source_version
+        expected_source_version = source_version(source_file)
+    digest = hashlib.md5()
+    with open(file_path, "rb") as stream:
+        for block in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(block)
+    md5_hash = digest.hexdigest()
+    with transaction.atomic():
+        if source_file is not None:
+            from django.contrib.auth import get_user_model
+            from core.processing import processing_file, source_version
+            if actor is None:
+                raise PermissionError("A requesting user is required for a derived output.")
+            # Hashing can take time for large PDFs. Reload and authorise at the
+            # publication boundary, holding actor/source rows through commit.
+            locked_source = File.objects.select_for_update().get(pk=source_file.pk)
+            list(get_user_model().objects.select_for_update().filter(
+                pk__in={actor.pk, locked_source.user_id}).order_by("pk"))
+            actor, current_source = processing_file(source_file.pk, actor.pk, permission=permission)
+            if actor.client_id != actor_tenant or source_version(current_source) != expected_source_version:
+                raise PermissionError("Source or organisation changed before output registration.")
+            if current_source.user_id != user.pk or (actor.client_id != current_source.user.client_id and not is_platform_superuser(actor)):
+                raise PermissionError("The output is outside the source organisation.")
+            source_file, user = current_source, current_source.user
+            project_id, service_id = current_source.project_id, current_source.service_id
+        # Identical bytes may belong to different matters. The database's
+        # user/hash uniqueness requires NULL for independent provenance copies.
+        existing = File.objects.filter(user=user, filepath=file_path).first()
+        if existing is None:
+            duplicate = File.objects.filter(user=user, md5_hash=md5_hash).exists()
+            content_type = ContentType.objects.get_for_model(run) if run is not None else None
+            storage = Storage.objects.create(user=user, content_type=content_type,
+                object_id=run.pk if run is not None else None,
+                upload_storage_location=file_path, output_storage_location=file_path)
+            file_run = run if isinstance(run, RunModel) else (source_file.run if source_file is not None else RunModel.objects.create(user=user, status="Completed"))
+            existing = File.objects.create(run=file_run,
+                storage=storage, filename=os.path.basename(file_path), filepath=file_path,
+                file_size=os.path.getsize(file_path),
+                file_type=mimetypes.guess_type(file_path)[0] or os.path.splitext(file_path)[1].lstrip("."),
+                extension=os.path.splitext(file_path)[1].lstrip("."),
+                md5_hash=None if duplicate else md5_hash, user=user,
+                project_id=project_id, service_id=service_id, status="Completed",
+                origin_file=source_file)
+        register_file_folder_link(existing)
+        if actor is not None and actor.pk != user.pk:
+            EffectiveAccess.objects.update_or_create(user=actor, file=existing, folder=None,
+                defaults={"can_download": True})
+        return existing
 
 
 # =============================================================================
@@ -745,7 +763,7 @@ def _extract_docx_full(path) -> str:
     return "\n".join(parts)
 
 
-def extract_document_text(path, mime_type=None) -> str:
+def extract_document_text(path, mime_type=None, *, allow_ocr=False) -> str:
     """
     Extract text from various file types.
 
@@ -761,15 +779,8 @@ def extract_document_text(path, mime_type=None) -> str:
         text = ""
 
         if ext == ".pdf":
-            doc = fitz.open(str(path))
-            with doc:
-                chunks = []
-                for page in doc:
-                    try:
-                        chunks.append(page.get_text())
-                    except Exception:
-                        continue
-                text = "\n".join(chunks)
+            from document_search.utils import extract_text as ds_extract_text
+            text = ds_extract_text(path, allow_ocr=allow_ocr)
 
         elif ext == ".docx":
             text = _extract_docx_full(path)
@@ -795,9 +806,9 @@ def extract_document_text(path, mime_type=None) -> str:
             # for images) shared with the search/classification pipeline.
             try:
                 from document_search.utils import extract_text as ds_extract_text
-                text = ds_extract_text(path)
+                text = ds_extract_text(path, allow_ocr=allow_ocr)
             except Exception:
-                parsed = tika_parser.from_file(str(path))
+                parsed = tika_parser.from_file(str(path), headers={"X-Tika-OCRskipOcr": "true", "X-Tika-PDFOcrStrategy": "no_ocr"})
                 text = (parsed.get("content") or "").strip()
 
         return _sanitize_extracted_text(text)
@@ -843,12 +854,14 @@ def generate_service_report_html(
         HTML string of the report
     """
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    service_name, service_id, vertical = (escape(str(value)) for value in (service_name, service_id, vertical))
 
     # Format response data for display
     if isinstance(response_data, (dict, list)):
         formatted_response = json.dumps(response_data, indent=2, default=str)
     else:
         formatted_response = str(response_data)
+    formatted_response = escape(formatted_response)
 
     # Build input files section
     input_files_html = ""
@@ -859,8 +872,8 @@ def generate_service_report_html(
             <ul class="files-list">
         """
         for f in input_files:
-            filename = f.get('filename') or f.get('name') or 'Unknown'
-            file_id = f.get('file_id') or f.get('id') or ''
+            filename = escape(str(f.get('filename') or f.get('name') or 'Unknown'))
+            file_id = escape(str(f.get('file_id') or f.get('id') or ''))
             input_files_html += f'<li><strong>{filename}</strong> (ID: {file_id})</li>'
         input_files_html += "</ul></div>"
 
@@ -870,7 +883,7 @@ def generate_service_report_html(
         query_html = f"""
         <div class="section">
             <h2>Query</h2>
-            <div class="query-box">{query}</div>
+            <div class="query-box">{escape(str(query))}</div>
         </div>
         """
 
@@ -885,8 +898,8 @@ def generate_service_report_html(
         for key, value in additional_metadata.items():
             metadata_html += f"""
             <div class="metadata-item">
-                <div class="metadata-label">{key.replace('_', ' ').title()}</div>
-                <div class="metadata-value">{value}</div>
+                <div class="metadata-label">{escape(str(key).replace('_', ' ').title())}</div>
+                <div class="metadata-value">{escape(str(value))}</div>
             </div>
             """
         metadata_html += "</div></div>"
@@ -1180,7 +1193,12 @@ def generate_and_register_service_report(
     execution_time_seconds: Optional[float] = None,
     additional_metadata: Optional[Dict] = None,
     file_format: str = "html",
-    datetime_folder: Optional[str] = None
+    datetime_folder: Optional[str] = None,
+    *,
+    source_file=None,
+    actor=None,
+    expected_source_version=None,
+    permission="document.update"
 ) -> Dict:
     """
     Generate a service report and register it in the file tree.
@@ -1277,6 +1295,10 @@ def generate_and_register_service_report(
         datetime_folder,
         folder_name
     )
+    if source_file is not None:
+        # A document-derived report stays beside its source, including nested
+        # matter folders, rather than trusting client-supplied target IDs.
+        base_path = os.path.join(os.path.dirname(source_file.filepath), folder_name, datetime_folder)
     os.makedirs(base_path, exist_ok=True)
     file_path = os.path.join(base_path, filename)
 
@@ -1291,7 +1313,11 @@ def generate_and_register_service_report(
         run=run,
         project_id=project_id,
         service_id=service_id_folder,
-        folder_name=folder_name
+        folder_name=folder_name,
+        source_file=source_file,
+        actor=actor,
+        expected_source_version=expected_source_version,
+        permission=permission
     )
 
     logger.info(f"Generated and registered service report: {filename} in {project_id}/{service_id_folder}/{datetime_folder}/{folder_name}")

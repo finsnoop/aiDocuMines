@@ -1,5 +1,6 @@
 from celery import shared_task
 import os
+import json
 import logging
 from django.conf import settings
 from oauth2_provider.models import Application
@@ -19,12 +20,53 @@ logger = logging.getLogger(__name__)
 from .utils import extract_metadata
 
 
+def _store_metadata(file, defaults):
+    """Serialize metadata publication per source without deleting older rows."""
+    from django.db import transaction
+    with transaction.atomic():
+        File.objects.select_for_update().get(pk=file.pk)
+        existing = Metadata.objects.filter(file=file).order_by("-updated_at", "-metadata_id").first()
+        # Native custom properties are untrusted document data. Keep them
+        # separate from explicit analysis results (for example risk scores).
+        previous = {}
+        if existing is not None and existing.custom_metadata:
+            try:
+                previous = json.loads(existing.custom_metadata)
+            except (TypeError, ValueError):
+                pass
+        if not isinstance(previous, dict):
+            previous = {}
+        try:
+            native = json.loads(defaults.get("custom_metadata") or "null")
+        except (TypeError, ValueError):
+            native = None
+        previous["document_properties"] = native
+        defaults["custom_metadata"] = json.dumps(previous, default=str)
+        if existing is None:
+            return Metadata.objects.create(file=file, **defaults), True
+        for field, value in defaults.items():
+            setattr(existing, field, value)
+        existing.save()
+        return existing, False
+
+
 @shared_task(bind=True)
-def process_metadata(self, file_id, run_id):
+def process_metadata(self, file_id, run_id, requested_by_id=None):
     """Celery task to extract metadata asynchronously and store in DB."""
     try:
         file_instance = File.objects.get(id=file_id)
         run = Run.objects.get(run_id=run_id)
+        from core.access import get_file_for_user, user_has_perm
+        from django.contrib.auth import get_user_model
+        actor_id = requested_by_id or run.user_id
+        if requested_by_id is None and run.user_id != file_instance.user_id:
+            raise ValueError("Metadata job does not belong to the source owner.")
+        actor = get_user_model().objects.get(pk=actor_id, is_active=True)
+        if not user_has_perm(actor, "document.view"):
+            raise ValueError("Your role cannot inspect document metadata.")
+        file_instance = get_file_for_user(actor, file_id, "view")
+        from core.processing import source_version
+        version = source_version(file_instance)
 
         logger.warning(f"**Processing metadata for file_id: {file_id}, run_id: {run_id}**")
 
@@ -32,15 +74,13 @@ def process_metadata(self, file_id, run_id):
         metadata_data = extract_metadata(file_instance)
 
         if not metadata_data:
-            logger.error(f"Metadata extraction failed for file_id {file_id}")
-            return {"error": "Metadata extraction failed."}
+            raise ValueError("Metadata extraction failed.")
 
-        logger.info(f"Extracted metadata data: {metadata_data}")
+        logger.info("Extracted metadata for file %s.", file_id)
 
         # Normalize all boolean fields
         boolean_fields = [
-            "is_encrypted", "encrypted", "optimized", "tagged",
-            "userproperties", "suspects", "custom_metadata", "metadata_stream"
+            "is_encrypted", "encrypted", "optimized"
         ]
         for key in boolean_fields:
             if key in metadata_data:
@@ -65,11 +105,16 @@ def process_metadata(self, file_id, run_id):
             """Converts a string date into a Django-aware datetime object."""
             if not date_str:
                 return None
+            from django.utils.timezone import is_naive
+            if isinstance(date_str, datetime):
+                return make_aware(date_str) if is_naive(date_str) else date_str
+            if not isinstance(date_str, str):
+                return None
             try:
                 # Primary: ISO format
                 dt = datetime.fromisoformat(date_str)
-                return make_aware(dt)
-            except ValueError:
+                return make_aware(dt) if is_naive(dt) else dt
+            except (ValueError, TypeError):
                 pass
 
             try:
@@ -95,10 +140,13 @@ def process_metadata(self, file_id, run_id):
 
         creationdate = parse_date(metadata_data.get("creationdate", None))
         moddate = parse_date(metadata_data.get("moddate", None))
+        fresh = get_file_for_user(actor, file_id, "view")
+        if source_version(fresh) != version:
+            raise ValueError("Document changed during metadata extraction. Submit it again.")
 
         # Ensure Metadata is saved correctly
-        metadata, created = Metadata.objects.update_or_create(
-            file=file_instance,
+        metadata, created = _store_metadata(
+            file_instance,
             defaults = {
                 "storage": file_instance.storage,  # Link Storage
                 "file_size": metadata_data.get("file_size", None),
@@ -110,6 +158,11 @@ def process_metadata(self, file_id, run_id):
                 "keywords": metadata_data.get("keywords", None),
                 "creator": metadata_data.get("creator", None),
                 "producer": metadata_data.get("producer", None),
+                "last_modified_by": metadata_data.get("last_modified_by"),
+                "category": metadata_data.get("category"),
+                "content_status": metadata_data.get("content_status"),
+                "revision": metadata_data.get("revision"),
+                "custom_metadata": json.dumps(metadata_data.get("custom_metadata"), default=str),
                 "creationdate": creationdate, # metadata_data.get("creationdate", None),  # Corrected from creation_date
                 "moddate": moddate, # metadata_data.get("moddate", None),  # Corrected from modDate
                 "trapped": metadata_data.get("trapped", None),
@@ -176,6 +229,11 @@ def process_metadata(self, file_id, run_id):
         return {"error": f"Run ID {run_id} does not exist."}
     except Exception as e:
         logger.error(f"Metadata extraction failed: {str(e)}")
+        if 'run' in locals():
+            run.status = "Failed"
+            run.save(update_fields=["status", "updated_at"])
+            EndpointResponseTable.objects.update_or_create(run=run, client=run.user, endpoint_name="MetadataView",
+                defaults={"status": "Failed", "response_data": {"file_id": file_id, "error": str(e)}})
         return {"error": str(e)}
 
 
@@ -282,7 +340,7 @@ def extract_document_text_task(file_id):
     the per-file processing status is finalised. Without it, files would
     stay "Pending" forever.
     """
-    from core.utils import extract_document_text
+    from document_search.text_policy import TextPreparationBusy, shared_file_text
 
     try:
         file_obj = File.objects.get(id=file_id)
@@ -296,10 +354,18 @@ def extract_document_text_task(file_id):
         file_obj.save(update_fields=["status", "updated_at"])
 
     try:
-        text = extract_document_text(file_obj.filepath, file_obj.file_type)
+        try:
+            text = shared_file_text(file_obj, allow_ocr=False)
+        except TextPreparationBusy:
+            text = ""  # a downstream indexer is preparing it; upload itself is complete
+        if not text:
+            text = File.objects.filter(pk=file_id).values_list("content", flat=True).first() or ""
         file_obj.content = text or ""
         file_obj.status = "Completed"
-        file_obj.save(update_fields=["content", "status", "updated_at"])
+        fields = ["status", "updated_at"]
+        if text:
+            fields.append("content")
+        file_obj.save(update_fields=fields)
         logger.info("Text extraction completed for file_id: %s (%s chars)",
                     file_id, len(file_obj.content))
     except Exception as exc:

@@ -184,6 +184,10 @@ _ACTION_TO_EFFECTIVE_FLAG = {
     "rename": "can_rename",
     "move": "can_move",
     "delete": "can_delete",
+    "duplicate": "can_duplicate",
+    "zip": "can_zip",
+    "protect": "can_protect",
+    "restore": "can_restore",
 }
 
 
@@ -257,21 +261,26 @@ def _shared_file_ids_q(user, action: str) -> Q:
     from django.utils import timezone
     from document_operations.models import EffectiveAccess, FileAccessEntry, FileFolderLink
 
+    tid = tenant_id(user)
+    if tid is None:
+        return Q(pk__in=[])
     flag = _ACTION_TO_EFFECTIVE_FLAG.get(action, "can_download")
-    q = _ids_or_subquery(EffectiveAccess.objects.filter(user=user, file__isnull=False, **{flag: True}), "file_id")
+    q = _ids_or_subquery(EffectiveAccess.objects.filter(user=user, file__isnull=False,
+                        file__user__client_id=tid, **{flag: True}), "file_id")
 
     # FileAccessEntry grants (per link, optional expiry).
     entry_flag = {
         "view": "can_read", "download": "can_read", "process": "can_read",
         "rename": "can_write", "move": "can_write",
+        "duplicate": "can_write", "protect": "can_write", "restore": "can_write", "zip": "can_read",
         "delete": "can_delete", "share": "can_share",
     }.get(action, "can_read")
-    entries = FileAccessEntry.objects.filter(user=user, **{entry_flag: True}).filter(
+    entries = FileAccessEntry.objects.filter(user=user, file_link__file__user__client_id=tid, **{entry_flag: True}).filter(
         Q(expires_at__isnull=True) | Q(expires_at__gt=timezone.now()))
     q |= _ids_or_subquery(entries, "file_link__file_id")
 
     if action in ("view", "download", "process"):
-        q |= _ids_or_subquery(FileFolderLink.objects.filter(shared_with=user), "file_id")
+        q |= _ids_or_subquery(FileFolderLink.objects.filter(shared_with=user, file__user__client_id=tid), "file_id")
     return q
 
 def accessible_files_q(user, action: str = "view", prefix: str = "") -> Q:

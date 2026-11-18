@@ -250,44 +250,6 @@ def guess_type_from_filename(filename: str):
     return None
 
 
-def _ocr_pdf_pages(filepath: str, max_pages: int = 10) -> str:
-    """
-    Rasterize pages of an image-only PDF and OCR them so scanned
-    documents can still be classified. Retries at higher DPI when the
-    first pass yields nothing.
-    """
-    try:
-        import fitz  # PyMuPDF
-        import pytesseract
-        from PIL import Image
-    except Exception:
-        return ""
-    try:
-        pytesseract.get_tesseract_version()
-    except Exception as exc:
-        LOGGER.error("OCR unavailable for %s: tesseract binary missing/broken (%s)", filepath, exc)
-        return ""
-    try:
-        for dpi in (150, 300):
-            texts = []
-            with fitz.open(str(filepath)) as doc:
-                for page in list(doc)[:max_pages]:
-                    try:
-                        pix = page.get_pixmap(dpi=dpi)
-                        img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
-                        texts.append(pytesseract.image_to_string(img))
-                    except Exception:
-                        continue
-            combined = "\n".join(t for t in texts if t)
-            if combined.strip():
-                return combined
-        return ""
-    except Exception as exc:
-        LOGGER.warning("PDF OCR fallback failed for %s: %s", filepath, exc)
-        return ""
-
-
-
 def _bump_index_version() -> None:
     try:
         cache.incr(INDEX_VERSION_KEY)
@@ -348,7 +310,7 @@ def index_file(self, file_id: int, force: bool = False) -> dict:
         return {"status": "in-progress"}
 
     try:
-        chunks, vectors = compute_chunks(file.filepath)
+        chunks, vectors = compute_chunks(file.filepath, file=file, allow_ocr=True)
         _classify_document(file, chunks)
         if not chunks:
             LOGGER.warning("No extractable text for file %s (%s).", file_id, file.filename)
@@ -402,11 +364,10 @@ def classify_file(file_id: int, force: bool = False) -> dict:
 
     Order of attempts:
       1. Text extraction + embedding similarity (same model as index_file)
-      2. OCR rasterization for image-only PDFs
-      3. Filename keyword hints
-      4. Literal "Unknown"
+      2. Filename keyword hints (classification never launches OCR)
+      3. Literal "Unknown"
     """
-    from document_search.utils import extract_text
+    from document_search.text_policy import shared_file_text
 
     try:
         file = File.objects.select_related("user").get(pk=file_id)
@@ -419,15 +380,12 @@ def classify_file(file_id: int, force: bool = False) -> dict:
 
     # 1⃣ Direct text extraction
     try:
-        text = extract_text(file.filepath)
+        text = shared_file_text(file, allow_ocr=False)
     except Exception as exc:
         LOGGER.warning("classify_file: extraction error for %s: %s", file_id, exc)
         text = ""
 
     # 2⃣ OCR fallback for scanned/image-only PDFs
-    if not text.strip() and str(file.filepath).lower().endswith(".pdf"):
-        text = _ocr_pdf_pages(file.filepath)
-
     if text.strip():
         try:
             embed_model = _get_model()

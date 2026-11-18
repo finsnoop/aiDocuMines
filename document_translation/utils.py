@@ -159,7 +159,13 @@ class AzureBlobService:
         for blob in output_container_client.list_blobs():
             blob_client_instance = self.blob_service_client.get_blob_client(container_name, blob.name)
             blob_data = blob_client_instance.download_blob()
-            destination_file_path = os.path.join(destination_folder, blob.name)
+            from pathlib import Path
+            root = Path(destination_folder).resolve()
+            destination = (root / blob.name.replace("\\", "/")).resolve()
+            if not destination.is_relative_to(root):
+                raise ValueError("Translated blob path escaped its destination folder.")
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            destination_file_path = str(destination)
 
             with open(destination_file_path, "wb") as my_blob:
                 blob_data.readinto(my_blob)
@@ -184,77 +190,41 @@ class TranslationService:
         )
 
     def translate_file(self, file_id, run_id, source_language, target_language):
-        """Translates a document using Azure Document Translation API.
-
-        Args:
-            file_id: The ID of the file to translate
-            run_id: The translation run ID
-            source_language: Source language code, or "auto" for auto-detection
-            target_language: Target language code
-        """
+        """Translate one input using one temporary container pair; persistence belongs to the guarded task."""
         original_file = File.objects.get(id=file_id)
         translation_run = TranslationRun.objects.get(id=run_id)
-
-        translation_run.status = "Translating"
-        translation_run.save()
-
-        # Define Azure containers
         source_container = f"translation-source-{uuid.uuid4()}"
         target_container = f"translation-target-{uuid.uuid4()}"
-
-        self.azure_service.ensure_container_exists(source_container)
-        self.azure_service.ensure_container_exists(target_container)
-        self.azure_service.upload_file_if_not_exists(source_container, original_file.filepath)
-
-        source_sas_url = self.azure_service.generate_sas_url(source_container)
-        target_sas_url = self.azure_service.generate_sas_url(target_container)
-
-        # Build translation input - only specify source_language if not "auto"
-        # Azure auto-detects source language when not specified
-        if source_language and source_language.lower() != "auto":
-            translation_input = DocumentTranslationInput(
-                source_url=source_sas_url,
-                source_language=source_language,
-                targets=[TranslationTarget(target_url=target_sas_url, language=target_language)]
-            )
-            logger.info(f"Translating from {source_language} to {target_language}")
-        else:
-            translation_input = DocumentTranslationInput(
-                source_url=source_sas_url,
-                targets=[TranslationTarget(target_url=target_sas_url, language=target_language)]
-            )
-            logger.info(f"Translating with auto-detection to {target_language}")
-
-        self.client.begin_translation(inputs=[translation_input]).wait()
-
-        # Store the translated file using the original filename
-        lang_name = get_language_name(target_language)
-        translated_folder = os.path.join(os.path.dirname(original_file.filepath), "translations", lang_name)
-        os.makedirs(translated_folder, exist_ok=True)
-
-        self.azure_service.download_files(target_container, translated_folder)
-
-        # Preserve original filename
-        translated_filename = os.path.basename(original_file.filepath)  # Keep original filename
-        translated_filepath = os.path.join(translated_folder, translated_filename)
-
-        # Update TranslationFile Model
-        TranslationFile.objects.create(
-            run=translation_run,  # Assigning the correct TranslationRun
-            original_file=original_file,
-            translated_filepath=translated_filepath,
-            status="Completed"
-        )
-
-        translation_run.status = "Completed"
-        translation_run.save()
-
-        self.azure_service.force_delete_container(source_container)
-        self.azure_service.force_delete_container(target_container)
-
-        return {"file_id": file_id, "translated_file": translated_filepath, "status": "Completed"}
-
-
+        created = []
+        try:
+            for container in (source_container, target_container):
+                self.azure_service.ensure_container_exists(container)
+                created.append(container)
+            self.azure_service.upload_file_if_not_exists(source_container, original_file.filepath)
+            options = {
+                "source_url": self.azure_service.generate_sas_url(source_container),
+                "targets": [TranslationTarget(target_url=self.azure_service.generate_sas_url(target_container), language=target_language)],
+            }
+            if source_language and source_language.lower() != "auto":
+                options["source_language"] = source_language
+            documents = list(self.client.begin_translation(inputs=[DocumentTranslationInput(**options)]).result())
+            if not documents or any(str(document.status).lower() != "succeeded" for document in documents):
+                raise RuntimeError("Azure did not successfully translate the source document.")
+            # Distinct runs cannot overwrite each other's downloaded versions.
+            translated_folder = os.path.join(os.path.dirname(original_file.filepath), "translations",
+                                             get_language_name(target_language), str(translation_run.pk))
+            os.makedirs(translated_folder, exist_ok=True)
+            self.azure_service.download_files(target_container, translated_folder)
+            translated_filepath = os.path.join(translated_folder, os.path.basename(original_file.filepath))
+            if not os.path.isfile(translated_filepath) or not os.path.getsize(translated_filepath):
+                raise RuntimeError("Azure returned no translated document content.")
+            return {"file_id": file_id, "translated_file": translated_filepath, "status": "Completed"}
+        finally:
+            for container in reversed(created):
+                try:
+                    self.azure_service.delete_container(container)
+                except Exception:
+                    logger.warning("Temporary translation container cleanup needs retry.")
 
 
 def load_translation_languages():

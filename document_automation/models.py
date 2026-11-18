@@ -1,5 +1,6 @@
 from django.db import models
 from core.models import File
+from django.conf import settings
 import uuid
 
 
@@ -52,7 +53,9 @@ class AutomationTemplate(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     name = models.CharField(max_length=255, db_index=True)
     description = models.TextField(blank=True, null=True)
-    file = models.ForeignKey(File, on_delete=models.CASCADE, related_name="automation_templates")
+    file = models.ForeignKey(File, on_delete=models.SET_NULL, null=True, blank=True, related_name="automation_templates")
+    owner = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True,
+                              related_name="automation_template_definitions")
     template_type = models.CharField(max_length=10, choices=TEMPLATE_TYPE_CHOICES, default="TXT", db_index=True)
     project_id = models.CharField(max_length=255, db_index=True)
     service_id = models.CharField(max_length=255, db_index=True)

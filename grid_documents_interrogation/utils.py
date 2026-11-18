@@ -793,25 +793,12 @@ def _materialize_text_from_file_path(file_path: str) -> str:
 
 
 def _get_or_build_cached_text_for_file_id(file_id: int) -> str:
-    """
-    New, efficient path: use cached text if present; otherwise extract and store.
-    """
+    """Use the shared source-versioned cache for an actual document question."""
+    from document_search.text_policy import shared_file_text
     file_obj = File.objects.select_related("storage").get(id=file_id)
-
-    # 1) try cache
-    cached_text, chosen_path = _get_cached_text_for_file(file_obj)
-    if cached_text:
-        return cached_text
-
-    # 2) fallback extraction once, then cache
-    try:
-        text = _materialize_text_from_file_path(file_obj.filepath)
-    except ValueError:
-        # 3) the text the platform extracted when the document was indexed
-        if file_obj.content and file_obj.content.strip():
-            return file_obj.content
-        raise
-    _save_cache_and_update_storage(file_obj, text, chosen_path)
+    text = shared_file_text(file_obj, allow_ocr=True)
+    if not text.strip():
+        raise ValueError("No readable text. Run OCR explicitly for an image, or review the PDF.")
     return text
 
 

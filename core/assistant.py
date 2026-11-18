@@ -164,21 +164,14 @@ def _bounded(ctx: Context, qs, *, preserve_order=False, count_cap=None) -> Conte
 
 def file_text(f: File) -> str:
     """Stored extracted text, or extract once and keep it (no save signals)."""
-    if f.content:
+    if (f.content or "").strip():
         return f.content[:MAX_TEXT_PER_FILE]
     try:
-        from document_search.utils import extract_text
-
-        text = (extract_text(f.filepath) or "") if f.filepath else ""
+        from document_search.text_policy import shared_file_text
+        text = shared_file_text(f, allow_ocr=True)
     except Exception as exc:
         logger.info("Text extraction failed for file %s: %s", f.id, exc)
         text = ""
-    if text:
-        # An editor may save newer bytes while extraction is in progress. Never
-        # restore stale text after that save has invalidated the old extraction.
-        current = File.objects.filter(pk=f.pk, updated_at=f.updated_at, md5_hash=f.md5_hash)
-        if not current.update(content=text):
-            return ''
     return text[:MAX_TEXT_PER_FILE]
 
 

@@ -78,18 +78,12 @@ def _visible_topic_files(topic, user):
 
 
 def _extract_owned_file_text(file):
-    text = (file.content or "").strip()
-    if len(text) >= 40 or not file.filepath:
-        return text
+    # Readiness checks are read-only/native-only. They never schedule or run OCR.
+    from document_search.text_policy import shared_file_text, TextPreparationBusy
     try:
-        extracted = read_file(file.filepath)
-        if isinstance(extracted, tuple):
-            extracted = extracted[0]
-        if extracted:
-            return str(extracted).strip()
-    except Exception:
-        return text
-    return text
+        return shared_file_text(file, allow_ocr=False).strip()
+    except TextPreparationBusy:
+        return (file.content or "").strip()
 
 
 def _messages_for_topic(topic, user):
@@ -592,7 +586,7 @@ class QueryViewSet(viewsets.ModelViewSet):
 
         file = _file_for_chat(request.user, file_id)
         text = _extract_owned_file_text(file)
-        ready = len(text) >= 40
+        ready = bool(text.strip())
         excerpt = " ".join(text.split())[:700]
         return Response({
             "filename": file.filename,
@@ -618,7 +612,7 @@ class QueryViewSet(viewsets.ModelViewSet):
         file = _file_for_chat(request.user, file_id)
         can_write = file.user_id == request.user.id or has_file_access(request.user, file, "write")
         text = _extract_owned_file_text(file)
-        if len(text) >= 40:
+        if text.strip():
             if can_write and (file.content or "").strip() != text:
                 file.content = text[:200000]
                 file.save(update_fields=["content"])
@@ -651,20 +645,11 @@ class QueryViewSet(viewsets.ModelViewSet):
                 "service_id": file.service_id,
                 "hint": "No text could be extracted from this file.",
             })
-        from document_ocr.models import OCRRun
-        from document_ocr.tasks import process_ocr
-        ocr_run = OCRRun.objects.create(
-            project_id=file.project_id,
-            service_id=file.service_id,
-            client=getattr(request.user, "client", None),
-            client_name=getattr(request.user, "email", "") or "user",
-            status="Pending",
-            ocr_option="Basic-ocr",
-        )
-        process_ocr.delay(ocr_run.id, file.id, "Basic-ocr")
+        from document_ocr.tasks import submit_ocr
+        ocr_run, queued = submit_ocr(file, request.user, "Basic-ocr")
         return Response({
             "ready": False,
-            "queued": True,
+            "queued": queued,
             "ocr_run_id": str(ocr_run.id),
             "filename": file.filename,
             "file_id": file.id,

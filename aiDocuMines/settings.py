@@ -384,6 +384,7 @@ CORS_ALLOW_HEADERS = list(default_headers) + [
     "x-client-secret",
     "x-role",
     "x-user-id",
+    "x-share-password",
 ]
 CORS_ALLOW_METHODS = ["GET", "POST", "OPTIONS", "PUT", "PATCH", "DELETE"]
 # Let the browser read download filenames on cross-origin file responses.
@@ -512,3 +513,5 @@ SPA_REDIRECT_URIS = [uri.strip() for uri in os.getenv(
 FRONTEND_URL = os.getenv("FRONTEND_URL", "https://aidocumines.com")
 
 EMAIL_TIMEOUT = int(os.getenv("EMAIL_TIMEOUT", "10"))
+
+PUBLIC_SHARE_BASE_URL = os.getenv("PUBLIC_SHARE_BASE_URL", os.getenv("FRONTEND_URL", ""))

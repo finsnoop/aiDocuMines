@@ -20,66 +20,132 @@ from pypdf import PdfWriter
 
 logger = logging.getLogger(__name__)
 
-@shared_task
-def process_ocr(run_id, file_id, ocr_option="basic"):
-    """
-    Celery task to perform OCR on a document asynchronously.
-    """
+def normalize_ocr_option(option):
+    options = {"basic": "Basic-ocr", "basic-ocr": "Basic-ocr", "advanced": "Advanced-ocr", "advanced-ocr": "Advanced-ocr"}
     try:
-        # Retrieve the OCRRun object and file
-        run = OCRRun.objects.get(id=run_id)
-        file_obj = get_object_or_404(File, id=file_id)
+        return options[str(option or "basic").strip().lower()]
+    except KeyError:
+        raise ValueError("Invalid OCR option.")
 
-        # Create or get the OCRFile entry
-        ocr_file, created = OCRFile.objects.get_or_create(
-            original_file=file_obj, ocr_option=ocr_option, defaults={"status": "Processing", "run": run}
-        )
 
+def submit_ocr(file, actor, option="Basic-ocr"):
+    """Claim a source/option before dispatch so repeated clicks share one run."""
+    from core.processing import processing_file
+    option = normalize_ocr_option(option)
+    with transaction.atomic():
+        File.objects.select_for_update().get(pk=file.pk)
+        actor, file = processing_file(file.pk, actor.pk, permission="ocr.submit")
+        entry = OCRFile.objects.filter(original_file=file, ocr_option=option).select_related("run").first()
+        if entry and entry.run and entry.run.status in {"Pending", "Processing"}:
+            return entry.run, False
+        if entry and entry.run and entry.run.status == "Completed" and entry.ocr_filepath and os.path.isfile(entry.ocr_filepath):
+            # A version restore/editor save invalidates the extracted content and
+            # should be eligible for another OCR. Compare source metadata to the
+            # result's recorded source fingerprint rather than its path alone.
+            from django.core.cache import cache
+            from core.processing import source_version
+            if cache.get(f"explicit-ocr-source:{entry.run_id}") == source_version(file):
+                return entry.run, False
+        run = OCRRun.objects.create(project_id=file.project_id, service_id=file.service_id,
+            client=actor.client, client_name=actor.username or actor.email,
+            status="Pending", ocr_option=option)
+        OCRFile.objects.update_or_create(original_file=file, ocr_option=option,
+            defaults={"run": run, "status": "Processing", "ocr_filepath": None, "docx_path": None, "raw_docx_path": None})
+        transaction.on_commit(lambda: process_ocr.delay(str(run.pk), file.pk, option, user_id=actor.pk))
+        return run, True
+
+
+@shared_task(time_limit=3600, soft_time_limit=3540)
+def process_ocr(run_id, file_id, ocr_option="basic", user_id=None):
+    """Run a requested OCR job and publish only validated, registered outputs.
+
+    A single worker owns its temporary directory. Bulk/workflow callers wait for
+    the real result instead of receiving an unserialisable chord AsyncResult.
+    """
+    import tempfile
+    from django.core.cache import cache
+    from core.processing import processing_file, source_version, unchanged_source
+    run = OCRRun.objects.get(pk=run_id)
+    entry = None
+    try:
+        option = normalize_ocr_option(ocr_option)
+        actor, file = processing_file(file_id, user_id, run=run, permission="ocr.submit")
+        version = source_version(file)
+        entry, _ = OCRFile.objects.update_or_create(original_file=file, ocr_option=option,
+            defaults={"run": run, "status": "Processing"})
         run.status = "Processing"
-        run.save()
-
-        ocr_service = OCRService()
-
-        # Check if the file is a valid PDF
-        if not ocr_service.is_pdf(file_obj.filepath):
-            logger.info(f"Skipping OCR: {file_obj.filepath} is not a PDF.")
-            ocr_file.status = "Completed"
-            ocr_file.save()
-            return {"message": "File is not a PDF. OCR skipped."}
-
-        # Step 1: Extract bookmarks before processing
-        bookmarks_df = ocr_service.extract_bookmarks_to_dataframe(file_obj.filepath)
-        bookmarks_list = bookmarks_df.to_dict(orient="records")  # Convert to list for Celery serialization
-
-        # Step 2: Burst the PDF into page batches
-        batch_files = ocr_service.burst_pdf(file_obj.filepath, ocr_option=ocr_option)
-
-        if not batch_files:
-            ocr_file.status = "Failed"
-            ocr_file.save()
-            return {"error": "Failed to burst the PDF", "file_path": get_logical_path(file_obj.filepath, file_obj.filename)}
-
-        # Ensure output directories exist
-        output_dir = os.path.join(os.path.dirname(file_obj.filepath), "ocr", ocr_option.lower(), "tmp")
+        run.ocr_option = option
+        run.save(update_fields=["status", "ocr_option", "updated_at"])
+        output_dir = os.path.join(os.path.dirname(file.filepath), "ocr", option.lower(), str(run.pk))
         os.makedirs(output_dir, exist_ok=True)
-
-        # Step 3: Define OCR tasks for each batch
-        ocr_tasks = [
-            ocr_pdf_page_batch.s(ocr_file.id, batch_file, start_page, end_page, ocr_option)  # Pass ocr_option
-            for start_page, end_page, batch_file in batch_files
-        ]
-
-        # Step 4: Wait for all OCR tasks to finish before merging
-        workflow = chord(ocr_tasks)(merge_ocr_batches.s(ocr_file.id, bookmarks_list))  # Pass bookmarks_list
-
-        return workflow
-
-    except Exception as e:
-        logger.error(f"OCR processing failed: {e}")
-        if 'ocr_file' in locals():
-            ocr_file.status = "Failed"
-            ocr_file.save()
-        return {"error": str(e)}
+        service = OCRService()
+        final_pdf = os.path.join(output_dir, f"ocr-{run.pk}.pdf")
+        with tempfile.TemporaryDirectory(prefix="work-", dir=output_dir) as work:
+            source_pdf = os.path.join(work, "input.pdf")
+            with fitz.open(file.filepath) as document:
+                if document.is_pdf:
+                    shutil.copyfile(file.filepath, source_pdf)
+                else:
+                    # Explicit OCR supports image files too; generic extraction
+                    # never does this conversion automatically.
+                    pdf_bytes = document.convert_to_pdf()
+                    with open(source_pdf, "wb") as stream:
+                        stream.write(pdf_bytes)
+            processed = service.apply_ocr(entry.pk, source_pdf, option)
+            if not processed or not os.path.isfile(processed):
+                raise ValueError("OCR produced no output document.")
+            with fitz.open(processed) as document:
+                if document.page_count < 1:
+                    raise ValueError("OCR produced an empty PDF.")
+                text = "\n\n".join(page.get_text() for page in document).strip()
+            if not text:
+                raise ValueError("OCR found no readable text. Review the scan quality.")
+            actor, file = unchanged_source(file.pk, actor.pk, version, run=run, permission="ocr.submit")
+            shutil.copyfile(processed, final_pdf)
+        formatted_path = os.path.join(output_dir, f"ocr-{run.pk}_formatted.docx")
+        raw_path = os.path.join(output_dir, f"ocr-{run.pk}_raw.docx")
+        # Adobe conversion is optional. Local DOCX output remains available
+        # without a paid account; it contains extracted paragraphs, not layout.
+        converted = None
+        if os.getenv("PDF_SERVICES_CLIENT_ID") and os.getenv("PDF_SERVICES_CLIENT_SECRET"):
+            converted = service.convert_to_formatted_docx(final_pdf, formatted_path)
+        if not converted:
+            doc = Document()
+            for paragraph in text.split("\n"):
+                doc.add_paragraph(paragraph)
+            doc.save(formatted_path)
+        raw = Document()
+        for paragraph in text.split("\n"):
+            raw.add_paragraph(paragraph)
+        raw.save(raw_path)
+        with transaction.atomic():
+            actor, file = unchanged_source(file.pk, actor.pk, version, run=run, permission="ocr.submit")
+            outputs = [register_generated_file(file_path=path, user=file.user, run=file.run,
+                project_id=file.project_id, service_id=file.service_id, folder_name="ocr",
+                source_file=file, actor=actor, expected_source_version=version, permission="ocr.submit") for path in [final_pdf, formatted_path, raw_path]]
+            unchanged_source(file.pk, actor.pk, version, run=run, permission="ocr.submit")
+            entry.ocr_filepath, entry.docx_path, entry.raw_docx_path = final_pdf, formatted_path, raw_path
+            entry.status = "Completed"
+            entry.save()
+            File.objects.filter(pk=file.pk, filepath=file.filepath, md5_hash=file.md5_hash).update(content=text)
+            run.status = "Completed"
+            run.error_message = ""
+            run.save(update_fields=["status", "error_message", "updated_at"])
+        try:
+            cache.set(f"explicit-ocr-source:{run.pk}", version, timeout=86400)
+        except Exception:
+            logger.warning("Could not cache completed source version for %s", run.pk)
+        return {"ocr_run_id": str(run.pk), "file_id": file.pk, "ocr_file_id": str(entry.pk),
+            "status": "Completed", "registered_outputs": [{"file_id": f.pk, "filename": f.filename,
+                "path": get_logical_path(f.filepath, f.filename)} for f in outputs]}
+    except Exception as exc:
+        logger.exception("Requested OCR job failed: %s", run.pk)
+        run.status = "Failed"
+        run.error_message = "OCR failed. Check the source and processing service, then retry."
+        run.save(update_fields=["status", "error_message", "updated_at"])
+        if entry is not None:
+            OCRFile.objects.filter(pk=entry.pk, run=run).update(status="Failed")
+        return {"status": "Failed", "error": run.error_message, "ocr_run_id": str(run.pk), "file_id": file_id}
 
 @shared_task
 def ocr_pdf_page_batch(file_id, batch_file_path, start_page, end_page, ocr_option="basic"):

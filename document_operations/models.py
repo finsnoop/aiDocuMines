@@ -32,6 +32,7 @@ class FileFolderLink(models.Model):
     shared_with = models.ManyToManyField(settings.AUTH_USER_MODEL, blank=True, related_name="shared_files")
     password_protected = models.BooleanField(default=False)
     password_hint = models.CharField(max_length=255, null=True, blank=True)
+    password_hash = models.CharField(max_length=128, blank=True, default="")
     is_public = models.BooleanField(default=False)  # For public shared link
     public_token = models.CharField(max_length=64, unique=True, null=True, blank=True)  # Unique token for access
     shared_link_created_at = models.DateTimeField(null=True, blank=True)

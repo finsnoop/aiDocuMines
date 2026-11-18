@@ -18,7 +18,7 @@ from rest_framework.permissions import IsAuthenticated  # Ensures authentication
 # Swagger Imports
 from drf_yasg.utils import swagger_auto_schema
 from drf_yasg import openapi
-from core.access import get_file_for_user, get_scoped_or_404, get_run_for_user, scope_by_file, scope_by_owner
+from core.access import accessible_files, get_file_for_user, get_scoped_or_404, get_run_for_user, scope_by_file, scope_by_owner
 
 logger = logging.getLogger(__name__)
 
@@ -97,9 +97,9 @@ class OCRTaskStatusView(APIView):
                 "filename": f["filename"],
                 "filepath": get_logical_path(f["filepath"], f["filename"]),
             }
-            for f in File.objects.filter(run=ocr_file.original_file.run)
-            .exclude(id=ocr_file.original_file.id)
-            .values("id", "filename", "filepath")
+            for f in accessible_files(request.user, queryset=File.objects.filter(
+                filepath__in=[p for p in [ocr_file.ocr_filepath, ocr_file.docx_path, ocr_file.raw_docx_path] if p],
+                user_id=ocr_file.original_file.user_id)).values("id", "filename", "filepath")
         ]
 
         # Ensure that file paths exist and are formatted correctly
@@ -156,7 +156,7 @@ class OCRFileDownloadView(APIView):
         if not file_id or not file_type:
             return Response({"error": "Missing required parameters"}, status=400)
 
-        ocr_file = get_scoped_or_404(request.user, OCRFile, 'original_file', original_file__id=file_id)
+        ocr_file = get_scoped_or_404(request.user, OCRFile, 'original_file', original_file__id=file_id, ocr_option=request.query_params.get("ocr_option", "Basic-ocr"))
 
         # Determine which file to serve based on the requested file_type
         file_path_map = {

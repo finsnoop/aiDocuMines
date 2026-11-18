@@ -23,8 +23,10 @@ from .views import (
 )
 
 from .views_table import DocumentActionContextView, DocumentFacetsView, DocumentTableView
+from .views import DocumentOperationStatusView, PublicSharedFileContentView
 
 urlpatterns = [
+    path("tasks/<str:task_id>/", DocumentOperationStatusView.as_view(), name="document_operation_status"),
     # FOLDER OPERATIONS
     # path("folders/", FolderListView.as_view(), name="folder_list"),
     # path("folders/", FolderCreateView.as_view(), name="create-folder"),
@@ -84,7 +86,8 @@ urlpatterns = [
     path("folders/bulk-delete/", BulkDeleteFoldersView.as_view(), name="folder_bulk_delete"),
 
     # PUBLIC ACCESS (if enabled)
-    path("public/share/<uuid:share_token>/", PublicSharedFileView.as_view(), name="public_file_access"),
+    path("public/share/<str:share_token>/", PublicSharedFileView.as_view(), name="public_file_access"),
+    path("public/share/<str:share_token>/content/", PublicSharedFileContentView.as_view(), name="public_file_content"),
 
     # EXTRA FILE SHARING
     path("files/<int:pk>/share/group/", ShareWithGroupView.as_view(), name="file_share_with_group"),

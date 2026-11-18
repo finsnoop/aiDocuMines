@@ -2,7 +2,6 @@
 Orchestrator agent: decides what work exists and hands each piece to the specialist that does it best.
 
 Specialists (worker agents):
-    ocr           documents with no extracted text (scans, images) -> text
     intelligence  documents with text and no current analysis -> plan, extract, verify (intelligence.py)
     similarity    portfolio changed -> groups of near-identical documents (embeddings), cached
 
@@ -14,6 +13,10 @@ Each cycle (Celery beat, and on demand when a dashboard sees new documents) the 
     3. dispatches work per document owner (the agents act with that person's permissions),
        never two active intelligence runs per owner, skipping documents that failed recently;
     4. records every decision as an agent event.
+
+The periodic cycle never queues OCR just because cached text is absent. A
+requested downstream reader prepares text natively first, with conditional
+OCR only for PDFs whose text layer is empty.
 """
 from __future__ import annotations
 
@@ -31,9 +34,7 @@ from .events import emit
 RUN_SIZE = 20
 CAPACITY = {'healthy': 3, 'strained': 1, 'critical': 0}
 RETRY_AFTER = timedelta(hours=6)
-OCR_EXTENSIONS = {'pdf', 'png', 'jpg', 'jpeg', 'tif', 'tiff', 'bmp', 'webp'}
 TICK_DEBOUNCE_SECONDS = 300
-OCR_ATTEMPT_TTL = 24 * 3600      # a file is offered to OCR at most once a day, whether or not OCR succeeded
 
 
 # ── what needs doing ────────────────────────────────────────────────────────
@@ -43,16 +44,6 @@ def needs_intelligence(tenant_id=None):
           .filter(user__client_id__isnull=False, user__is_active=True)
           .filter(Q(business_intelligence__isnull=True)
                   | Q(business_intelligence__source_updated_at__lt=F('updated_at'))))
-    return qs.filter(user__client_id=tenant_id) if tenant_id else qs
-
-
-def needs_ocr(tenant_id=None):
-    from core.models import File
-    since = timezone.now() - timedelta(hours=24)
-    qs = (File.objects.filter(Q(content__isnull=True) | Q(content=''))
-          .filter(user__client_id__isnull=False, user__is_active=True)
-          .filter(extension__in=list(OCR_EXTENSIONS))
-          .exclude(ocr_versions__created_at__gte=since))     # one OCR attempt per day at most
     return qs.filter(user__client_id=tenant_id) if tenant_id else qs
 
 
@@ -83,20 +74,6 @@ def model_ready(user) -> tuple[bool, str]:
 
 
 # ── specialists ─────────────────────────────────────────────────────────────
-def dispatch_ocr(files) -> int:
-    from document_ocr.models import OCRRun
-    from document_ocr.tasks import process_ocr
-    n = 0
-    for f in files:
-        # Recorded before queuing: a failing OCR (missing pages, unreadable file) is not re-queued every cycle.
-        cache.set(f'agents:ocr-attempt:{f.id}', 1, OCR_ATTEMPT_TTL)
-        run = OCRRun.objects.create(project_id=f.project_id, service_id=f.service_id, client=f.user.client,
-                                    client_name=f.user.email or 'user', status='Pending', ocr_option='Basic-ocr')
-        process_ocr.delay(run.id, f.id, 'Basic-ocr')
-        n += 1
-    return n
-
-
 def dispatch_intelligence(owner, tenant_id, file_ids):
     from ..intelligence import build_intelligence
     from ..models import IntelligenceRun
@@ -137,17 +114,11 @@ def orchestrate(tenant_id=None) -> dict:
         emit('orchestrator', 'paused', severity='warning', reasons=capacity['reasons'])
         return {'state': capacity['state'], 'dispatched': 0}
 
-    work = defaultdict(lambda: {'intelligence': defaultdict(list), 'ocr': []})
+    work = defaultdict(lambda: {'intelligence': defaultdict(list)})
     owners = {}
     for f in needs_intelligence(tenant_id).select_related('user').only('id', 'user').order_by('id')[:2000]:
         work[f.user.client_id]['intelligence'][f.user_id].append(f.id)
         owners[f.user_id] = f.user
-    candidates = list(needs_ocr(tenant_id).select_related('user', 'user__client').order_by('id')[:400])
-    tried = cache.get_many([f'agents:ocr-attempt:{f.id}' for f in candidates]) if candidates else {}
-    for f in candidates:
-        if f'agents:ocr-attempt:{f.id}' not in tried:
-            work[f.user.client_id]['ocr'].append(f)
-
     dispatched = 0
     for tid, jobs in work.items():
         allowed, why = cost.allow(tid)
@@ -155,12 +126,6 @@ def orchestrate(tenant_id=None) -> dict:
             emit('orchestrator', 'tenant.skipped', tenant_id=tid, severity='warning', reason=why)
             continue
         budget = per_tenant
-        # OCR first: text is what the intelligence agent needs next.
-        ocr_files = jobs['ocr'][:budget * RUN_SIZE]
-        if ocr_files:
-            n = dispatch_ocr(ocr_files)
-            dispatched += n
-            emit('orchestrator', 'dispatch', tenant_id=tid, specialist='ocr', documents=n)
         skip = recently_failed(tid)
         from ..models import IntelligenceRun
         runs = 0

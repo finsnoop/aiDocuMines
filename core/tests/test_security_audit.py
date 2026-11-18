@@ -8,6 +8,7 @@ Run: python manage.py test core.tests.test_security_audit
 import os
 from datetime import timedelta
 from unittest import mock
+from types import SimpleNamespace
 
 from django.core.cache import cache
 from django.test import TestCase, override_settings
@@ -83,13 +84,14 @@ class DocumentOperationTests(Base):
 
     @mock.patch("document_operations.views.async_bulk_trash_files.delay")
     def test_bulk_trash_requires_access_to_every_file(self, delay):
+        delay.return_value = SimpleNamespace(id="security-trash-task")
         for who, tok in self.outsiders():
             r = api(tok).post("/api/v1/documents/files/trash/", {"file_ids": [self.link_a1.id]}, format="json")
             self.assertEqual(r.status_code, 404, who)
         delay.assert_not_called()
         r = api(self.tok_a1).post("/api/v1/documents/files/trash/", {"file_ids": [self.link_a1.id]}, format="json")
         self.assertEqual(r.status_code, 202)
-        delay.assert_called_once_with([self.link_a1.id])
+        delay.assert_called_once_with([self.link_a1.id], actor_user_id=self.a1.pk)
 
     @mock.patch("document_operations.views.async_bulk_trash_files.delay")
     def test_one_foreign_id_fails_the_whole_batch(self, delay):
@@ -114,6 +116,7 @@ class DocumentOperationTests(Base):
 
     @mock.patch("document_operations.views.async_rename_file.delay")
     def test_rename_file(self, delay):
+        delay.return_value = SimpleNamespace(id="security-rename-task")
         for who, tok in self.outsiders():
             r = api(tok).patch(f"/api/v1/documents/files/{self.link_a1.id}/rename/", {"new_name": "x.pdf"}, format="json")
             self.assertEqual(r.status_code, 404, who)
@@ -122,7 +125,8 @@ class DocumentOperationTests(Base):
         r = api(self.tok_a1).patch(f"/api/v1/documents/files/{self.link_a1.id}/rename/",
                                    {"new_name": "../../../etc/cron.d/evil"}, format="json")
         self.assertEqual(r.status_code, 202)
-        delay.assert_called_once_with(self.file_a1.id, "evil")
+        delay.assert_called_once_with(self.file_a1.id, "evil", actor_user_id=self.a1.pk,
+                                      expected_updated_at=self.file_a1.updated_at.isoformat())
 
     def test_safe_filename(self):
         self.assertEqual(access.safe_filename("..\\..\\windows\\x.txt"), "x.txt")

@@ -54,10 +54,11 @@ def index_file_to_elasticsearch(sender, instance, created=False, update_fields=N
 
 
 def _index_file_to_elasticsearch(instance):
-    from document_search.utils import extract_text
+    from document_search.text_policy import shared_file_text
 
     client_id = str(instance.user.client_id) if instance.user and instance.user.client_id else None
-    content_text = extract_text(instance.filepath) if instance.filepath else ""
+    auto_index = getattr(getattr(instance.user, "settings", None), "auto_index_enabled", True)
+    content_text = shared_file_text(instance, allow_ocr=auto_index) if instance.filepath else ""
     FileIndex(
         meta={"id": str(instance.id)},
         id=str(instance.id),
@@ -90,6 +91,8 @@ def delete_file_from_es_index(sender, instance, **kwargs):
 @receiver(post_save, sender=File)
 def index_file_to_milvus(sender, instance, created, **kwargs):
     if not created:
+        return
+    if not getattr(getattr(instance.user, "settings", None), "auto_index_enabled", True):
         return
     from document_search.tasks import index_file as milvus_index_task
 

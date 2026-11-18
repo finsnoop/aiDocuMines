@@ -150,6 +150,31 @@ class IntelligenceIsolationTests(Base):
         build_intelligence(str(run.pk))
         self.assertEqual(call.call_count, 3)
 
+    @patch('home_dash_analytics.intelligence.configured_model', return_value={'provider': 'litellm', 'model': 'test'})
+    @patch('document_search.text_policy.shared_file_text')
+    def test_disabled_ai_never_prepares_scan_text(self, prepare, config):
+        from custom_authentication.models import OrganisationPolicy
+        OrganisationPolicy.objects.update_or_create(client=self.firm_a, defaults={'assistant_enabled': False})
+        self.file_a1.content = ''
+        self.file_a1.save(update_fields=['content'])
+        run = IntelligenceRun.objects.create(tenant=self.firm_a, user=self.a1, file_ids=[self.file_a1.pk])
+        build_intelligence(str(run.pk))
+        run.refresh_from_db()
+        self.assertEqual(run.status, 'failed')
+        prepare.assert_not_called()
+
+    @patch('home_dash_analytics.intelligence.configured_model', return_value={'provider': 'litellm', 'model': 'test'})
+    @patch('home_dash_analytics.agents.cost.allow', return_value=(False, 'Budget reached'))
+    @patch('document_search.text_policy.shared_file_text')
+    def test_exhausted_budget_never_prepares_scan_text(self, prepare, budget, config):
+        self.file_a1.content = ''
+        self.file_a1.save(update_fields=['content'])
+        run = IntelligenceRun.objects.create(tenant=self.firm_a, user=self.a1, file_ids=[self.file_a1.pk])
+        build_intelligence(str(run.pk))
+        run.refresh_from_db()
+        self.assertEqual(run.status, 'failed')
+        prepare.assert_not_called()
+
 
 
 class DepartmentViewTests(Base):

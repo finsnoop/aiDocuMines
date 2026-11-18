@@ -50,11 +50,20 @@ def restore_folder_from_trash(folder_id):
     return {"message": f"Restored folder {folder.name} (recursive)"}
 
 
-def delete_folder(folder_id):
-    folder = Folder.objects.get(id=folder_id)
+def delete_folder(folder_id, actor=None):
+    from core.access import can_access_file
+    folder = Folder.objects.get(pk=folder_id)
+    children = list(folder.subfolders.values_list("pk", flat=True))
+    for child in children:
+        delete_folder(child, actor=actor)
+    for link in list(folder.files.select_related("file")):
+        if actor is not None and not can_access_file(actor, link.file, "delete"):
+            link.delete()  # remove this folder's location, never delete someone else's document
+        else:
+            delete_file(link.pk, actor=actor)
     name = folder.name
     folder.delete()
-    return {"message": f"Deleted folder {name}"}
+    return {"message": f"Deleted folder {name}."}
 
 
 def trash_folder_recursive(folder):
@@ -128,54 +137,30 @@ def restore_file_from_trash(file_link_id, actor=None):
 
 
 def delete_file(file_link_id, actor=None):
-    link = FileFolderLink.objects.select_related('file').get(id=file_link_id)
-    file = link.file
-    filepath = file.filepath  # capture before deletion
-
-    # Log deletion before actual delete
-    if actor:
-        FileAuditLog.objects.create(
-            file=file,
-            user=actor,
-            action="deleted",
-            extra={"file_link_id": file_link_id}
-        )
-
-    # Delete the link first, then the file (avoids redundant cascade)
+    link = FileFolderLink.objects.select_related("file").get(pk=file_link_id)
+    document = link.file
+    path = document.filepath
     link.delete()
-    file.delete()
-
-    # Remove the physical file from disk so MD5 de-dup allows re-upload
-    if filepath and os.path.isfile(filepath):
-        try:
-            os.remove(filepath)
-        except OSError:
-            pass
-
-    return {"message": f"Deleted file {file_link_id}"}
+    # Removing one location must not remove other links, or legacy documents
+    # intentionally reusing the same stored bytes.
+    if document.folder_links.exists():
+        return {"message": "Document removed from this folder."}
+    document.delete()
+    if path and not File.objects.filter(filepath=path).exists() and os.path.isfile(path):
+        os.remove(path)
+    return {"message": "Document deleted."}
 
 
-def copy_file(file_id, destination_folder_id):
-    file = File.objects.get(id=file_id)
-    folder = Folder.objects.get(id=destination_folder_id)
-    new_file = File.objects.create(
-        filename=f"{file.filename}_copy",
-        filepath=file.filepath,
-        file_size=file.file_size,
-        file_type=file.file_type,
-        md5_hash=None,
-        run=file.run,
-        user=file.user,
-        project_id=file.project_id,
-        service_id=file.service_id,
-        status="Pending",
-    )
-    return FileFolderLink.objects.create(file=new_file, folder=folder)
+def copy_file(file_id, destination_folder_id, actor=None):
+    from document_operations.actions import copy_document
+    source = File.objects.get(pk=file_id)
+    return copy_document(file_id, destination_folder_id, actor or source.user)
 
 
-def duplicate_file(file_link_id):
-    link = FileFolderLink.objects.get(id=file_link_id)
-    return copy_file(link.file.id, link.folder.id)
+def duplicate_file(file_link_id, actor=None):
+    link = FileFolderLink.objects.select_related("file").get(pk=file_link_id)
+    from document_operations.actions import copy_document
+    return copy_document(link.file_id, link.folder_id, actor or link.file.user, action="duplicate")
 
 
 def zip_files(file_link_ids):
@@ -191,11 +176,9 @@ def zip_files(file_link_ids):
 
 
 def protect_file_with_password(file_link_id, password_hint):
-    link = FileFolderLink.objects.get(id=file_link_id)
-    link.password_protected = True
-    link.password_hint = password_hint
-    link.save()
-    return {"message": f"File {link.file.filename} password protected."}
+    # A hint is not a password. Retain the legacy call signature so queued jobs
+    # fail clearly without modifying existing protection or claiming success.
+    return {"error": "Set a password again from the document menu; a password hint alone cannot protect a document."}
 
 
 def same_tenant(user_a, user_b) -> bool:
@@ -251,21 +234,9 @@ def get_user_accessible_file_ids(user, min_level="read"):
 
 
 def has_file_access(user, file: File, level="read") -> bool:
-    if not user or not getattr(user, "is_authenticated", False) or not file:
-        return False
-    if file.user_id == user.id:
-        return True
-    if not same_tenant(user, file.user):
-        return False
-
-    now = timezone.now()
-    if level == "read" and FileFolderLink.objects.filter(file=file, shared_with=user).exists():
-        return True
-
-    entries = FileAccessEntry.objects.filter(file_link__file=file).filter(
-        Q(user=user) | Q(group__in=user.groups.all())
-    )
-    return any(_entry_allows(entry, level, now) for entry in entries)
+    from core.access import can_access_file
+    action = {"read": "view", "write": "rename", "delete": "delete", "share": "share", "owner": "share"}.get(level)
+    return bool(action and can_access_file(user, file, action))
 
 
 def get_file_access_audit(file: File):
@@ -322,19 +293,13 @@ def reassign_folder_for_files(file_link_ids, new_folder):
 
 # File Versioning
 def create_file_version(file: File, uploaded_by=None):
-    latest_version = file.versions.first()
-    new_version = (latest_version.version_number + 1) if latest_version else 1
-
-    version_path = os.path.join(settings.MEDIA_ROOT, "versions", str(file.id), f"v{new_version}")
-    os.makedirs(os.path.dirname(version_path), exist_ok=True)
-    shutil.copy(file.file.path, version_path)
-
-    return FileVersion.objects.create(
-        file=file,
-        version_number=new_version,
-        file_path=version_path,
-        uploaded_by=uploaded_by
-    )
+    from django.db.models import Max
+    latest = file.versions.aggregate(last=Max("version_number"))["last"] or 0
+    number = latest + 1
+    path = os.path.join(settings.MEDIA_ROOT, "versions", str(file.pk), f"v{number}-{uuid.uuid4().hex}")
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    shutil.copy2(file.filepath, path)
+    return FileVersion.objects.create(file=file, version_number=number, file_path=path, uploaded_by=uploaded_by)
 
 
 # Sharing
@@ -343,7 +308,7 @@ def generate_share_token():
 
 
 def generate_public_link(file_link: FileFolderLink, actor=None):
-    if not file_link.public_token:
+    if not file_link.is_public or not file_link.public_token:
         file_link.public_token = generate_share_token()
         file_link.shared_link_created_at = timezone.now()
         file_link.is_public = True
@@ -354,7 +319,7 @@ def generate_public_link(file_link: FileFolderLink, actor=None):
                 file=file_link.file,
                 user=actor,
                 action="public_link",
-                extra={"file_link_id": file_link.id, "public_token": file_link.public_token}
+                extra={"file_link_id": file_link.id}
             )
 
     return file_link.public_token
@@ -402,9 +367,9 @@ def link_file_to_folder(file, folder):
 
 def update_access_level_for_user(file_link, user_id, access_level, granted_by):
     perms = {
-        "read":  {"can_read": True, "can_write": False, "can_share": False},
-        "write": {"can_read": True, "can_write": True,  "can_share": False},
-        "owner": {"can_read": True, "can_write": True,  "can_share": True},
+        "read":  {"can_read": True, "can_write": False, "can_share": False, "can_delete": False},
+        "write": {"can_read": True, "can_write": True,  "can_share": False, "can_delete": False},
+        "owner": {"can_read": True, "can_write": True,  "can_share": True, "can_delete": True},
     }.get(access_level, {"can_read": True})
 
     user = get_object_or_404(User, pk=user_id)
@@ -440,51 +405,7 @@ def update_access_level_for_user(file_link, user_id, access_level, granted_by):
 
 
 def set_password_protection(file_id, password_hint, actor=None):
-    """
-    Set password protection metadata on a file.
-    
-    Args:
-        file_id (int): ID of the file to protect
-        password_hint (str): The hint to show to the user
-        actor (User or None): User who triggered the protection (optional)
-        
-    Returns:
-        dict: result with status and message
-    """
-    try:
-        file_link = FileFolderLink.objects.get(file_id=file_id)
-
-        file_link.password_hint = password_hint
-        file_link.password_protected = True
-        file_link.save()
-
-        # Optional audit log entry
-        if actor:
-            FileAuditLog.objects.create(
-                file=file_link.file,
-                user=actor,
-                action="password_set",
-                extra={"password_hint": password_hint}
-            )
-        return {
-            "success": True,
-            "message": f"Password protection applied to file_id={file_id}."
-        }
-
-    except FileFolderLink.DoesNotExist:
-        logger.error(f"[Password Protect] FileFolderLink not found for file_id={file_id}")
-        return {
-            "success": False,
-            "message": f"FileFolderLink does not exist for file_id={file_id}."
-        }
-    except Exception as e:
-        logger.exception(f"[Password Protect] Unexpected error for file_id={file_id}: {e}")
-        return {
-            "success": False,
-            "message": f"Unexpected error: {str(e)}"
-        }
-
-
+    return {"success": False, **protect_file_with_password(file_id, password_hint)}
 
 
 # Folder names that only exist in server storage paths and must never appear in a user's tree.

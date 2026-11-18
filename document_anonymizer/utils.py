@@ -120,8 +120,7 @@ class AnonymizationService:
         logger.info(f"extract_structured_text() → Processing {file_path}")
         try:
             if file_path.lower().endswith(".pdf"):
-                from unstructured.partition.pdf import partition_pdf
-                elements = partition_pdf(filename=file_path)
+                return self.extract_text_from_pdf(file_path)
             elif file_path.lower().endswith(".docx"):
                 from unstructured.partition.docx import partition_docx
                 elements = partition_docx(filename=file_path)
@@ -140,15 +139,17 @@ class AnonymizationService:
 
 
     def extract_text_from_pdf(self, file_path):
-        try:
-            logger.info(f"Using unstructured to extract structured PDF text from: {file_path}")
-            elements = partition_pdf(filename=file_path)
-            structured_text = "\n\n".join(el.text.strip() for el in elements if el.text and el.text.strip())
-
-            return structured_text, elements, [el.to_dict() for el in elements]
-        except Exception as e:
-            logger.error(f"Structured PDF extraction failed via unstructured: {e}")
-            return None, [], []
+        """PDF blocks from native text only; the requesting task prepares scans."""
+        import fitz
+        blocks = []
+        with fitz.open(file_path) as document:
+            for page_no, page in enumerate(document, 1):
+                for index, block in enumerate(page.get_text("blocks")):
+                    text = str(block[4]).strip()
+                    if text:
+                        blocks.append({"element_id": f"page-{page_no}-{index}", "type": "Text", "text": text,
+                            "metadata": {"page_number": page_no}})
+        return "\n\n".join(block["text"] for block in blocks), [], blocks
 
     def extract_text_from_docx(self, file_path):
         try:
@@ -263,8 +264,8 @@ class AnonymizationService:
 
         combined_map = {**spacy_map, **presidio_map}
 
-        logger.info(f"Presidio map: {json.dumps(presidio_map, indent=2)}")
-        logger.info(f"SpaCy map: {json.dumps(spacy_map, indent=2)}")
+        logger.debug("Presidio detected %s masked entities", len(presidio_map))
+        logger.debug("spaCy detected %s masked entities", len(spacy_map))
 
         return final_masked, combined_map, presidio_map, spacy_map
 
@@ -363,12 +364,10 @@ def generate_anonymized_html(masked_text, entity_mapping):
 </body>
 </html>
 """
-    highlighted_text = masked_text
-    for mask, original in sorted(entity_mapping.items(), key=lambda x: len(x[0]), reverse=True):
-        tooltip = f"title='Original: {original}'"
-        highlighted_text = highlighted_text.replace(
-            mask, f'<span class="masked" {tooltip}>{mask}</span>'
-        )
+    from html import escape
+    # Exported redacted HTML must not contain original PII in tooltips, or
+    # execute document text as markup. Reversal maps stay in private storage.
+    highlighted_text = escape(masked_text or "")
 
     return html_template.replace("{text}", highlighted_text)
 

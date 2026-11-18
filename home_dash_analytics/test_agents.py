@@ -183,25 +183,26 @@ class OrchestratorTests(Base):
         self.cycle()
         self.assertEqual(IntelligenceRun.objects.count(), 1)
 
-    def test_scanned_documents_go_to_the_ocr_agent_first(self):
+    def test_empty_cached_pdf_text_does_not_schedule_ocr(self):
+        from document_ocr.models import OCRRun
         scan = make_file(self.a2, 'scan.pdf')
         scan.extension = 'pdf'
         scan.content = ''
         scan.save()
         _, _, ocr, _ = self.cycle()
-        self.assertEqual(ocr.call_args[0][1], scan.id)
+        ocr.assert_not_called()
+        self.assertFalse(OCRRun.objects.exists())
 
-    def test_failing_ocr_is_not_requeued_every_cycle(self):
-        scan = make_file(self.a2, 'scan.pdf')
-        scan.extension = 'pdf'
+    def test_repeated_dashboard_cycles_never_ocr_image_uploads(self):
+        from document_ocr.models import OCRRun
+        scan = make_file(self.a2, 'passport.png')
+        scan.extension = 'png'
         scan.content = ''
         scan.save()
-        _, _, ocr, _ = self.cycle()
-        self.assertEqual(ocr.call_count, 1)
-        # OCR failed (no text, no OCR version): the next cycles leave the file alone for a day
         for _ in range(3):
             _, _, ocr, _ = self.cycle()
-            self.assertEqual(ocr.call_count, 0)
+            ocr.assert_not_called()
+        self.assertFalse(OCRRun.objects.exists())
 
     def test_critical_capacity_pauses_everything(self):
         result, delay, ocr, _ = self.cycle(capacity={'state': 'critical', 'reasons': ['Redis memory at 95%']})
