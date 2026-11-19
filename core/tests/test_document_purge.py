@@ -108,6 +108,19 @@ class DocumentPurgeTests(TestCase):
         self.assertEqual(self.search_adapter.call_args_list, [mock.call(), mock.call(execute=True)])
         self.assertTrue(self.command(execute=True, all_tenants=True)["complete"])
 
+    def test_legacy_service_and_ocr_cache_orphans_are_removed_but_account_assets_remain(self):
+        paths = []
+        for name in ["service_outputs", "ocr_cache", "bulk", "previews", "demo", "scale", "local-audit"]:
+            path = self.media / name / "old-document.txt"
+            path.parent.mkdir()
+            path.write_text("Unregistered legacy document bytes")
+            paths.append(path)
+        avatar = self.media / "avatars" / "keep.png"
+        avatar.parent.mkdir(); avatar.write_bytes(b"Keep account asset")
+        self.command(execute=True, all_tenants=True)
+        self.assertTrue(all(not path.exists() for path in paths))
+        self.assertTrue(avatar.exists())
+
     def test_outside_root_path_blocks_before_any_deletion(self):
         outside = self.base / "outside.txt"; outside.write_text("Must remain")
         File.objects.filter(pk=self.file.pk).update(filepath=str(outside))

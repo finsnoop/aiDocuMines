@@ -280,6 +280,26 @@ class ProcessingOutputTests(TestCase):
         self.assertIn(b"Document Structure Analysis", b"".join(download.streaming_content))
         self.assertEqual(self.client_for(self.foreign).get(f"/api/v1/core/download/?file_id={output.pk}").status_code, 404)
 
+    @mock.patch("document_structures.utils.run_partition")
+    @mock.patch("document_structures.tasks.run_document_partition_task.delay")
+    def test_structure_client_without_analysis_permission_is_rejected_before_dispatch_and_processing(self, queue, partition):
+        from document_structures.models import DocumentStructureRun, DocumentElement
+        from document_structures.tasks import run_document_partition_task
+        from rest_framework.exceptions import PermissionDenied
+        response = self.client_for(self.requester).post(
+            f"/api/v1/document-structures/document-structure/submit/?file_id={self.source.pk}")
+        self.assertEqual(response.status_code, 403, response.content)
+        queue.assert_not_called()
+        self.assertFalse(DocumentStructureRun.objects.filter(file=self.source).exists())
+        run = DocumentStructureRun.objects.create(run=self.source.run, file=self.source, user=self.requester)
+        with self.assertRaises(PermissionDenied):
+            run_document_partition_task.run(str(run.pk), store_embeddings=False, generate_report=True)
+        run.refresh_from_db()
+        self.assertEqual(run.status, "Failed")
+        partition.assert_not_called()
+        self.assertFalse(DocumentElement.objects.filter(run=run).exists())
+        self.assertFalse(File.objects.filter(origin_file=self.source).exists())
+
     def test_structure_real_text_fixture_generates_one_report_and_repeated_task_is_idempotent(self):
         from document_structures.models import DocumentStructureRun, DocumentElement
         from document_structures.tasks import run_document_partition_task

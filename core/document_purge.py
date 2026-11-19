@@ -2,13 +2,14 @@
 from __future__ import annotations
 
 import os
+from fnmatch import fnmatchcase
 from pathlib import Path
 import re
 import stat
 
 from django.apps import apps
 from django.conf import settings
-from django.core.cache import cache
+from django.core.cache import cache, caches
 from django.db import connections, transaction
 from django.db.models import Q
 
@@ -49,7 +50,8 @@ DOCUMENT_DIRS = (
     "uploads", "versions", "zips", "ocr", "anonymized", "deanonymized", "translations",
     "generated", "exports", "redlining", "structured", "structures", "clustering",
     "email_attachments", "pe_service_outputs", "ca_service_outputs", "le_service_outputs",
-    "ip_service_outputs", "rc_service_outputs", "proposal_docs",
+    "ip_service_outputs", "rc_service_outputs", "proposal_docs", "service_outputs", "ocr_cache",
+    "bulk", "previews", "demo", "scale", "local-audit",
 )
 NODE_TABLES = {
     "files": {"id_user", "id_node", "data_type", "metadata", "node"},
@@ -59,7 +61,7 @@ NODE_TABLES = {
     "activitylogs": {"id_original_file", "details", "activitylogs_file"},
 }
 CACHE_PATTERNS = (
-    "text-preparation:*", "pair-assistant:*", "search:v*", "search:index_version", "similar-groups:*",
+    "text-preparation:*", "pair-assistant:*", "search:v*", "search:index_version", "similar-groups:*", "stats:*",
     "explicit-ocr-source:*", "explicit-anonymization-source:*", "document_operation_context:*", "task_owner:*",
     "owned_task:document_operation:*", "owned_task:risk:*", "owned_task:anonymization_stats:*",
     "owned_task:private_equity:*", "owned_task:search:*",
@@ -210,9 +212,36 @@ def clear_node_tables(alias, tables):
 
 
 def document_cache_keys():
-    if not hasattr(cache, "iter_keys"):
-        raise PurgeBlocked("The cache backend cannot enumerate document namespaces; configure the deployment Redis cache before purging.")
-    return {key for pattern in CACHE_PATTERNS for key in cache.iter_keys(pattern)}
+    """Enumerate logical document keys in this cache prefix and version only."""
+    from django.core.cache.backends.redis import RedisCache
+
+    backend = caches["default"]
+    if isinstance(backend, RedisCache):
+        # Django's own RedisCache has no iter_keys(). Scan its primary with
+        # the same make_key function used by get/delete_many, then validate
+        # the reversible prefix before accepting any logical key for deletion.
+        prefix = backend.make_key("")
+        probe = "document_purge_namespace_probe"
+        if not isinstance(prefix, str) or not prefix or backend.make_key(probe) != prefix + probe:
+            raise PurgeBlocked("The cache key function is not safely reversible; refusing namespace deletion.")
+        client = backend._cache.get_client(write=True)
+        found = set()
+        for pattern in CACHE_PATTERNS:
+            for raw_key in client.scan_iter(match=backend.make_key(pattern), count=500):
+                raw_key = raw_key.decode("utf-8") if isinstance(raw_key, bytes) else raw_key
+                if not isinstance(raw_key, str) or not raw_key.startswith(prefix):
+                    raise PurgeBlocked("Redis returned a key outside the expected cache namespace.")
+                key = raw_key[len(prefix):]
+                if backend.make_key(key) != raw_key or not any(fnmatchcase(key, item) for item in CACHE_PATTERNS):
+                    raise PurgeBlocked("Redis returned an unexpected document cache key.")
+                found.add(key)
+        return found
+    if hasattr(backend, "iter_keys"):
+        found = {key for pattern in CACHE_PATTERNS for key in backend.iter_keys(pattern)}
+        if any(not isinstance(key, str) or not any(fnmatchcase(key, item) for item in CACHE_PATTERNS) for key in found):
+            raise PurgeBlocked("Cache enumeration returned an unexpected namespace.")
+        return found
+    raise PurgeBlocked("The cache backend cannot enumerate document namespaces; configure the deployment Redis cache before purging.")
 
 
 def clear_document_cache(keys):

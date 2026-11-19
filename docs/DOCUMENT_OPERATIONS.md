@@ -20,7 +20,7 @@ Unshare revokes explicit file grants, legacy direct shares and the public token.
 
 Public sharing returns an unguessable token and a usable reader URL. Anonymous metadata and content endpoints are `/api/v1/documents/public/share/<token>/` and its `content/` child. Protected links require `X-Share-Password` on both requests. Archive, revocation and an unavailable source all prevent public access. Private storage paths and password hashes are not returned.
 
-Protect requires an actual password of 8?128 characters and stores a Django password hash. It protects public-link access; it does not encrypt the stored document or change authorised workspace access. A hint alone cannot set protection. Legacy hint-only jobs fail clearly, and existing hint-only protected links fail closed until a password is set again. Apply migration `document_operations.0008_filefolderlink_password_hash` before deploying this API.
+Protect requires an actual password of 8 to 128 characters and stores a Django password hash. It protects public-link access; it does not encrypt the stored document or change authorised workspace access. A hint alone cannot set protection. Legacy hint-only jobs fail clearly, and existing hint-only protected links fail closed until a password is set again. Apply migration `document_operations.0008_filefolderlink_password_hash` before deploying this API.
 
 Version restore copies real saved bytes, preserves the replaced document as a new version, clears stale extracted text and updates the File/Storage path. It rechecks source and actor before publishing. Rename refuses a source edited after the request was queued and does not overwrite a filename collision.
 
