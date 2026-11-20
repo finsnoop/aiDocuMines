@@ -1,4 +1,5 @@
 from django.urls import path
+from .views_spend import AISpendLimitView, AISpendView
 from .views_layout import DashboardLayoutView
 from .views_intelligence import (BusinessDashboardView, IntelligenceRunsView, IntelligenceSourcesView,
                                 IntelligenceReviewView, IntelligenceRulesView, IntelligenceTokenUsageView,
@@ -27,6 +28,9 @@ urlpatterns = [
     path('intelligence/compare/', IntelligenceCompareView.as_view()),
     path('agents/', AgentOperationsView.as_view()),
     path('agents/budget/', AIBudgetView.as_view()),
+    path('ai-spend/', AISpendView.as_view()),
+    path('ai-spend/limits/', AISpendLimitView.as_view()),
+    path('ai-spend/limits/<int:pk>/', AISpendLimitView.as_view()),
     path('agents/prices/', ModelPriceView.as_view()),
     path("health/", health, name="home_analytics_health"),
 

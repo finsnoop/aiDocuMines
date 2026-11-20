@@ -349,6 +349,8 @@ Respond in JSON format only:
 {{"label": "...", "description": "...", "keywords": ["...", "..."]}}"""
 
         try:
+            from home_dash_analytics.agents.gateway import enforce
+            enforce()  # AI gateway limits; a refusal falls back like any other model error
             response = client.chat.completions.create(
                 model=model,
                 messages=[{"role": "user", "content": prompt}],
@@ -414,6 +416,8 @@ Respond in JSON format:
 {{"label": "...", "description": "...", "keywords": ["...", "..."]}}"""
 
         try:
+            from home_dash_analytics.agents.gateway import enforce
+            enforce()  # AI gateway limits; a refusal falls back like any other model error
             response = client.chat.completions.create(
                 model=model,
                 messages=[{"role": "user", "content": prompt}],

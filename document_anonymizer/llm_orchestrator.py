@@ -16,6 +16,11 @@ def query_model(blocks, element_ids, model="phi-2", api_key=None):
             return "OpenAI API key is required for remote models."
         try:
             import openai
+            from home_dash_analytics.agents.gateway import GatewayBlocked, enforce
+            try:
+                enforce()
+            except GatewayBlocked as blocked:
+                return str(blocked)
             openai.api_key = api_key
             response = openai.chat.completions.create(
                 model=model,

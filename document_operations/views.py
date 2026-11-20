@@ -784,10 +784,11 @@ class TrashFolderView(APIView):
     permission_classes = [IsAuthenticated, HasEffectiveAccess]
 
     def patch(self, request, pk):
+        from document_operations.utils import trash_folder_recursive
         folder = access.get_folder_for_user(request.user, pk, "manage")
-        if not folder.is_trashed:
-            folder.is_trashed = True
-            folder.save()
+        # The whole subtree goes to the archive; otherwise documents in sub-folders stayed
+        # visible on Documents and Matters while their parent folder was archived.
+        trash_folder_recursive(folder)
         return Response({"message": f"Folder {pk} moved to trash."}, status=200)
 
 

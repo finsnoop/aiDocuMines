@@ -50,20 +50,62 @@ def restore_folder_from_trash(folder_id):
     return {"message": f"Restored folder {folder.name} (recursive)"}
 
 
+def _subtree_ids(folder_id):
+    ids, frontier = [folder_id], [folder_id]
+    while frontier:
+        frontier = list(Folder.objects.filter(parent_id__in=frontier).values_list("pk", flat=True))
+        ids.extend(frontier)
+    return ids
+
+
 def delete_folder(folder_id, actor=None):
+    """Permanently delete a folder, its sub-folders and every document in them.
+
+    All or nothing: if the actor may not delete one of the documents inside, nothing is
+    deleted (previously only that document's folder link was removed, which left a
+    document with no folder that still showed on Documents, Matters and Insights).
+    Stored bytes are removed after the database commit, and only when no remaining
+    document row uses them.
+    """
     from core.access import can_access_file
+    from rest_framework.exceptions import PermissionDenied
     folder = Folder.objects.get(pk=folder_id)
-    children = list(folder.subfolders.values_list("pk", flat=True))
-    for child in children:
-        delete_folder(child, actor=actor)
-    for link in list(folder.files.select_related("file")):
-        if actor is not None and not can_access_file(actor, link.file, "delete"):
-            link.delete()  # remove this folder's location, never delete someone else's document
-        else:
-            delete_file(link.pk, actor=actor)
-    name = folder.name
-    folder.delete()
+    subtree = _subtree_ids(folder.pk)
+    links = list(FileFolderLink.objects.filter(folder_id__in=subtree).select_related("file", "file__user"))
+    if actor is not None:
+        blocked = [l.file.filename for l in links if not can_access_file(actor, l.file, "delete")]
+        if blocked:
+            raise PermissionDenied(
+                f"This folder contains {len(blocked)} document(s) you may not delete "
+                f"(for example {blocked[0]}). Nothing was deleted; ask the owner or an administrator.")
+    paths = set()
+    with transaction.atomic():
+        for link in links:
+            paths.add(_delete_link(link))
+        name = folder.name
+        folder.delete()  # cascades sub-folders
+        transaction.on_commit(lambda: _remove_unused_bytes(paths))
     return {"message": f"Deleted folder {name}."}
+
+
+def _delete_link(link):
+    """Remove one folder link; delete the document when it was its last one. Returns its path or None."""
+    document = link.file
+    link.delete()
+    if document.folder_links.exists():
+        return None
+    path = document.filepath
+    document.delete()
+    return path
+
+
+def _remove_unused_bytes(paths):
+    for path in paths:
+        try:
+            if path and not File.objects.filter(filepath=path).exists() and os.path.isfile(path):
+                os.remove(path)
+        except OSError:
+            logger.warning("Could not remove stored document %s", path, exc_info=True)
 
 
 def trash_folder_recursive(folder):
@@ -137,18 +179,13 @@ def restore_file_from_trash(file_link_id, actor=None):
 
 
 def delete_file(file_link_id, actor=None):
-    link = FileFolderLink.objects.select_related("file").get(pk=file_link_id)
-    document = link.file
-    path = document.filepath
-    link.delete()
     # Removing one location must not remove other links, or legacy documents
     # intentionally reusing the same stored bytes.
-    if document.folder_links.exists():
-        return {"message": "Document removed from this folder."}
-    document.delete()
-    if path and not File.objects.filter(filepath=path).exists() and os.path.isfile(path):
-        os.remove(path)
-    return {"message": "Document deleted."}
+    with transaction.atomic():
+        link = FileFolderLink.objects.select_related("file").get(pk=file_link_id)
+        path = _delete_link(link)
+        transaction.on_commit(lambda: _remove_unused_bytes({path}))
+    return {"message": "Document deleted." if path is not None else "Document removed from this folder."}
 
 
 def copy_file(file_id, destination_folder_id, actor=None):

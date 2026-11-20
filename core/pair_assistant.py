@@ -233,13 +233,17 @@ def call_model(user, config, messages, task, trace):
     from grid_documents_interrogation.utils import _openai_chat_completion
     if OrganisationPolicy.objects.filter(client_id=tenant_id(user), assistant_enabled=False).exists():
         raise PairProviderError('Assistant disabled.')
-    allowed, _ = cost.allow(tenant_id(user))
+    from home_dash_analytics.agents import gateway
+    key_id = gateway.key_for(org_id=config.get('key_org'))
+    allowed, why = gateway.check(user, key_id)
     if not allowed:
-        raise PairProviderError('AI budget is unavailable.')
+        raise PairProviderError(why or 'AI budget is unavailable.')
     started = time.monotonic()
     provider, model = config['provider'], config['model']
     key = organisation_ai_key(config.get('key_org')) if config.get('key_org') else ''
     key = resolve_api_key(provider, key)
+    key_scope = gateway.using_key(key_id)
+    key_scope.__enter__()
     try:
         if provider == 'ollama':
             import requests
@@ -271,6 +275,8 @@ def call_model(user, config, messages, task, trace):
     except Exception as exc:
         # Provider exceptions can contain URL query credentials or request content.
         raise PairProviderError('The configured AI provider did not return a valid structured response.') from exc
+    finally:
+        key_scope.__exit__(None, None, None)
 
 
 def _evidence(citations, source_map):

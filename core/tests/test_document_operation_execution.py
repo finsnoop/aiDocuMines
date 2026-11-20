@@ -123,7 +123,8 @@ class DocumentOperationExecutionTests(TestCase):
         self.assertTrue(copied.filename.endswith(".txt"))
         self.assertEqual(Path(copied.filepath).read_bytes(), b"Original contract bytes.")
         self.assertEqual(self.bytes(self.api(self.reader).get(result["download_url"])), b"Original contract bytes.")
-        self.assertEqual(self.api(self.reader).delete(f"/api/v1/documents/files/{result['file_link_id']}/delete/").status_code, 200)
+        with self.captureOnCommitCallbacks(execute=True):
+            self.assertEqual(self.api(self.reader).delete(f"/api/v1/documents/files/{result['file_link_id']}/delete/").status_code, 200)
         self.assertFalse(Path(copied.filepath).exists())
         self.assertTrue(Path(self.file.filepath).exists())
 

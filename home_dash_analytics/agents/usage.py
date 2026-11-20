@@ -48,7 +48,8 @@ def record(*, provider: str, model: str, task: str, prompt_tokens=0, completion_
     """Write one usage row to the cost ledger (cost_centre EventLog + TokenUsage)."""
     user = user or actor.get()
     total = int(total_tokens if total_tokens is not None else (prompt_tokens or 0) + (completion_tokens or 0))
-    meta = {'provider': provider, 'model': model, 'task': task, 'usage_reported': bool(total),
+    from .gateway import current_key
+    meta = {'provider': provider, 'model': model, 'task': task, 'usage_reported': bool(total), 'key': current_key(),
             'prompt_tokens': int(prompt_tokens or 0), 'completion_tokens': int(completion_tokens or 0),
             **({'duration_ms': int(duration_ms)} if duration_ms is not None else {}), **(extra or {})}
     tenant_id = getattr(user, 'client_id', None) if user is not None else None
@@ -63,6 +64,8 @@ def record(*, provider: str, model: str, task: str, prompt_tokens=0, completion_
             event = EventLog.objects.create(user=user, tenant_id=tenant_id, event_type=EventType.OTHER,
                                             service_type=ServiceType.PAYABLE, tokens_used=total, metadata=meta)
             TokenUsage.objects.create(user=user, tenant_id=tenant_id, event_log=event, tokens_used=total)
+        from .gateway import ledger_changed
+        ledger_changed(tenant_id)
         return event
     except Exception:
         logger.warning('Could not record AI usage for %s/%s', provider, model, exc_info=True)

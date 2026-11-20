@@ -390,6 +390,15 @@ ROLE_DEFINITIONS = {
         ),
         inherits_from=["Developer"],
     ),
+    # CEO, CFO, COO, general counsel: the organisation's figures, including AI spend and its limits.
+    "Executive": RoleDefinition(
+        "Executive", "Executive (CEO, CFO, COO)",
+        _p(
+            "cost_centre.view", "cost_centre.manage", "cost_centre.report", "cost_centre.export",
+            "analytics.export", "dashboard.view", "user.view",
+        ),
+        inherits_from=["Client"],
+    ),
     "Admin": RoleDefinition(
         "Admin", "Admin (Tenant Administrator)",
         _p(

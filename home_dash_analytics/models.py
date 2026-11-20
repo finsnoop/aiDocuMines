@@ -119,3 +119,32 @@ class AIBudget(models.Model):
     alert_percent = models.PositiveSmallIntegerField(default=80)
     hard_stop = models.BooleanField(default=True, help_text='Stop agent calls once the monthly budget is used up')
     updated_at = models.DateTimeField(auto_now=True)
+
+
+class AISpendLimit(models.Model):
+    """A spend limit on one person or one AI key in an organisation, per day, week or month.
+
+    Switched on and off with `enabled`; an enabled limit that is used up refuses further AI
+    calls for that person or key until the next period (see agents/gateway.py).
+    """
+    SCOPES = [('user', 'Person'), ('key', 'AI key')]
+    PERIODS = [('day', 'Day'), ('week', 'Week'), ('month', 'Month')]
+    UNITS = [('usd', 'US dollars'), ('tokens', 'Tokens')]
+    tenant = models.ForeignKey('custom_authentication.Client', on_delete=models.CASCADE, related_name='ai_spend_limits')
+    scope = models.CharField(max_length=8, choices=SCOPES)
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.CASCADE, related_name='ai_spend_limits')
+    key_id = models.CharField(max_length=64, blank=True, default='')
+    period = models.CharField(max_length=8, choices=PERIODS, default='month')
+    unit = models.CharField(max_length=8, choices=UNITS, default='usd')
+    amount = models.DecimalField(max_digits=14, decimal_places=2)
+    enabled = models.BooleanField(default=True)
+    alert_percent = models.PositiveSmallIntegerField(default=80)
+    updated_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name='+')
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=['tenant', 'user'], condition=models.Q(scope='user'), name='ai_limit_one_per_user'),
+            models.UniqueConstraint(fields=['tenant', 'key_id'], condition=models.Q(scope='key'), name='ai_limit_one_per_key'),
+        ]
+        indexes = [models.Index(fields=['tenant', 'enabled'])]

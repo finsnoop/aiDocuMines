@@ -522,6 +522,8 @@ def _openai_chat_completion(client, *, model, messages, max_tokens, temperature,
         kwargs['response_format'] = response_format
     import time
     from home_dash_analytics.agents.usage import record_response
+    from home_dash_analytics.agents.gateway import enforce
+    enforce()  # AI gateway: organisation budget plus the person's and the key's limits
     base = str(getattr(client, 'base_url', '') or '')
     provider = 'openai' if 'api.openai.com' in base else 'litellm' if 'litellm' in base else 'openai-compatible'
     started = time.monotonic()
@@ -547,7 +549,24 @@ def _openai_chat_completion(client, *, model, messages, max_tokens, temperature,
     return response
 
 
-def dispatch_to_llm(
+def dispatch_to_llm(query_text, chunk, llm_config, previous_messages=None, *, accumulated_context=""):
+    """Every chat goes through the AI gateway: limits are checked and the key used is recorded."""
+    from home_dash_analytics.agents.gateway import enforce, key_for, using_key
+    from home_dash_analytics.agents.usage import actor
+    config = llm_config if isinstance(llm_config, dict) else {}
+    person = actor.get()
+    if config.get("key_org") and not config.get("api_key"):
+        key_id = key_for(org_id=config["key_org"])
+    elif config.get("api_key"):
+        key_id = key_for(personal_user_id=getattr(person, "pk", None)) if person is not None else "personal"
+    else:
+        key_id = key_for()
+    with using_key(key_id):
+        enforce()
+        return _dispatch_to_llm(query_text, chunk, llm_config, previous_messages, accumulated_context=accumulated_context)
+
+
+def _dispatch_to_llm(
     query_text: str,
     chunk: str,
     llm_config: dict,

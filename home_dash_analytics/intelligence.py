@@ -145,10 +145,19 @@ def agent_call(user, config, messages, task):
     from custom_authentication.models import OrganisationPolicy
     if OrganisationPolicy.objects.filter(client_id=tenant_id(user), assistant_enabled=False).exists():
         raise ValueError('AI is disabled by organisation policy.')
-    from .agents import cost as cost_agent
-    allowed, why = cost_agent.allow(tenant_id(user))
+    from .agents import gateway
+    key_id = gateway.key_for(org_id=config.get('key_org'))
+    allowed, why = gateway.check(user, key_id)
     if not allowed:
         raise ValueError(why)
+    with gateway.using_key(key_id):
+        return _agent_call(user, config, messages, task)
+
+
+def _agent_call(user, config, messages, task):
+    from core.llm_providers import resolve_api_key, openai_compatible_base
+    from custom_authentication.policies import organisation_ai_key
+    from cost_centre.models import EventLog
     trace = TRACE.get()
     if trace.get('run_id'):
         events = EventLog.objects.filter(tenant_id=tenant_id(user), metadata__run_id=trace['run_id'])
