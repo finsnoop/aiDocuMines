@@ -2,8 +2,9 @@
 Cost management agent: tokens -> US dollars, per organisation, per month, against a budget.
 
 * Spend comes from the cost ledger (every AI call on the platform; see agents/usage.py).
-* Dollars come from ModelPrice (maintained by platform administrators). Tokens of a model with no
-  price are reported as "unpriced", never as free. When a provider reported only a total (no
+* Dollars come from input and output tokens priced by ModelPrice (set by platform administrators) or,
+  failing that, LiteLLM's price registry (agents/pricing.py). Tokens of a model with no price are
+  reported as "unpriced", never as free. When a provider reported only a total (no
   prompt/completion split), the cost uses the mean of the two prices and is flagged as estimated.
 * Budget states: no_budget, ok, warning (at alert_percent), exhausted. With hard_stop, an exhausted
   budget stops further agent calls for that organisation until the next month or a higher budget.
@@ -31,7 +32,9 @@ def month_start(now=None):
 
 
 def price_for(provider: str, model: str):
+    """Administrator price first, then LiteLLM's price registry (see agents/pricing.py)."""
     from ..models import ModelPrice
+    from .pricing import lookup
     if not model:
         return None
     candidates = [model, model.split('/', 1)[-1]]      # "openai/gpt-x" via LiteLLM -> "gpt-x"
@@ -40,7 +43,7 @@ def price_for(provider: str, model: str):
                  or ModelPrice.objects.filter(provider='*', model=name).first())
         if price:
             return price
-    return None
+    return lookup(provider, model)
 
 
 def spend(tenant_id, since=None):
@@ -73,7 +76,10 @@ def spend(tenant_id, since=None):
                           'usd': str(usd.quantize(Decimal('0.0001'))) if usd is not None else None})
     breakdown.sort(key=lambda b: -b['tokens'])
     return {'since': since.isoformat(), 'usd': str(total_usd.quantize(Decimal('0.01'))), 'estimated': estimated,
-            'tokens': sum(b['tokens'] for b in breakdown), 'unpriced_tokens': unpriced, 'breakdown': breakdown}
+            'tokens': sum(b['tokens'] for b in breakdown),
+            'input_tokens': sum(b['prompt_tokens'] for b in breakdown),
+            'output_tokens': sum(b['completion_tokens'] for b in breakdown),
+            'unpriced_tokens': unpriced, 'breakdown': breakdown}
 
 
 def assess(tenant_id, emit_changes=True):

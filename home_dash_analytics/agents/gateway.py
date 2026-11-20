@@ -270,18 +270,23 @@ def report(tenant_id, first: dt.date, last: dt.date, label: str = ""):
 
     users = {u.pk: u for u in get_user_model().objects.filter(client_id=tenant_id, is_active=True)
              .only("id", "email", "username", "first_name", "last_name").order_by("email")[:500]}
-    blank = lambda: {"usd": Decimal(0), "tokens": 0, "calls": 0, "unpriced_tokens": 0}
+    # input_tokens / output_tokens as providers report them; unsplit_tokens when a provider gave only a total.
+    blank = lambda: {"usd": Decimal(0), "tokens": 0, "input_tokens": 0, "output_tokens": 0, "unsplit_tokens": 0,
+                     "calls": 0, "unpriced_tokens": 0}
     days, by_user, by_key, by_model = defaultdict(blank), defaultdict(blank), defaultdict(blank), defaultdict(blank)
     totals, prices, estimated = blank(), {}, False
     for r in rows:
         provider, model = r["metadata__provider"] or "", r["metadata__model"] or ""
-        tokens, calls = int(r["tokens"]), int(r["calls"])
-        usd, est = _usd(provider, model, tokens, int(r["prompt"]), int(r["completion"]), prices)
+        tokens, calls, prompt, completion = int(r["tokens"]), int(r["calls"]), int(r["prompt"]), int(r["completion"])
+        usd, est = _usd(provider, model, tokens, prompt, completion, prices)
         estimated = estimated or est
         key_id = r["metadata__key"] or PLATFORM_KEY
         for bucket in (totals, days[r["day"]], by_user[r["user_id"]], by_key[key_id],
                        by_model[(provider or "unattributed", model or "unattributed", r["metadata__task"] or "unattributed")]):
             bucket["tokens"] += tokens
+            bucket["input_tokens"] += prompt
+            bucket["output_tokens"] += completion
+            bucket["unsplit_tokens"] += max(tokens - prompt - completion, 0)
             bucket["calls"] += calls
             if usd is None:
                 bucket["unpriced_tokens"] += tokens
@@ -325,7 +330,8 @@ def report(tenant_id, first: dt.date, last: dt.date, label: str = ""):
     series, day = [], first
     while day <= last:
         b = days.get(day, blank())
-        series.append({"date": day.isoformat(), "usd": str(b["usd"].quantize(Decimal("0.01"))), "tokens": b["tokens"], "calls": b["calls"]})
+        series.append({"date": day.isoformat(), "usd": str(b["usd"].quantize(Decimal("0.01"))), "tokens": b["tokens"],
+                       "input_tokens": b["input_tokens"], "output_tokens": b["output_tokens"], "calls": b["calls"]})
         day += dt.timedelta(days=1)
 
     return {"range": {"start": first.isoformat(), "end": last.isoformat(), "label": label or f"{first} to {last}"},

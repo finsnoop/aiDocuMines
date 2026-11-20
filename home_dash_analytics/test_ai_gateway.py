@@ -65,6 +65,9 @@ class AIGatewayTests(TestCase):
         self.assertEqual(r.status_code, 200, r.content)
         d = r.json()
         self.assertEqual(d["totals"]["tokens"], 2000)
+        self.assertEqual((d["totals"]["input_tokens"], d["totals"]["output_tokens"]), (1200, 800))
+        self.assertEqual(d["by_model"][0]["input_tokens"], 1200)
+        self.assertEqual(d["series"][-1]["output_tokens"], 800)
         self.assertEqual(d["totals"]["usd"], "0.03")
         self.assertEqual(len(d["series"]), 7)
         self.assertEqual(d["series"][-1]["tokens"], 2000)
@@ -151,3 +154,59 @@ class AIGatewayTests(TestCase):
         allowed, why = gateway.check(self.analyst)
         self.assertFalse(allowed)
         self.assertIn("budget", why)
+
+
+class PricingTests(TestCase):
+    """USD comes from input and output tokens: admin price, else LiteLLM's registry, else self-hosted = 0."""
+
+    def setUp(self):
+        cache.clear()
+        cache.set("ai-prices:proxy-aliases", {}, 60)   # no LiteLLM proxy in tests
+
+    def test_registry_prices_input_and_output_tokens_separately(self):
+        from .agents.cost import price_for
+        price = price_for("litellm", "openai/gpt-4o-mini")
+        self.assertEqual(price.input_usd_per_million, Decimal("0.15"))
+        self.assertEqual(price.output_usd_per_million, Decimal("0.6"))
+        self.assertIn("LiteLLM", price.source)
+        self.assertIsNotNone(price_for("litellm", "claude-sonnet-4-5"))
+
+    def test_admin_price_wins_and_self_hosted_is_free_and_unknown_is_unpriced(self):
+        from .agents.cost import price_for
+        ModelPrice.objects.create(provider="*", model="gpt-4o-mini", input_usd_per_million=Decimal("1"),
+                                  output_usd_per_million=Decimal("2"))
+        self.assertEqual(price_for("openai", "gpt-4o-mini").input_usd_per_million, Decimal("1"))
+        self.assertEqual(price_for("ollama", "qwen2.5:0.5b-instruct").input_usd_per_million, Decimal("0"))
+        self.assertIsNone(price_for("litellm", "made-up-model-xyz"))
+
+    def test_proxy_alias_resolves_to_the_model_behind_it(self):
+        from .agents.cost import price_for
+        cache.set("ai-prices:proxy-aliases", {"house-default": "deepseek/deepseek-chat"}, 60)
+        price = price_for("litellm", "house-default")
+        self.assertEqual(price.input_usd_per_million, Decimal("0.28"))
+
+    def test_spend_report_uses_registry_prices(self):
+        org = Client.objects.create(name="Priced firm")
+        exec_user = make_user("cfo@priced.test", org, groups=["Executive"])
+        EventLog.objects.create(user=exec_user, tenant=org, event_type=EventType.OTHER, service_type=ServiceType.PAYABLE,
+                                tokens_used=2_000_000, metadata={"provider": "litellm", "model": "gpt-4o-mini", "task": "chat",
+                                                                 "prompt_tokens": 1_000_000, "completion_tokens": 1_000_000})
+        c = APIClient(); c.force_authenticate(exec_user)
+        d = c.get("/api/v1/home-analytics/ai-spend/?range=today").json()
+        self.assertEqual(d["totals"]["usd"], "0.75")                 # 1M x 0.15 + 1M x 0.60
+        self.assertEqual(d["totals"]["unpriced_tokens"], 0)
+
+    def test_refresh_keeps_only_prices_and_rejects_a_broken_registry(self):
+        from .agents import pricing
+        good = {f"m{i}": {"input_cost_per_token": 1e-6, "output_cost_per_token": 2e-6, "litellm_provider": "x"} for i in range(600)}
+        good["sample_spec"] = {"input_cost_per_token": 9}
+        response = mock.Mock(status_code=200)
+        response.raise_for_status = mock.Mock()
+        response.raw.read.return_value = __import__("json").dumps(good).encode()
+        with mock.patch("requests.get", return_value=response):
+            self.assertEqual(pricing.refresh(), 600)
+        self.assertEqual(pricing.registry()["m1"], [1.0, 2.0, "x"])
+        response.raw.read.return_value = b'{"only": {"input_cost_per_token": 1}}'
+        with mock.patch("requests.get", return_value=response), self.assertRaises(ValueError):
+            pricing.refresh()
+        self.assertIn("m1", pricing.registry())                     # previous prices kept
