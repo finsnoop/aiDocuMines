@@ -25,6 +25,10 @@ Benchmarks
   GET|PATCH|DELETE benchmarks/<id>/
   POST   benchmarks/<id>/terms/             PATCH|DELETE benchmarks/<id>/terms/<tid>/
   POST   benchmarks/<id>/suggest-terms/    AI proposals from the benchmark document (verbatim quotes; not saved)
+  POST   benchmarks/from-document/         {file_id, name?, kind?, bucket_id? | new_bucket?}  "Set as benchmark": freezes the
+                                            document as it is now (own bytes, version and SHA-256 recorded, read-only)
+  GET    benchmarks/tree/                  Category -> matter (project_id) -> service (service_id) -> benchmarks
+  GET|POST categories/                      PATCH|DELETE categories/<id>/   (buckets; removing one keeps its benchmarks)
 Links (a playbook or benchmark applied to a contract, matter or document)
   GET    links/?contract_id=|matter_id=|file_id=      POST links/ {playbook_id|benchmark_id, contract_id|matter_id|file_id}
   DELETE links/<id>/
@@ -51,7 +55,8 @@ from rest_framework.views import APIView
 from core.access import can_access_file, get_file_for_user, matters_for_user, tenant_id, user_has_perm
 from core.models import File, Matter
 from . import access as contract_access
-from .models import (Benchmark, BenchmarkTerm, Contract, KnowledgeLink, Playbook, PlaybookPosition, PlaybookReview)
+from .models import (Benchmark, BenchmarkCategory, BenchmarkTerm, Contract, KnowledgeLink, Playbook, PlaybookPosition,
+                     PlaybookReview)
 
 MAX_POSITIONS = 60
 MAX_TERMS = 80
@@ -211,7 +216,11 @@ def benchmark_out(b, full=False):
             "description": b.description, "category": b.category, "tags": b.tags, "version_label": b.version_label,
             "effective_date": b.effective_date, "review_date": b.review_date, "active": b.active,
             "file": {"id": b.file_id, "filename": b.file.filename} if b.file_id else None,
-            "term_count": b.terms.count(), "created_at": b.created_at, "updated_at": b.updated_at}
+            "term_count": b.terms.count(), "created_at": b.created_at, "updated_at": b.updated_at,
+            "bucket": {"id": str(b.bucket_id), "name": b.bucket.name} if b.bucket_id else None,
+            "source": ({"file_id": b.source_file_id, "version": b.source_version, "project_id": b.source_project_id,
+                        "service_id": b.source_service_id, "snapshot_at": b.snapshot_at, "sha256": b.snapshot_sha256,
+                        "original_available": b.source_file_id is not None} if b.snapshot_at else None)}
     if full:
         data["terms"] = [term_out(t) for t in b.terms.all()]
         data["playbooks"] = [{"id": str(p.id), "name": p.name} for p in b.playbooks.all()]
@@ -554,6 +563,14 @@ def _apply_benchmark(user, b, data):
             setattr(b, field, _date(data[field]))
     if "active" in data:
         b.active = _bool(data["active"])
+    if "bucket_id" in data:
+        if data["bucket_id"] in (None, ""):
+            b.bucket = None
+        else:
+            bucket = _bucket(user, data["bucket_id"])
+            if bucket is None:
+                raise LookupError("That category was not found.")
+            b.bucket = bucket
     if "file_id" in data:
         if data["file_id"] in (None, ""):
             b.file = None
@@ -985,3 +1002,150 @@ class AnalysisView(APIView):
     def get(self, request, pk):
         r = _reviews_for(request.user).filter(pk=pk).first() if _uuid_ok(pk) else None
         return Response(review_out(r)) if r else _err("Analysis not found.", 404)
+
+
+# ── categories (buckets) and "Set as benchmark" ─────────────────────────────────────────────
+def _bucket(user, pk):
+    tid = tenant_id(user)
+    return BenchmarkCategory.objects.filter(pk=pk, client_id=tid).first() if tid and _uuid_ok(pk) else None
+
+
+def bucket_out(c):
+    return {"id": str(c.id), "name": c.name, "description": c.description, "benchmark_count": c.benchmarks.count()}
+
+
+def _bucket_for(user, data):
+    """The category for a new benchmark: an existing one (bucket_id) or one created by name (new_bucket)."""
+    if data.get("bucket_id"):
+        bucket = _bucket(user, data["bucket_id"])
+        if bucket is None:
+            raise LookupError("That category was not found.")
+        return bucket
+    name = _text(data.get("new_bucket"), 120)
+    if name:
+        return BenchmarkCategory.objects.get_or_create(client_id=tenant_id(user), name=name,
+                                                       defaults={"created_by": user})[0]
+    return None
+
+
+class CategoriesView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        if not can_view_benchmarks(request.user):
+            return _err("You do not have access to benchmarks.", 403)
+        return Response({"results": [bucket_out(c) for c in BenchmarkCategory.objects.filter(client_id=tenant_id(request.user))],
+                         "can_manage": can_manage_benchmarks(request.user)})
+
+    def post(self, request):
+        if not can_manage_benchmarks(request.user):
+            return _err("Only managers and administrators can create categories.", 403)
+        name = _text(request.data.get("name"), 120)
+        if not name:
+            return _err("Give the category a name.")
+        cat, created = BenchmarkCategory.objects.get_or_create(
+            client_id=tenant_id(request.user), name=name,
+            defaults={"created_by": request.user, "description": str(request.data.get("description") or "")[:4000]})
+        return Response(bucket_out(cat), status=201 if created else 200)
+
+
+class CategoryView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def patch(self, request, pk):
+        cat = _bucket(request.user, pk) if can_view_benchmarks(request.user) else None
+        if cat is None:
+            return _err("Category not found.", 404)
+        if not can_manage_benchmarks(request.user):
+            return _err("Only managers and administrators can change categories.", 403)
+        if "name" in request.data:
+            name = _text(request.data["name"], 120)
+            if not name:
+                return _err("Give the category a name.")
+            if BenchmarkCategory.objects.filter(client_id=cat.client_id, name=name).exclude(pk=cat.pk).exists():
+                return _err("Another category already has that name.", 409)
+            cat.name = name
+        if "description" in request.data:
+            cat.description = str(request.data["description"] or "")[:4000]
+        cat.save()
+        return Response(bucket_out(cat))
+
+    def delete(self, request, pk):
+        cat = _bucket(request.user, pk) if can_view_benchmarks(request.user) else None
+        if cat is None:
+            return _err("Category not found.", 404)
+        if not can_manage_benchmarks(request.user):
+            return _err("Only managers and administrators can remove categories.", 403)
+        cat.delete()          # its benchmarks stay, uncategorised (SET_NULL)
+        return Response(status=204)
+
+
+class SetAsBenchmarkView(APIView):
+    """Freeze a document as a benchmark: a copy with its own bytes, the original's version and SHA-256 recorded,
+    filed under a category and automatically under the source document's matter and service."""
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        from django.utils import timezone
+        from core.ingest import MatterBatch
+        from document_versioning.utils import get_next_version_number
+        if not can_manage_benchmarks(request.user):
+            return _err("Only managers and administrators can set documents as benchmarks.", 403)
+        source = _file(request.user, request.data.get("file_id"), "view")
+        if source is None:
+            return _err("Document not found.", 404)
+        if not can_access_file(request.user, source, "download"):
+            return _err("You need permission to download this document to set it as a benchmark.", 403)
+        kind = request.data.get("kind") or "policy"
+        if kind not in {k for k, _ in Benchmark.KINDS}:
+            return _err("Choose a benchmark type.")
+        try:
+            bucket = _bucket_for(request.user, request.data)
+        except LookupError as exc:
+            return _err(str(exc), 404)
+        batch = MatterBatch(request.user, knowledge_matter(request.user), source="benchmark")
+        try:
+            with transaction.atomic():
+                copy, sha256 = batch.add_snapshot(source)
+                b = Benchmark.objects.create(
+                    client_id=tenant_id(request.user), created_by=request.user, kind=kind, file=copy, bucket=bucket,
+                    name=_text(request.data.get("name"), 255) or source.filename,
+                    description=str(request.data.get("description") or "")[:20000],
+                    source_file=source, source_version=get_next_version_number(source),
+                    source_project_id=source.project_id or "", source_service_id=source.service_id or "",
+                    snapshot_at=timezone.now(), snapshot_sha256=sha256)
+        except ValueError as exc:
+            return _err(str(exc))
+        finally:
+            batch.finish()
+        return Response(benchmark_out(b, full=True), status=201)
+
+
+class BenchmarkTreeView(APIView):
+    """Category -> matter (source project_id) -> service (source service_id) -> benchmarks."""
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        if not can_view_benchmarks(request.user):
+            return _err("You do not have access to benchmarks.", 403)
+        tid = tenant_id(request.user)
+        rows = Benchmark.objects.filter(client_id=tid).select_related("bucket", "file")
+        if request.query_params.get("active") in ("1", "true"):
+            rows = rows.filter(active=True)
+        tree = {}
+        for b in rows:
+            key = (str(b.bucket_id) if b.bucket_id else "", b.bucket.name if b.bucket_id else "Uncategorised")
+            matter = b.source_project_id or "Uploaded directly"
+            service = b.source_service_id or "-"
+            tree.setdefault(key, {}).setdefault(matter, {}).setdefault(service, []).append(
+                {"id": str(b.id), "name": b.name, "kind": b.kind, "kind_label": b.get_kind_display(), "active": b.active,
+                 "term_count": b.terms.count(), "snapshot_at": b.snapshot_at, "source_version": b.source_version})
+        for cat in BenchmarkCategory.objects.filter(client_id=tid):    # empty categories are shown too
+            tree.setdefault((str(cat.id), cat.name), {})
+        out = []
+        for (cid, cname), matters in sorted(tree.items(), key=lambda kv: (kv[0][0] == "", kv[0][1].lower())):
+            out.append({"id": cid or None, "name": cname, "matters": [
+                {"name": m, "services": [{"name": s, "benchmarks": sorted(items, key=lambda i: i["name"].lower())}
+                                         for s, items in sorted(services.items())]}
+                for m, services in sorted(matters.items())]})
+        return Response({"categories": out, "can_manage": can_manage_benchmarks(request.user)})

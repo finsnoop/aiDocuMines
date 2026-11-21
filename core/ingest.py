@@ -99,6 +99,29 @@ class MatterBatch:
         entry.update(status="uploaded", file_id=fresh.id, message="Uploaded.")
         return entry
 
+    def add_snapshot(self, source: File, service_id: str = "benchmark") -> tuple[File, str]:
+        """A frozen copy of `source` as it is now: its own bytes (never shared with the original, so later edits to
+        the original cannot change it), linked into this matter's folder tree. Returns (copy, sha256 of the bytes).
+        md5_hash stays empty so the copy never collides with the original's duplicate check."""
+        from document_operations.utils import register_file_folder_link
+        if not source.filepath or not os.path.isfile(source.filepath):
+            raise ValueError("The document's contents are missing from storage.")
+        final_path = os.path.join(self.base_dir, f"{self.stamp[8:]}_{os.urandom(3).hex()}_{source.filename}")
+        sha = hashlib.sha256()
+        with open(source.filepath, "rb") as src, open(final_path, "wb") as dst:
+            for chunk in iter(lambda: src.read(1 << 20), b""):
+                sha.update(chunk)
+                dst.write(chunk)
+        storage = Storage.objects.create(user=self.user, content_type=ContentType.objects.get_for_model(self.run),
+                                         object_id=self.run.run_id, upload_storage_location=final_path)
+        copy = File.objects.create(
+            run=self.run, storage=storage, filename=source.filename, filepath=final_path, file_size=os.path.getsize(final_path),
+            file_type=source.file_type, md5_hash=None, user=self.user, project_id=self.matter.name, service_id=service_id,
+            origin_file=source, extension=source.extension, content=source.content, status=source.status,
+        )
+        register_file_folder_link(copy)
+        return copy, sha.hexdigest()
+
     def add_stream(self, filename: str, chunks) -> dict:
         """Write a download (an iterator of bytes) to a temp file, hashing as it goes, then add it."""
         from core.access import safe_filename

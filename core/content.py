@@ -29,6 +29,8 @@ def replace_document_content(file_obj, data: bytes, actor, note: str = ""):
         raise PermissionDenied("You can view but not edit this document.")
     assert_not_held(file_obj, "edit")
     assert_not_locked(actor, file_obj, "edit")
+    from core.frozen import assert_not_frozen
+    assert_not_frozen(file_obj)
     if not data or len(data) > MAX_BYTES:
         raise ValueError("The document is empty or larger than 100 MB.")
     path = file_obj.filepath

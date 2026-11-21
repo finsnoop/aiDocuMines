@@ -593,7 +593,9 @@ class OnlyOfficeEditorConfigView(APIView):
         from core.checkout import holder
         locked_by = holder(f)
         locked = bool(locked_by and locked_by[0] != request.user.pk)
-        can_edit = can_access_file(request.user, f, "edit") and not held and not locked
+        from core.frozen import is_frozen
+        frozen = is_frozen(f)
+        can_edit = can_access_file(request.user, f, "edit") and not held and not locked and not frozen
         if not settings.ONLYOFFICE.get("JWT_SECRET"):
             # The viewer falls back to the in-page document viewer on this answer.
             return Response({"error": "The document editor is not configured."}, status=503)
@@ -668,7 +670,8 @@ class OnlyOfficeEditorConfigView(APIView):
         cfg["token"] = token
 
 
-        readonly = None if can_edit else ("This document is under legal hold." if held
+        readonly = None if can_edit else ("This is a frozen benchmark copy; edit the original instead." if frozen
+                                          else "This document is under legal hold." if held
                                           else f"Checked out by {locked_by[1]}." if locked
                                           else "You can view but not edit this document.")
         return Response({"docServerApiJs": doc_api_js, "config": cfg, "can_edit": can_edit, "readonly_reason": readonly}, status=200)

@@ -20,7 +20,8 @@ from core.models import File, Matter, Run
 from core.tests.test_tenancy import make_user
 from custom_authentication.models import Client
 from .benchmarking import compare, validate
-from .models import (Benchmark, BenchmarkTerm, Contract, KnowledgeLink, Playbook, PlaybookPosition, PlaybookReview)
+from .models import (Benchmark, BenchmarkCategory, BenchmarkTerm, Contract, KnowledgeLink, Playbook, PlaybookPosition,
+                     PlaybookReview)
 from .playbook import playbook_review_task
 
 SLA_TEXT = """SERVICE AGREEMENT
@@ -336,3 +337,111 @@ class KnowledgeTests(TestCase):
         self.assertEqual((pb.client, pb.name, pb.tags, pb.version, pb.use_case), (self.firm, "Firm MSA positions", ["Vendors"], 3,
                                                                                    "Deviation Analysis"))
         self.assertFalse(Playbook.objects.filter(name="Orphan").exists())
+
+
+class SetAsBenchmarkTests(TestCase):
+    """Set as benchmark freezes a document at that moment: own bytes, version and SHA-256 recorded, read-only,
+    filed under a category and automatically under the source's matter and service."""
+
+    @classmethod
+    def setUpTestData(cls):
+        cls.firm = Client.objects.create(name="Snapshot firm")
+        cls.other = Client.objects.create(name="Other snapshot firm")
+        cls.manager = make_user("manager@snap.test", cls.firm, groups=["Manager"])
+        cls.member = make_user("member@snap.test", cls.firm, groups=["Client"])
+        cls.outsider = make_user("outsider@othersnap.test", cls.other, groups=["Admin"])
+
+    def setUp(self):
+        import hashlib
+        cache.clear()
+        self.media = tempfile.TemporaryDirectory()
+        self.addCleanup(self.media.cleanup)
+        override = override_settings(MEDIA_ROOT=self.media.name)
+        override.enable()
+        self.addCleanup(override.disable)
+        path = Path(self.media.name) / "msa-v3.docx"
+        path.write_bytes(b"MASTER AGREEMENT v3: payment within 30 days")
+        self.original_sha = hashlib.sha256(path.read_bytes()).hexdigest()
+        self.doc = File.objects.create(user=self.manager, run=Run.objects.create(user=self.manager), filename="msa-v3.docx",
+                                       filepath=str(path), project_id="Vendor deals", service_id="matter", md5_hash="msa3",
+                                       content="MASTER AGREEMENT v3: payment within 30 days")
+
+    def api(self, user):
+        c = APIClient()
+        c.force_authenticate(user)
+        return c
+
+    def set_as_benchmark(self, user=None, **body):
+        body.setdefault("file_id", self.doc.pk)
+        return self.api(user or self.manager).post("/api/v1/knowledge/benchmarks/from-document/", body, format="json")
+
+    def test_snapshot_is_frozen_and_survives_changes_to_the_original(self):
+        r = self.set_as_benchmark(name="Group MSA", kind="msa", new_bucket="Master agreements")
+        self.assertEqual(r.status_code, 201, r.content)
+        body = r.json()
+        b = Benchmark.objects.get(pk=body["id"])
+        self.assertNotEqual(b.file.filepath, self.doc.filepath)                          # own bytes
+        self.assertEqual((b.file.service_id, b.file.project_id), ("benchmark", "Knowledge library"))
+        self.assertEqual(body["source"]["sha256"], self.original_sha)
+        self.assertEqual((body["source"]["version"], body["source"]["project_id"], body["source"]["service_id"]),
+                         (1, "Vendor deals", "matter"))
+        self.assertEqual(body["bucket"]["name"], "Master agreements")
+        # The original changes; the benchmark does not.
+        Path(self.doc.filepath).write_bytes(b"MASTER AGREEMENT v4: payment within 60 days")
+        self.assertEqual(Path(b.file.filepath).read_bytes(), b"MASTER AGREEMENT v3: payment within 30 days")
+        # Saves to the frozen copy are refused (Word add-in path and editor save task).
+        from rest_framework.exceptions import PermissionDenied
+        from core.content import replace_document_content
+        with self.assertRaises(PermissionDenied):
+            replace_document_content(b.file, b"tampered", self.manager)
+        from core.onlyoffice_tasks import onlyoffice_fetch_and_save
+        self.assertEqual(onlyoffice_fetch_and_save.run(b.file.pk, "https://ds.test/x")["reason"], "frozen")
+
+    def test_snapshot_needs_manager_role_and_download_access_in_the_same_organisation(self):
+        self.assertEqual(self.set_as_benchmark(user=self.member).status_code, 403)
+        self.assertEqual(self.set_as_benchmark(user=self.outsider).status_code, 404)
+        stranger_doc = File.objects.create(user=self.outsider, run=Run.objects.create(user=self.outsider), filename="x.pdf",
+                                           filepath="/nonexistent/x.pdf", project_id="P", service_id="matter", md5_hash="x")
+        self.assertEqual(self.set_as_benchmark(file_id=stranger_doc.pk).status_code, 404)
+        self.assertEqual(self.set_as_benchmark(kind="nonsense").status_code, 400)
+        theirs = BenchmarkCategory.objects.create(client=self.other, name="Theirs")
+        self.assertEqual(self.set_as_benchmark(bucket_id=str(theirs.id)).status_code, 404)
+        self.assertEqual(Benchmark.objects.count(), 0)
+
+    def test_tree_groups_by_category_matter_and_service(self):
+        cat = self.api(self.manager).post("/api/v1/knowledge/categories/", {"name": "Supplier SLAs"}, format="json").json()
+        self.set_as_benchmark(name="SLA A", bucket_id=cat["id"])
+        self.set_as_benchmark(name="SLA B")                                          # uncategorised
+        BenchmarkCategory.objects.create(client=self.firm, name="Empty bucket")
+        tree = self.api(self.member).get("/api/v1/knowledge/benchmarks/tree/").json()["categories"]
+        self.assertEqual([c["name"] for c in tree], ["Empty bucket", "Supplier SLAs", "Uncategorised"])
+        sla = next(c for c in tree if c["name"] == "Supplier SLAs")
+        self.assertEqual(sla["matters"][0]["name"], "Vendor deals")
+        self.assertEqual(sla["matters"][0]["services"][0]["name"], "matter")
+        self.assertEqual(sla["matters"][0]["services"][0]["benchmarks"][0]["name"], "SLA A")
+        self.assertEqual(self.api(self.outsider).get("/api/v1/knowledge/benchmarks/tree/").json()["categories"], [])
+
+    def test_categories_rename_move_and_remove_without_losing_benchmarks(self):
+        c = self.api(self.manager)
+        cat = c.post("/api/v1/knowledge/categories/", {"name": "HR"}, format="json").json()
+        b = self.set_as_benchmark(bucket_id=cat["id"]).json()
+        self.assertEqual(c.post("/api/v1/knowledge/categories/", {"name": "HR"}, format="json").status_code, 200)   # idempotent
+        self.assertEqual(c.patch(f"/api/v1/knowledge/categories/{cat['id']}/", {"name": "HR policies"}, format="json").json()["name"],
+                         "HR policies")
+        other = c.post("/api/v1/knowledge/categories/", {"name": "Finance"}, format="json").json()
+        moved = c.patch(f"/api/v1/knowledge/benchmarks/{b['id']}/", {"bucket_id": other["id"]}, format="json").json()
+        self.assertEqual(moved["bucket"]["name"], "Finance")
+        self.assertEqual(self.api(self.member).delete(f"/api/v1/knowledge/categories/{other['id']}/").status_code, 403)
+        self.assertEqual(self.api(self.outsider).delete(f"/api/v1/knowledge/categories/{other['id']}/").status_code, 404)
+        self.assertEqual(c.delete(f"/api/v1/knowledge/categories/{other['id']}/").status_code, 204)
+        self.assertIsNone(Benchmark.objects.get(pk=b["id"]).bucket)                     # kept, uncategorised
+
+    @override_settings(ONLYOFFICE={"DOC_SERVER_URL": "https://ds.test", "DOC_SERVER_PUBLIC_URL": "https://ds.test",
+                                   "JWT_SECRET": "test-secret-for-editor-config-1234567890", "DOWNLOAD_TTL": 300,
+                                   "HTTP_CONNECT_TIMEOUT": 5, "HTTP_READ_TIMEOUT": 5})
+    def test_frozen_copy_opens_read_only_in_the_editor(self):
+        b = Benchmark.objects.get(pk=self.set_as_benchmark().json()["id"])
+        with mock.patch("oauth2_provider.contrib.rest_framework.TokenHasReadWriteScope.has_permission", return_value=True):
+            r = self.api(self.manager).get(f"/api/v1/core/onlyoffice/editor-config/?file_id={b.file.pk}").json()
+        self.assertEqual(r["config"]["editorConfig"]["mode"], "view")
+        self.assertIn("frozen benchmark", r["readonly_reason"])

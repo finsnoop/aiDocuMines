@@ -35,6 +35,10 @@ def onlyoffice_fetch_and_save(self, file_id: int, file_url: str) -> dict:
         # Never overwrite a document under legal hold (the editor opens it read-only).
         logger.warning("OnlyOffice save refused: file_id=%s is under legal hold", file_id)
         return {"file_id": file_id, "saved": False, "reason": "legal_hold"}
+    from core.frozen import is_frozen
+    if is_frozen(f):
+        logger.warning("OnlyOffice save refused: file_id=%s is a frozen benchmark copy", file_id)
+        return {"file_id": file_id, "saved": False, "reason": "frozen"}
 
     # ---- network setup (bypass env proxies) ----
     sess = requests.Session()

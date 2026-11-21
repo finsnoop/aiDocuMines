@@ -191,6 +191,24 @@ class PlaybookPosition(models.Model):
         ordering = ["order", "id"]
 
 
+class BenchmarkCategory(models.Model):
+    """A bucket on the Benchmarks page (e.g. "Supplier SLAs", "HR policies"). Inside it, benchmarks are grouped
+    automatically by the source document's matter (project_id) and service (service_id)."""
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    client = models.ForeignKey("custom_authentication.Client", on_delete=models.CASCADE, related_name="benchmark_categories")
+    name = models.CharField(max_length=120)
+    description = models.TextField(blank=True, default="")
+    created_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, on_delete=models.SET_NULL, related_name="+")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["name"]
+        constraints = [models.UniqueConstraint(fields=["client", "name"], name="uniq_benchmark_category_per_client")]
+
+    def __str__(self):
+        return self.name
+
+
 class Benchmark(models.Model):
     """A reference standard the organisation measures documents against: a policy, SLA, master agreement,
     regulation, template or precedent. The reference document itself lives in the document system (file), so it
@@ -213,10 +231,18 @@ class Benchmark(models.Model):
     created_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, on_delete=models.SET_NULL, related_name="+")
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
+    # Bucket and point-in-time source ("Set as benchmark" on a document)
+    bucket = models.ForeignKey(BenchmarkCategory, null=True, blank=True, on_delete=models.SET_NULL, related_name="benchmarks")
+    source_file = models.ForeignKey("core.File", null=True, blank=True, on_delete=models.SET_NULL, related_name="benchmark_sources")
+    source_version = models.PositiveIntegerField(null=True, blank=True)     # the original's version at the snapshot
+    source_project_id = models.CharField(max_length=255, blank=True, default="")   # automatic subfolder: matter
+    source_service_id = models.CharField(max_length=255, blank=True, default="")   # automatic subfolder: service
+    snapshot_at = models.DateTimeField(null=True, blank=True)
+    snapshot_sha256 = models.CharField(max_length=64, blank=True, default="")
 
     class Meta:
         ordering = ["name"]
-        indexes = [models.Index(fields=["client", "kind"])]
+        indexes = [models.Index(fields=["client", "kind"]), models.Index(fields=["client", "bucket"])]
 
     def __str__(self):
         return self.name
