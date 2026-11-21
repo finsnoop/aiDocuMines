@@ -52,8 +52,11 @@ on:
         type: boolean
         default: false
 
+# One slot per commit being tested: a run waiting for its turn is never discarded by a newer run from another
+# repo (GitHub cancels a *pending* run when another joins the same group). Pull requests still cancel their own
+# superseded runs. Deploys are serialised separately (deploy job below).
 concurrency:
-  group: platform-${{ github.ref }}
+  group: platform-${{ github.ref }}-${{ github.event_name == 'pull_request' && github.event.pull_request.number || inputs.source || github.event.client_payload.sha || github.sha }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
@@ -325,6 +328,9 @@ jobs:
     needs: [refs, publish]
     if: needs.refs.outputs.deploy == 'true' && github.event_name != 'pull_request'
     runs-on: ubuntu-latest
+    concurrency:
+      group: platform-production-deploy      # never two deploys at once; a queued deploy waits
+      cancel-in-progress: false
     environment: production
     steps:
       - name: API layer (server, exact tested commit)
