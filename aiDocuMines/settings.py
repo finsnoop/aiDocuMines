@@ -97,6 +97,7 @@ INSTALLED_APPS = [
     "document_versioning",
     'contracts',
     'addins',
+    'ai_eval',
 ]
 
 MIDDLEWARE = [
@@ -502,6 +503,7 @@ CELERY_BEAT_SCHEDULE = {
     "retention-review": {"task": "core.retention_review", "schedule": crontab(hour=2, minute=41)},
     "contracts-daily": {"task": "contracts.daily", "schedule": crontab(hour=6, minute=5)},
     "contracts-esign-sweep": {"task": "contracts.esign_sweep", "schedule": crontab(minute="*/30")},
+    "ai-eval-model-change": {"task": "ai_eval.check_model_change", "schedule": crontab(hour=4, minute=23)},
     "expire-old-tokens": {"task": "core.maintenance.purge_expired_credentials", "schedule": crontab(hour=3, minute=10)},
 }
 

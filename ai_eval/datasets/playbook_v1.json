@@ -1,0 +1,24 @@
+{
+  "name": "playbook_v1",
+  "description": "Synthetic contracts reviewed against a supplier MSA playbook, with the expected status per position.",
+  "positions": [
+    {"topic": "Limitation of liability", "standard": "Liability capped at the fees paid in the previous 12 months; no liability for indirect or consequential loss.",
+     "fallbacks": ["Cap at two times the annual fees"], "red_lines": ["Unlimited liability", "Liability for indirect or consequential loss"], "severity": "high"},
+    {"topic": "Governing law", "standard": "The laws of South Africa.", "fallbacks": ["The laws of England and Wales"], "red_lines": [], "severity": "medium"},
+    {"topic": "Termination for convenience", "standard": "Either party may terminate on 90 days' written notice.",
+     "fallbacks": ["Termination on 60 days' notice"], "red_lines": ["No right to terminate for convenience"], "severity": "medium"},
+    {"topic": "Confidentiality", "standard": "Mutual confidentiality obligations lasting five years after termination.",
+     "fallbacks": ["Three years after termination"], "red_lines": [], "severity": "medium"}
+  ],
+  "cases": [
+    {"id": "compliant",
+     "text": "MASTER SERVICES AGREEMENT\n\n8. Limitation of liability. Each party's total liability is limited to the fees paid in the twelve months before the claim, and neither party is liable for indirect or consequential loss.\n\n12. Governing law. This Agreement is governed by the laws of South Africa.\n\n14. Termination for convenience. Either party may terminate this Agreement on 90 days' written notice.\n\n10. Confidentiality. Each party keeps the other's confidential information confidential for five years after termination.",
+     "expected": {"Limitation of liability": "compliant", "Governing law": "compliant", "Termination for convenience": "compliant", "Confidentiality": "compliant"}},
+    {"id": "red-lines",
+     "text": "SERVICES AGREEMENT\n\n8. Liability. The Supplier's liability under this Agreement is unlimited and includes indirect and consequential losses.\n\n12. Governing law. This Agreement is governed by the laws of the State of New York.\n\n14. Term. This Agreement may not be terminated before the end of the Initial Term except for material breach.",
+     "expected": {"Limitation of liability": "red_line", "Governing law": "deviation", "Termination for convenience": "red_line", "Confidentiality": "missing"}},
+    {"id": "fallbacks",
+     "text": "MASTER AGREEMENT\n\n8. Limitation of liability. The Supplier's aggregate liability is capped at two times the annual fees.\n\n12. Governing law. The laws of England and Wales govern this Agreement.\n\n14. Termination. Either party may terminate on sixty days' written notice.\n\n10. Confidentiality. Confidentiality obligations survive for three years after termination.",
+     "expected": {"Limitation of liability": "deviation", "Governing law": "deviation", "Termination for convenience": "deviation", "Confidentiality": "deviation"}}
+  ]
+}

@@ -99,7 +99,7 @@ Goal: close the biggest functional gaps against iManage, NetDocuments and Ironcl
 
 ### Phase 3: Proof and differentiation (weeks 10 to 16)
 Goal: make the AI claims measurable and add a feature competitors do not have together with the DMS.
-- [ ] **AI evaluation suite:** a labelled test set; publish extraction accuracy per field, how often quoted evidence is correct, and assistant answer quality; run it on every model change
+- [x] **AI evaluation suite:** a labelled test set; publish extraction accuracy per field, how often quoted evidence is correct, and assistant answer quality; run it on every model change (2026-11-21: `ai_eval` app with document-facts, playbook and Assistant suites on the production pipelines, Administration > AI accuracy, `run_ai_eval` command, daily re-run when a model changes via `AI_EVAL_RUN_AS`, Markdown summary for the website. Still to do: run it on the production model and publish the numbers)
 - [x] **Meter every AI call:** every DSPy call (private equity, IP litigation, regulatory compliance and others) now goes through the gateway's limits and the cost ledger (2026-11-20: `usage.instrument_dspy`)
 - [ ] **One differentiator from Section 5**, chosen with sales: the virtual data room or relationship intelligence
 - [ ] Mobile-friendly core pages (full mobile apps later)
@@ -127,7 +127,7 @@ Use this table for tracking; link tickets in the last column.
 | G8 | No e-signature | CLM | 2 | DocuSign CLM, Ironclad, Juro | Done 2026-11-21 (needs provider app keys to go live) | |
 | G9 | Obligations and signatures only in the private-equity module | CLM | 2 | Icertis, Ironclad | Done 2026-11-21 | |
 | G10 | No playbook-based AI contract review | CLM, AI | 2 | Luminance, Spellbook, Ironclad | Done 2026-11-21 | |
-| G11 | No published AI accuracy benchmarks | AI | 3 | Luminance, Kira, Harvey | Open | |
+| G11 | No published AI accuracy benchmarks | AI | 3 | Luminance, Kira, Harvey | Built 2026-11-21 (publish after the first production run) | |
 | G12 | Private-equity AI calls not metered by the AI gateway | AI | 3 | n/a | Done 2026-11-20 | |
 | G13 | No CRM objects (contacts, companies, relationships, pipeline) | CRM | 4 | Salesforce, HubSpot, InterAction | Open | |
 | G14 | No legal research corpus | AI | Not planned | Harvey, CoCounsel | Won't do | |
@@ -177,6 +177,8 @@ These apply to all three repositories (API, frontend, sign-in service).
 - **2026-11-21:** G2 closed for OIDC (Entra ID, Okta, Google) with SCIM provisioning and enforceable SSO; two-step sign-in can be required per organisation; G16 closed; tamper-evident audit trail with export and verification.
 
 - **2026-11-21:** CI runs on the working branches with frontend and Node unit tests; G7, G9 and G10 closed (Contracts page); G8 e-signature with DocuSign and Adobe Acrobat Sign; G4 and G5 Outlook and Word add-ins.
+
+- **2026-11-21:** G11 built: AI evaluation suite (`ai_eval`) measuring field accuracy, evidence correctness, injection resistance, playbook status accuracy and Assistant answer quality (correct, cited, citation holds the evidence, declines when unanswered) on synthetic labelled sets; platform administrators run it from Administration > AI accuracy and it re-runs when a model changes. Numbers go on the website after the first production run.
 
 ## 8. Review cadence
 

@@ -26,8 +26,8 @@ from rest_framework.throttling import UserRateThrottle
 from rest_framework.views import APIView
 
 from core.access import user_has_perm
-from core.assistant import build_sources, compose_prompt, resolve_context
-from core.llm_providers import available_chat_model, default_provider, is_missing_model_error
+from core.assistant import assistant_model, build_sources, compose_prompt, resolve_context
+from core.llm_providers import available_chat_model, is_missing_model_error
 from core.web_search import search as web_search
 from core.web_search import web_status
 
@@ -105,12 +105,9 @@ class AssistantAskView(APIView):
             for m in (request.data.get("history") or [])[-10:]
             if isinstance(m, dict) and m.get("role") in ("user", "assistant")
         ]
-        provider = str(request.data.get("provider") or default_provider()).lower()
         from grid_documents_interrogation.safety import clean_llm_config
-        from custom_authentication.policies import assistant_policy
 
-        model = (request.data.get("model") or assistant_policy(user)["model"] or os.getenv("ASSISTANT_MODEL")
-                 or os.getenv("OPENAI_MODEL") or "gpt-4o-mini")
+        provider, model = assistant_model(user, request.data.get("provider"), request.data.get("model"))
         try:
             answer = dispatch_to_llm(query, context_block, clean_llm_config({"provider": provider, "model": model}, user), history)
         except Exception as exc:

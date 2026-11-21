@@ -227,11 +227,12 @@ def semantic_first(question: str, ctx: Context, user) -> list:
         return []
 
 
-def build_sources(question: str, ctx: Context, user) -> list:
-    """[{label, file_id, filename, excerpt}] filling MAX_CONTEXT_CHARS, most relevant first."""
+def build_sources(question: str, ctx: Context, user, *, semantic=True) -> list:
+    """[{label, file_id, filename, excerpt}] filling MAX_CONTEXT_CHARS, most relevant first.
+    semantic=False skips vector search (the AI evaluation's documents are not in the index)."""
     if not ctx.files:
         return []          # e.g. a data object with no documents behind it: nothing to search
-    candidates = semantic_first(question, ctx, user)
+    candidates = semantic_first(question, ctx, user) if semantic else []
     seen_text = {t[:200] for _, t in candidates}
     keyword = []
     for f in ctx.files:
@@ -254,6 +255,18 @@ def build_sources(question: str, ctx: Context, user) -> list:
         ctx.coverage_partial |= (used < sum(len(t) for _, t in candidates)
                                  or {s["file_id"] for s in sources} != {f.pk for f in ctx.files})
     return sources
+
+
+def assistant_model(user, provider=None, model=None) -> tuple[str, str]:
+    """(provider, model) the assistant uses for this person: the request's choice, else the organisation's
+    assistant policy, else the server defaults. Shared with the AI evaluation suite."""
+    import os
+    from core.llm_providers import default_provider
+    from custom_authentication.policies import assistant_policy
+    provider = str(provider or default_provider()).lower()
+    model = (model or assistant_policy(user)["model"] or os.getenv("ASSISTANT_MODEL")
+             or os.getenv("OPENAI_MODEL") or "gpt-4o-mini")
+    return provider, model
 
 
 def compose_prompt(question: str, ctx: Context, sources: list, web: list) -> tuple[str, str]:
