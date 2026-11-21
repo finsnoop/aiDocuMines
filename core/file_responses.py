@@ -49,22 +49,42 @@ def preview_response(path, filename=None):
                                 content_type=INLINE_PREVIEW_TYPES[ext]))
 
 
-def download_response(path, filename=None, inline=False, watermark=None):
+def marked_bytes(path, name, watermark, owner_client_id):
+    """Stamped bytes, None (no mark needed or possible and allowed), or a 403 response when the organisation
+    blocks copies that cannot carry a watermark."""
+    from core.watermark import WatermarkRefused, watermarked_or_none
+    try:
+        return watermarked_or_none(path, watermark, owner_client_id=owner_client_id, name=name)
+    except WatermarkRefused as exc:
+        return JsonResponse({"error": str(exc)}, status=403)
+
+
+def stamped_response(data, name, inline=False):
+    """Serve stamped bytes: inline only for types the browser displays safely (fixed content type)."""
+    from django.http import HttpResponse
+    from django.utils.http import content_disposition_header
+    ext = os.path.splitext(str(name))[1].lower()
+    show_inline = inline and ext in INLINE_PREVIEW_TYPES
+    content_type = INLINE_PREVIEW_TYPES.get(ext) or mimetypes.guess_type(name)[0] or "application/octet-stream"
+    response = HttpResponse(data, content_type=content_type)
+    response["Content-Disposition"] = content_disposition_header(not show_inline, name)
+    return _harden(response)
+
+
+def download_response(path, filename=None, inline=False, watermark=None, owner_client_id=None):
     """Download; shown inline only when asked for AND the type is safe to display.
 
-    `watermark`: text to stamp on a PDF copy (core/watermark.py); the stored file is not changed.
+    `watermark`: text to stamp on this copy (core/watermark.py: PDF, Office, images); the stored file is not
+    changed. `owner_client_id`: the document owner's organisation, whose policy decides what happens to formats
+    that cannot carry a mark (403 when it blocks them).
     """
     name = filename or os.path.basename(path)
     if watermark:
-        from django.http import HttpResponse
-        from core.watermark import watermarked_or_none
-        stamped = watermarked_or_none(path, watermark)
+        stamped = marked_bytes(path, name, watermark, owner_client_id)
+        if isinstance(stamped, JsonResponse):
+            return stamped
         if stamped is not None:
-            response = HttpResponse(stamped, content_type="application/pdf")
-            disposition = "inline" if inline else "attachment"
-            from django.utils.http import content_disposition_header
-            response["Content-Disposition"] = content_disposition_header(disposition == "attachment", name)
-            return _harden(response)
+            return stamped_response(stamped, name, inline=inline)
     if inline and can_preview_inline(path):
         return preview_response(path, name)
     content_type = mimetypes.guess_type(name)[0] or "application/octet-stream"

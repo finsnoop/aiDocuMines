@@ -472,7 +472,7 @@ POLICY_FIELDS = {
     "allowed_file_types": str, "max_upload_mb": int, "assistant_enabled": bool, "assistant_web_enabled": bool,
     "default_ai_model": str, "session_timeout_minutes": int,
     "ai_provider": str, "allow_personal_ai_keys": bool,
-    "watermark_downloads": bool, "watermark_text": str, "require_2fa": bool,
+    "watermark_downloads": bool, "watermark_text": str, "watermark_unsupported": str, "require_2fa": bool,
 }
 AI_PROVIDERS = ("", "litellm", "openai", "ollama", "vllm")
 
@@ -523,6 +523,8 @@ class PolicyView(APIView):
                 return Response({"error": "Upload limit must be between 1 and 5000 MB."}, status=400)
             if f == "session_timeout_minutes" and not 5 <= v <= 1440:
                 return Response({"error": "Session timeout must be between 5 minutes and 24 hours."}, status=400)
+            if f == "watermark_unsupported" and v not in ("allow", "block"):
+                return Response({"error": "Choose whether to allow or block copies that cannot carry a watermark."}, status=400)
             if f == "watermark_text" and len(v) > 200:
                 return Response({"error": "The watermark text can be at most 200 characters."}, status=400)
             if f == "allowed_file_types":

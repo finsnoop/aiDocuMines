@@ -28,17 +28,19 @@ SENSITIVE_QS_KEYS = {
 }
 
 
-def make_signed_download_url(file_id: str, request=None) -> str:
+def make_signed_download_url(file_id: str, request=None, viewer_id=None) -> str:
     """
     Build a URL that OnlyOffice can call back to fetch the source file.
     We sign (file_id:exp) with Django's signer. The view will verify it.
+    viewer_id: set for read-only opening when the owner's organisation watermarks copies; the signed
+    download then serves a copy stamped for that person (file_id:exp:v<id>).
 
     The base URL is taken from settings.API_BASE_URL if provided,
     otherwise from the incoming request's scheme/host.
     """
     ttl = int(settings.ONLYOFFICE.get("DOWNLOAD_TTL", 300))
     expires = int(time.time()) + ttl
-    token = _signer.sign(f"{file_id}:{expires}")
+    token = _signer.sign(f"{file_id}:{expires}" + (f":v{int(viewer_id)}" if viewer_id else ""))
     qs = urlencode({"token": token, "file_id": file_id})
 
     base = (getattr(settings, "API_BASE_URL", "") or "").rstrip("/")
@@ -52,12 +54,22 @@ def verify_signed_download_token(token: str, expected_file_id: str) -> bool:
     """
     Validate the signed token and ensure the file_id matches and the token hasn't expired.
     """
+    return signed_download_claims(token, expected_file_id)[0]
+
+
+def signed_download_claims(token: str, expected_file_id: str):
+    """(valid, viewer_id or None). viewer_id is present when the copy must be watermarked for that person."""
     try:
-        raw = _signer.unsign(token)
-        file_id, exp = raw.split(":", 1)
-        return file_id == str(expected_file_id) and int(exp) >= int(time.time())
+        parts = _signer.unsign(token).split(":")
+        if len(parts) not in (2, 3):
+            return False, None
+        file_id, exp = parts[0], parts[1]
+        viewer = int(parts[2][1:]) if len(parts) == 3 and parts[2].startswith("v") else None
+        if len(parts) == 3 and viewer is None:
+            return False, None
+        return (file_id == str(expected_file_id) and int(exp) >= int(time.time())), viewer
     except (BadSignature, ValueError):
-        return False
+        return False, None
 
 
 def ext_from_filename(name: str, fallback: str = "docx") -> str:

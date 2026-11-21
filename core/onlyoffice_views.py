@@ -403,7 +403,9 @@ class OnlyOfficeSignedDownloadView(APIView):
         if not (file_id and token):
             return Response({"error": "Missing file_id or token"}, status=400)
 
-        if not verify_signed_download_token(token, str(file_id)):
+        from core.onlyoffice_utils import signed_download_claims
+        valid, viewer_id = signed_download_claims(token, str(file_id))
+        if not valid:
             return Response({"error": "Invalid or expired token"}, status=403)
 
         # The Document Server calls this without a user session: the signed, expiring,
@@ -422,6 +424,25 @@ class OnlyOfficeSignedDownloadView(APIView):
                 real_path = alt
             else:
                 return Response({"error": "File not found"}, status=404)
+
+        if viewer_id:
+            from django.contrib.auth import get_user_model
+            from django.http import HttpResponse
+            from core.file_responses import marked_bytes
+            from core.watermark import text_for
+            viewer = get_user_model().objects.filter(pk=viewer_id, is_active=True).first()
+            if viewer is None:
+                return Response({"error": "Invalid or expired token"}, status=403)
+            owner_org = getattr(f.user, "client_id", None)
+            mark = text_for(owner_org, viewer)
+            stamped = marked_bytes(real_path, f.filename or real_path, mark, owner_org) if mark else None
+            if stamped is not None and not isinstance(stamped, bytes):
+                return stamped                            # 403: the organisation blocks unmarked copies
+            if stamped is not None:
+                resp = HttpResponse(stamped, content_type=mimetypes.guess_type(f.filename or real_path)[0]
+                                    or "application/octet-stream")
+                resp["Cache-Control"] = "private, no-store"
+                return resp
 
         from django.http import FileResponse
         content_type, _ = mimetypes.guess_type(real_path)
@@ -577,8 +598,12 @@ class OnlyOfficeEditorConfigView(APIView):
             # The viewer falls back to the in-page document viewer on this answer.
             return Response({"error": "The document editor is not configured."}, status=503)
 
-        # File URL OnlyOffice server will fetch (server-to-server)
-        download_url = make_signed_download_url(str(f.id), request=request)
+        # File URL OnlyOffice server will fetch (server-to-server). Read-only opening of a document whose
+        # organisation watermarks copies gets a copy stamped for this viewer; editors work on the original.
+        from core.watermark import text_for
+        watermark_viewer = (request.user.id if not can_edit and text_for(getattr(f.user, "client_id", None), request.user)
+                            else None)
+        download_url = make_signed_download_url(str(f.id), request=request, viewer_id=watermark_viewer)
 
         # Public DS URL for the browser to load api.js
         ds_public = (

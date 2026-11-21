@@ -333,9 +333,12 @@ class OrganisationPolicy(models.Model):
     ai_provider = models.CharField(max_length=20, blank=True, default="")
     ai_api_key = EncryptedCharField(max_length=1000, blank=True, default="")
     allow_personal_ai_keys = models.BooleanField(default=False)
-    # Stamp every downloaded or shared PDF copy with who took it and when (core/watermark.py).
+    # Stamp every viewed, downloaded or shared copy (PDF, Word, Excel, PowerPoint, images) with who took it and
+    # when (core/watermark.py). Formats that cannot carry a mark: "allow" serves them unmarked (logged), "block" refuses.
     watermark_downloads = models.BooleanField(default=False)
     watermark_text = models.CharField(max_length=200, blank=True, default="Confidential · {email} · {date}")
+    watermark_unsupported = models.CharField(max_length=5, choices=[("allow", "Allow unmarked"), ("block", "Block")],
+                                             default="allow")
     # Everyone must enter an emailed sign-in code (two-step sign-in), whatever their own setting.
     require_2fa = models.BooleanField(default=False)
     # Models people in the organisation may use: [{"provider": "litellm", "model": "openai/gpt-4o-mini"}, ...].

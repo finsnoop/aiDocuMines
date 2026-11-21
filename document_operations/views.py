@@ -1376,6 +1376,7 @@ class PublicSharedFileContentView(APIView):
         if error is not None:
             return error
         from core.watermark import text_for
-        mark = text_for(getattr(link.file.user, "client_id", None))  # public link: no signed-in viewer
+        owner_org = getattr(link.file.user, "client_id", None)
+        mark = text_for(owner_org)  # public link: no signed-in viewer
         return download_response(link.file.filepath, link.file.filename, inline=request.query_params.get("inline") == "true",
-                                 watermark=mark)
+                                 watermark=mark, owner_client_id=owner_org)

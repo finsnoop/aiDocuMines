@@ -56,7 +56,7 @@ Nothing below is optional for production. The platform is **production-ready** w
 - [x] Legal hold on documents and matters: held items cannot be edited, archived or deleted by anyone (2026-11-20: `core/holds.py`, Holds & walls page; API, folder and model-level guards; purge tools refuse while holds are active)
 - [x] Retention and disposition schedules per document type and matter, with an approval step before destruction (2026-11-20: `core/retention.py`, Records & governance page; held and checked-out documents always kept)
 - [x] Ethical walls: exclude named people or groups from a matter and everything in it, enforced in search, assistant and API (2026-11-20: `core/walls.py` in the central access layer; applies to every role)
-- [x] Watermarking on view, download and share (2026-11-20: PDFs, organisation setting in Users & access; Office formats still to do)
+- [x] Watermarking on view, download and share (2026-11-20: PDFs; 2026-11-21: Word, Excel, PowerPoint and images, the in-app viewer and read-only OnlyOffice too; formats that cannot carry a mark are allowed and logged, or blocked, per organisation)
 - [x] Check-out and check-in locking for documents being edited (2026-11-20: `core/checkout.py`; editor read-only for others)
 - [x] Immutable audit log export for every action, including AI calls (2026-11-21: hash-chained, append-only admin audit events; export of admin, sign-in, assistant, document and AI-call records with SHA-256; integrity check)
 
@@ -122,7 +122,7 @@ Use this table for tracking; link tickets in the last column.
 | G3 | No SOC 2 / ISO 27001, no pen test on record | Security | 1 | All enterprise vendors | Open | |
 | G4 | No Outlook add-in for filing email into matters | DMS | 2 | iManage, NetDocuments | Done 2026-11-21 (needs Microsoft 365 deployment) | |
 | G5 | No Word add-in | DMS, CLM | 2 | iManage, NetDocuments, Ironclad, Spellbook | Done 2026-11-21 (needs Microsoft 365 deployment) | |
-| G6 | No legal hold, retention schedules, ethical walls, watermarking or check-out | DMS | 2 | iManage, NetDocuments, M-Files | Done 2026-11-20 (watermarks cover PDFs; Office formats open) | |
+| G6 | No legal hold, retention schedules, ethical walls, watermarking or check-out | DMS | 2 | iManage, NetDocuments, M-Files | Done 2026-11-21 | |
 | G7 | No contract lifecycle stages, intake or approval routing | CLM | 2 | Ironclad, Icertis, Agiloft, Juro | Done 2026-11-21 | |
 | G8 | No e-signature | CLM | 2 | DocuSign CLM, Ironclad, Juro | Done 2026-11-21 (needs provider app keys to go live) | |
 | G9 | Obligations and signatures only in the private-equity module | CLM | 2 | Icertis, Ironclad | Done 2026-11-21 | |

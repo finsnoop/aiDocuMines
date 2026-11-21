@@ -57,7 +57,20 @@ class FileRenderContentView(APIView):
             return Response({"error": "No displayable version of this file is available."}, status=415)
         out, content_type = found
         name = os.path.splitext(file_obj.filename or "document")[0] + os.path.splitext(out)[1]
-        resp = FileResponse(open(out, "rb"), as_attachment=False, content_type=content_type, filename=name)
+        # Viewing is a copy too: the owner organisation's watermark applies (core/watermark.py).
+        from core.file_responses import marked_bytes
+        from core.watermark import text_for
+        owner_org = getattr(file_obj.user, "client_id", None)
+        mark = text_for(owner_org, request.user)
+        stamped = marked_bytes(out, name, mark, owner_org) if mark else None
+        if stamped is not None and not isinstance(stamped, bytes):
+            return stamped                                   # 403: blocked format
+        if stamped is not None:
+            from django.http import HttpResponse
+            resp = HttpResponse(stamped, content_type=content_type)
+            resp["Content-Disposition"] = "inline"
+        else:
+            resp = FileResponse(open(out, "rb"), as_attachment=False, content_type=content_type, filename=name)
         resp["X-Content-Type-Options"] = "nosniff"
         resp["Cache-Control"] = "private, no-store"
         resp["Content-Security-Policy"] = "sandbox; default-src 'none'; style-src 'unsafe-inline'; img-src data:"
