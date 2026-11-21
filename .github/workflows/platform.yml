@@ -10,12 +10,14 @@
 # Stages: test (all three, in parallel) -> publish images -> deploy (main only, needs approval)
 #
 # Required repository secrets
-#   PLATFORM_REPOS_TOKEN          read access to the Backend and Frontend repos
+#   PLATFORM_APP_PRIVATE_KEY      private key of the "aiDocuMines CI" GitHub App (read the Backend and
+#                                 Frontend repos); its App ID is the variable PLATFORM_APP_ID
 #   CAPROVER_URL                  e.g. https://captain.aidocumines.com
 #   CAPROVER_BACKEND_APP_TOKEN    CapRover app token for the Node backend app
 #   CAPROVER_FRONTEND_APP_TOKEN   CapRover app token for the frontend app
 #   DEPLOY_SSH_HOST / DEPLOY_SSH_USER / DEPLOY_SSH_KEY   server running the API stack
 # Repository variables (Settings > Variables)
+#   PLATFORM_APP_ID  App ID of the "aiDocuMines CI" GitHub App
 #   CAPROVER_BACKEND_APP (default aidocumines-backend), CAPROVER_FRONTEND_APP (default aidocumines)
 #   PUBLIC_API_URL, PUBLIC_BACKEND_URL, PUBLIC_ONLYOFFICE_URL   baked into the frontend build
 #   BACKEND_DEV_REF (default mvp_augment_version), FRONTEND_DEV_REF (default mvp_branch_augment_version)
@@ -177,11 +179,20 @@ jobs:
         options: >-
           --health-cmd "pg_isready -U aidoc" --health-interval 5s --health-timeout 5s --health-retries 10
     steps:
+      - id: app
+        name: Token for the Backend and Frontend repos (GitHub App, expires in an hour)
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ vars.PLATFORM_APP_ID }}
+          private-key: ${{ secrets.PLATFORM_APP_PRIVATE_KEY }}
+          owner: ${{ env.ORG }}
+          repositories: aiDocuMines-Backend,aiDocuMines-Frontend
+          permission-contents: read
       - uses: actions/checkout@v4
         with:
           repository: ${{ env.ORG }}/aiDocuMines-Backend
           ref: ${{ needs.refs.outputs.backend }}
-          token: ${{ secrets.PLATFORM_REPOS_TOKEN }}
+          token: ${{ steps.app.outputs.token }}
       - uses: actions/setup-node@v4
         with: { node-version: "24", cache: npm }
       - run: npm ci --omit=dev --no-audit --no-fund
@@ -200,11 +211,20 @@ jobs:
     needs: refs
     runs-on: ubuntu-latest
     steps:
+      - id: app
+        name: Token for the Backend and Frontend repos (GitHub App, expires in an hour)
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ vars.PLATFORM_APP_ID }}
+          private-key: ${{ secrets.PLATFORM_APP_PRIVATE_KEY }}
+          owner: ${{ env.ORG }}
+          repositories: aiDocuMines-Backend,aiDocuMines-Frontend
+          permission-contents: read
       - uses: actions/checkout@v4
         with:
           repository: ${{ env.ORG }}/aiDocuMines-Frontend
           ref: ${{ needs.refs.outputs.frontend }}
-          token: ${{ secrets.PLATFORM_REPOS_TOKEN }}
+          token: ${{ steps.app.outputs.token }}
       - uses: actions/setup-node@v4
         with: { node-version: "24", cache: npm }
       - run: npm ci --no-audit --no-fund
@@ -233,19 +253,28 @@ jobs:
       frontend_image: ${{ steps.tags.outputs.frontend }}
       api_sha: ${{ steps.tags.outputs.api_sha }}
     steps:
+      - id: app
+        name: Token for the Backend and Frontend repos (GitHub App, expires in an hour)
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ vars.PLATFORM_APP_ID }}
+          private-key: ${{ secrets.PLATFORM_APP_PRIVATE_KEY }}
+          owner: ${{ env.ORG }}
+          repositories: aiDocuMines-Backend,aiDocuMines-Frontend
+          permission-contents: read
       - uses: actions/checkout@v4
         with: { ref: "${{ needs.refs.outputs.api }}", path: api }
       - uses: actions/checkout@v4
         with:
           repository: ${{ env.ORG }}/aiDocuMines-Backend
           ref: ${{ needs.refs.outputs.backend }}
-          token: ${{ secrets.PLATFORM_REPOS_TOKEN }}
+          token: ${{ steps.app.outputs.token }}
           path: backend
       - uses: actions/checkout@v4
         with:
           repository: ${{ env.ORG }}/aiDocuMines-Frontend
           ref: ${{ needs.refs.outputs.frontend }}
-          token: ${{ secrets.PLATFORM_REPOS_TOKEN }}
+          token: ${{ steps.app.outputs.token }}
           path: frontend
 
       - id: tags
