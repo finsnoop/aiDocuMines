@@ -182,6 +182,8 @@ These apply to all three repositories (API, frontend, sign-in service).
 
 - **2026-11-21:** G2 complete with SAML 2.0. G6 complete: watermarks on Word, Excel, PowerPoint, images, the viewer and read-only OnlyOffice (non-PDF copies were previously unmarked). Section 2.2: data-subject export and erasure for platform users, retention defaults, per-organisation data residency statement, privacy and data protection document, encryption key rotation. Fixed: deleting a user account cascaded to their documents, bypassing retention and disposition approval.
 
+- **2026-11-21:** Playbooks, benchmarks and contracts aligned: the Playbooks page and Contracts now share one playbook model in the platform API (the Node service's separate table, which leaked across organisations, is patched and replaced; `import_node_playbooks` copies it across). New benchmarks (policies, SLAs, master agreements, regulations) with measurable terms; playbooks and benchmarks link by ID to contracts, matters and documents; deviation and compliance checks from Contracts, Matters, My documents, Shared with me, Document workspace and Drafting & compare; switchable per organisation ("Playbooks & benchmarks").
+
 ## 8. Review cadence
 
 - **Weekly:** update the gap register status.

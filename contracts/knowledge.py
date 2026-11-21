@@ -251,7 +251,9 @@ def review_out(r, findings=True):
 # ── playbooks ───────────────────────────────────────────────────────────────────────────────
 PLAYBOOK_FIELDS = {"description": 20000, "content": 500000, "category": 60, "industry": 100, "document_type": 100,
                    "use_case": 100, "contract_type": 60}
-ALIASES = {"categoryId": "category", "documentType": "document_type", "useCase": "use_case", "tagIds": "tags"}
+# The Playbooks page sends both styles (camelCase JSON, snake_case form fields from the old Node API).
+ALIASES = {"categoryId": "category", "category_id": "category", "documentType": "document_type",
+           "useCase": "use_case", "tagIds": "tags", "tag_ids": "tags"}
 
 
 def _apply_playbook(pb, data):
