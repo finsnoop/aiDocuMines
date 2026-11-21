@@ -30,6 +30,8 @@ class CoreConfig(AppConfig):
 
         # Import signal handlers so they are registered when Django boots
         import core.signals
+        import core.holds  # noqa: F401  legal hold guards
+        import core.retention  # noqa: F401  daily retention review task
 
         # Register bulk processing handlers
         try:

@@ -1,4 +1,7 @@
 from .browser_auth import BrowserAuthorizeView
+from .views_audit_export import AuditExportView, AuditVerifyView
+from .sso import SSOCallbackView, SSODiscoverView, SSOStartView
+from .views_sso_admin import SCIMTokenView, SSOSettingsView, SSOTestView
 from django.urls import path
 from .views import (
     SignupView, LoginView, LogoutView, PasswordResetRequestView, PasswordResetView,
@@ -20,6 +23,12 @@ from . import views_admin
 
 urlpatterns = [
     path("browser/authorize/", BrowserAuthorizeView.as_view(), name="browser_authorize"),
+    path("sso/discover/", SSODiscoverView.as_view(), name="sso_discover"),
+    path("sso/start/", SSOStartView.as_view(), name="sso_start"),
+    path("sso/callback/", SSOCallbackView.as_view(), name="sso_callback"),
+    path("admin/sso/", SSOSettingsView.as_view(), name="admin_sso"),
+    path("admin/sso/scim-token/", SCIMTokenView.as_view(), name="admin_scim_token"),
+    path("admin/sso/test/", SSOTestView.as_view(), name="admin_sso_test"),
     # AUTHENTICATION ENDPOINTS
     path("signup/", SignupView.as_view(), name="auth_signup"),
     path("login/", LoginView.as_view(), name="auth_login"),
@@ -55,6 +64,8 @@ urlpatterns = [
     path("admin/organisations/<int:org_id>/", views_admin.OrganisationView.as_view(), name="admin_org"),
     path("admin/role-matrix/", views_admin.RoleMatrixView.as_view(), name="admin_role_matrix"),
     path("admin/audit/", views_admin.AuditView.as_view(), name="admin_audit"),
+    path("admin/audit/export/", AuditExportView.as_view(), name="admin_audit_export"),
+    path("admin/audit/verify/", AuditVerifyView.as_view(), name="admin_audit_verify"),
     path("admin/policy/", views_admin.PolicyView.as_view(), name="admin_policy"),
     path("admin/users/", ListUsersView.as_view(), name="admin_users_list"),
     path("admin/users/create/", CreateUserView.as_view(), name="admin_users_create"),

@@ -1,4 +1,5 @@
 from django.db import models
+from django.conf import settings
 from django.contrib.auth import get_user_model
 import uuid
 from django.contrib.postgres.fields import ArrayField
@@ -446,3 +447,120 @@ class UserPreference(models.Model):
     def __str__(self):
         return f"UI prefs for {self.user.username}"
 
+
+
+class LegalHold(models.Model):
+    """A legal hold: while active, the documents it covers cannot be deleted, archived, renamed,
+    moved, edited or protected by anyone. Holds are never deleted, only released (they are the
+    record of what was preserved, by whom and why). Enforcement lives in core/holds.py.
+    """
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    client = models.ForeignKey("custom_authentication.Client", on_delete=models.PROTECT, related_name="legal_holds")
+    name = models.CharField(max_length=255)
+    reason = models.TextField(blank=True, default="")
+    # Every document of the matter (current and future), and/or these documents.
+    matter = models.ForeignKey("core.Matter", null=True, blank=True, on_delete=models.PROTECT, related_name="legal_holds")
+    files = models.ManyToManyField("core.File", blank=True, related_name="legal_holds")
+    created_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, on_delete=models.SET_NULL, related_name="+")
+    created_at = models.DateTimeField(auto_now_add=True)
+    released_at = models.DateTimeField(null=True, blank=True)
+    released_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="+")
+    release_reason = models.TextField(blank=True, default="")
+
+    class Meta:
+        ordering = ["-created_at"]
+        indexes = [models.Index(fields=["client", "released_at"])]
+
+    @property
+    def active(self) -> bool:
+        return self.released_at is None
+
+    def __str__(self):
+        return f"Legal hold '{self.name}' ({'active' if self.active else 'released'})"
+
+
+class EthicalWall(models.Model):
+    """An ethical wall (information barrier) around a matter: the excluded people cannot see or act on
+    the matter, its folders or any of its documents, whatever their role, membership or shares.
+    Walls are never deleted, only lifted (the record of who was screened, by whom and why).
+    Enforcement lives in core/walls.py and the central access layer (core/access.py).
+    """
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    client = models.ForeignKey("custom_authentication.Client", on_delete=models.PROTECT, related_name="ethical_walls")
+    matter = models.ForeignKey("core.Matter", on_delete=models.PROTECT, related_name="ethical_walls")
+    reason = models.TextField(blank=True, default="")
+    excluded = models.ManyToManyField(settings.AUTH_USER_MODEL, related_name="ethical_walls")
+    created_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, on_delete=models.SET_NULL, related_name="+")
+    created_at = models.DateTimeField(auto_now_add=True)
+    lifted_at = models.DateTimeField(null=True, blank=True)
+    lifted_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="+")
+    lift_reason = models.TextField(blank=True, default="")
+
+    class Meta:
+        ordering = ["-created_at"]
+        indexes = [models.Index(fields=["client", "lifted_at"])]
+
+    @property
+    def active(self) -> bool:
+        return self.lifted_at is None
+
+    def __str__(self):
+        return f"Ethical wall on {self.matter_id} ({'active' if self.active else 'lifted'})"
+
+
+class DocumentCheckout(models.Model):
+    """A document checked out for editing: nobody else may edit, rename, move or delete it until it is
+    checked in by the holder (or force-checked-in by an administrator). Enforced in core/checkout.py."""
+    file = models.OneToOneField("core.File", on_delete=models.CASCADE, related_name="checkout")
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="document_checkouts")
+    note = models.CharField(max_length=500, blank=True, default="")
+    checked_out_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return f"File {self.file_id} checked out by {self.user_id}"
+
+
+class RetentionSchedule(models.Model):
+    """How long documents are kept: documents older than retain_days that match the scope are proposed
+    for disposition, and destroyed only after someone approves the batch (core/retention.py)."""
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    client = models.ForeignKey("custom_authentication.Client", on_delete=models.CASCADE, related_name="retention_schedules")
+    name = models.CharField(max_length=255)
+    matter = models.ForeignKey("core.Matter", null=True, blank=True, on_delete=models.CASCADE, related_name="retention_schedules")
+    document_type = models.CharField(max_length=100, blank=True, default="")
+    service_id = models.CharField(max_length=255, blank=True, default="")
+    retain_days = models.PositiveIntegerField()
+    active = models.BooleanField(default=True)
+    created_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, on_delete=models.SET_NULL, related_name="+")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["name"]
+
+
+class DispositionBatch(models.Model):
+    """Documents past retention awaiting a decision. Nothing is destroyed until it is approved."""
+    STATUSES = [("pending", "Awaiting approval"), ("approved", "Approved and carried out"), ("rejected", "Rejected: kept")]
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    client = models.ForeignKey("custom_authentication.Client", on_delete=models.CASCADE, related_name="disposition_batches")
+    schedule = models.ForeignKey(RetentionSchedule, on_delete=models.CASCADE, related_name="batches")
+    status = models.CharField(max_length=10, choices=STATUSES, default="pending")
+    created_at = models.DateTimeField(auto_now_add=True)
+    decided_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="+")
+    decided_at = models.DateTimeField(null=True, blank=True)
+    note = models.TextField(blank=True, default="")
+
+    class Meta:
+        ordering = ["-created_at"]
+
+
+class DispositionItem(models.Model):
+    OUTCOMES = [("pending", "Pending"), ("deleted", "Deleted"), ("kept", "Kept"), ("held", "Kept: legal hold"),
+                ("checked_out", "Kept: checked out"), ("missing", "Already gone")]
+    batch = models.ForeignKey(DispositionBatch, on_delete=models.CASCADE, related_name="items")
+    file = models.ForeignKey("core.File", null=True, blank=True, on_delete=models.SET_NULL, related_name="+")
+    file_ref = models.BigIntegerField()   # kept after deletion, for the record
+    filename = models.CharField(max_length=255)
+    project_id = models.CharField(max_length=255, blank=True, default="")
+    created = models.DateTimeField(null=True)
+    outcome = models.CharField(max_length=12, choices=OUTCOMES, default="pending")

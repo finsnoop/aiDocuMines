@@ -333,6 +333,11 @@ class OrganisationPolicy(models.Model):
     ai_provider = models.CharField(max_length=20, blank=True, default="")
     ai_api_key = EncryptedCharField(max_length=1000, blank=True, default="")
     allow_personal_ai_keys = models.BooleanField(default=False)
+    # Stamp every downloaded or shared PDF copy with who took it and when (core/watermark.py).
+    watermark_downloads = models.BooleanField(default=False)
+    watermark_text = models.CharField(max_length=200, blank=True, default="Confidential · {email} · {date}")
+    # Everyone must enter an emailed sign-in code (two-step sign-in), whatever their own setting.
+    require_2fa = models.BooleanField(default=False)
     # Models people in the organisation may use: [{"provider": "litellm", "model": "openai/gpt-4o-mini"}, ...].
     # Empty = not restricted yet (the platform's models). default_ai_model is the default among them.
     allowed_ai_models = models.JSONField(default=list, blank=True)
@@ -343,8 +348,23 @@ class OrganisationPolicy(models.Model):
         return f"Policy for {self.client}"
 
 
+class AuditEventQuerySet(models.QuerySet):
+    """Audit events are append-only: bulk changes and deletes are refused."""
+
+    def update(self, **kwargs):
+        raise ValueError("Audit events cannot be changed.")
+
+    def delete(self):
+        raise ValueError("Audit events cannot be deleted.")
+
+
 class AdminAuditEvent(models.Model):
-    """Every administrative change: who did what, to which object, in which organisation, from where."""
+    """Every administrative change: who did what, to which object, in which organisation, from where.
+
+    Append-only and tamper-evident: each event stores the hash of the previous event of its organisation
+    and its own hash over its contents, so any later edit or removal breaks the chain (see audit_chain.verify).
+    """
+    objects = AuditEventQuerySet.as_manager()
     actor = models.ForeignKey(CustomUser, null=True, on_delete=models.SET_NULL, related_name="admin_audit_events")
     client = models.ForeignKey(Client, null=True, blank=True, on_delete=models.SET_NULL, related_name="audit_events")
     action = models.CharField(max_length=60, db_index=True)
@@ -353,11 +373,56 @@ class AdminAuditEvent(models.Model):
     target_label = models.CharField(max_length=255, blank=True, default="")
     details = models.JSONField(default=dict, blank=True)
     ip_address = models.GenericIPAddressField(null=True, blank=True)
-    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+    # Set once by save() and covered by the hash (auto_now_add would overwrite it after hashing).
+    created_at = models.DateTimeField(default=now, db_index=True)
+    prev_hash = models.CharField(max_length=64, blank=True, default="")
+    entry_hash = models.CharField(max_length=64, blank=True, default="")
 
     class Meta:
         ordering = ["-created_at"]
         indexes = [models.Index(fields=["client", "-created_at"], name="audit_client_recent")]
 
+    def save(self, *args, **kwargs):
+        if self.pk:
+            raise ValueError("Audit events cannot be changed.")
+        from django.db import transaction
+        from django.utils import timezone
+        from .audit_chain import entry_hash
+        with transaction.atomic():
+            self.created_at = self.created_at or timezone.now()
+            last = (AdminAuditEvent.objects.select_for_update().filter(client_id=self.client_id)
+                    .exclude(entry_hash="").order_by("-id").values_list("entry_hash", flat=True).first())
+            self.prev_hash = last or ""
+            self.entry_hash = entry_hash(self)
+            super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        raise ValueError("Audit events cannot be deleted.")
+
     def __str__(self):
         return f"{self.created_at:%Y-%m-%d %H:%M} {self.action} {self.target_label}"
+
+
+
+class OrganisationSSO(models.Model):
+    """Single sign-on with the organisation's identity provider (OpenID Connect: Entra ID, Okta, Google ...)
+    and SCIM user provisioning. Flow and checks: custom_authentication/sso.py and scim.py."""
+    client = models.OneToOneField(Client, on_delete=models.CASCADE, related_name="sso")
+    enabled = models.BooleanField(default=False)
+    issuer_url = models.URLField(max_length=500, blank=True, default="")   # e.g. https://login.microsoftonline.com/<tenant>/v2.0
+    oidc_client_id = models.CharField(max_length=255, blank=True, default="")   # the app registered at the provider
+    client_secret = EncryptedCharField(max_length=1000, blank=True, default="")
+    email_domains = models.CharField(max_length=1000, blank=True, default="")   # comma separated, e.g. "firm.com,firm.co.za"
+    enforce_sso = models.BooleanField(default=False)       # password sign-in refused for these domains (admins excepted)
+    auto_provision = models.BooleanField(default=False)    # first sign-in creates the account
+    default_role = models.CharField(max_length=50, blank=True, default="Client")
+    scim_enabled = models.BooleanField(default=False)
+    scim_token_hash = models.CharField(max_length=128, blank=True, default="")
+    updated_at = models.DateTimeField(auto_now=True)
+    updated_by = models.ForeignKey(CustomUser, null=True, blank=True, on_delete=models.SET_NULL, related_name="+")
+
+    def domains(self):
+        return [d.strip().lower() for d in self.email_domains.split(",") if d.strip()]
+
+    def __str__(self):
+        return f"SSO for {self.client}"

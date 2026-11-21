@@ -131,3 +131,56 @@ def _task_actor(sender=None, kwargs=None, **_):
 def connect_celery_signals():
     from celery.signals import task_prerun
     task_prerun.connect(_task_actor, weak=False, dispatch_uid='ai-usage-actor')
+
+
+# ── DSPy (private equity, IP litigation, regulatory compliance, ...) ─────────────────────────
+_DSPY_PROVIDERS = {"litellm_proxy": "litellm", "ollama_chat": "ollama", "hosted_vllm": "vllm"}
+
+
+def _dspy_model(lm_model: str):
+    """(provider, model) for the ledger from a DSPy model string such as 'litellm_proxy/gpt-4o'."""
+    name = str(lm_model or "")
+    prefix, _, rest = name.partition("/")
+    if not rest:
+        return "litellm", name
+    provider = _DSPY_PROVIDERS.get(prefix, prefix)
+    # Through the proxy the model is the proxy's name; directly it keeps its provider prefix for pricing.
+    return provider, rest if prefix in ("litellm_proxy", "ollama_chat", "hosted_vllm") else name
+
+
+def instrument_dspy():
+    """Every DSPy model call goes through the AI gateway (limits) and the cost ledger (tokens).
+
+    DSPy 3.x runs each call as prepare -> execute -> finalize (dspy.clients.execution), for
+    synchronous and asynchronous calls alike. The gateway check runs in prepare, before anything
+    is sent; usage is recorded in finalize from the provider's reported input and output tokens.
+    """
+    try:
+        import dspy.clients.execution as execution
+    except Exception:  # DSPy not installed or a different major version: nothing to wrap
+        return False
+    if getattr(execution, '_aidoc_metered', False):
+        return True
+    original_prepare, original_finalize = execution.prepare, execution.finalize
+
+    def prepare(lm, *args, **kwargs):
+        from .gateway import enforce
+        enforce()
+        return original_prepare(lm, *args, **kwargs)
+
+    def finalize(lm, call, result):
+        try:
+            if not getattr(result, 'cache_hit', False):
+                usage = getattr(result, 'usage', None) or {}
+                provider, model = _dspy_model(getattr(lm, 'model', ''))
+                record(provider=provider, model=model, task='vertical-ai',
+                       prompt_tokens=_count(usage.get('prompt_tokens')),
+                       completion_tokens=_count(usage.get('completion_tokens')),
+                       total_tokens=_count(usage.get('total_tokens')) or None)
+        except Exception:
+            logger.warning('Could not record DSPy usage', exc_info=True)
+        return original_finalize(lm, call, result)
+
+    execution.prepare, execution.finalize = prepare, finalize
+    execution._aidoc_metered = True
+    return True

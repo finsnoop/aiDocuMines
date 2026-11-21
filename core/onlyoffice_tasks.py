@@ -30,6 +30,11 @@ def onlyoffice_fetch_and_save(self, file_id: int, file_url: str) -> dict:
         Minimal dict describing the saved file.
     """
     f = get_object_or_404(File, id=file_id)
+    from core.holds import is_held
+    if is_held(f):
+        # Never overwrite a document under legal hold (the editor opens it read-only).
+        logger.warning("OnlyOffice save refused: file_id=%s is under legal hold", file_id)
+        return {"file_id": file_id, "saved": False, "reason": "legal_hold"}
 
     # ---- network setup (bypass env proxies) ----
     sess = requests.Session()

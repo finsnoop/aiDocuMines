@@ -37,6 +37,12 @@ class Command(BaseCommand):
             report["node_cache_scope"] = options["node_database"] if options["include_node_caches"] else "not_requested"
             if options["include_node_caches"] and not {"files", "ocr", "anonymization", "translation"} <= set(node):
                 report["errors"].append("Requested Node document-cache tables are missing; choose the correct configured --node-database alias.")
+            from core.holds import active_holds
+            holds = active_holds().count()
+            report["active_legal_holds"] = holds
+            if holds:
+                report["errors"].append(f"{holds} legal hold(s) are active. Documents under legal hold must be preserved; "
+                                        "release the holds before purging.")
             search, errors = purge.search_inventory()
             report["search"] = search
             report["errors"].extend(errors)

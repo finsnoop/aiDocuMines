@@ -70,6 +70,10 @@ def delete_folder(folder_id, actor=None):
     from core.access import can_access_file
     from rest_framework.exceptions import PermissionDenied
     folder = Folder.objects.get(pk=folder_id)
+    from core.holds import assert_folder_not_held
+    from core.checkout import assert_folder_not_locked
+    assert_folder_not_held(folder)
+    assert_folder_not_locked(actor, folder)
     subtree = _subtree_ids(folder.pk)
     links = list(FileFolderLink.objects.filter(folder_id__in=subtree).select_related("file", "file__user"))
     if actor is not None:

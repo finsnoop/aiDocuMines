@@ -628,6 +628,10 @@ class SharedTreeView(APIView):
             access_entries = access_entries.none()
         else:
             access_entries = access_entries.filter(file_link__file__user__client_id=client_id)
+        from core.walls import walled_files_q
+        walled = walled_files_q(request.user, prefix="file_link__file__")
+        if walled is not None:
+            access_entries = access_entries.exclude(walled)
         owner_map = {}
         for entry in access_entries:
             link = entry.file_link
@@ -704,7 +708,8 @@ class FolderListView(APIView):
 
     def get(self, request):
         # ── base queryset: current user + root-level folders
-        qs = Folder.objects.filter(user=request.user, parent__isnull=True)
+        from core.walls import exclude_walled_folders
+        qs = exclude_walled_folders(Folder.objects.filter(user=request.user, parent__isnull=True), request.user)
 
         # ── optional query-string filters
         project_id      = request.query_params.get("project_id")
@@ -788,6 +793,10 @@ class TrashFolderView(APIView):
         folder = access.get_folder_for_user(request.user, pk, "manage")
         # The whole subtree goes to the archive; otherwise documents in sub-folders stayed
         # visible on Documents and Matters while their parent folder was archived.
+        from core.holds import assert_folder_not_held
+        from core.checkout import assert_folder_not_locked
+        assert_folder_not_held(folder)
+        assert_folder_not_locked(request.user, folder)
         trash_folder_recursive(folder)
         return Response({"message": f"Folder {pk} moved to trash."}, status=200)
 
@@ -797,7 +806,8 @@ class FolderListCreateView(APIView):
     permission_classes = [IsAuthenticated, IsClientOrAdminOrSuperUser]
 
     def get(self, request):
-        qs = Folder.objects.filter(user=request.user, parent__isnull=True)
+        from core.walls import exclude_walled_folders
+        qs = exclude_walled_folders(Folder.objects.filter(user=request.user, parent__isnull=True), request.user)
 
         project_id      = request.query_params.get("project_id")
         service_id      = request.query_params.get("service_id")
@@ -1309,7 +1319,8 @@ def _folder_tree(user, include_files=True):
     from collections import defaultdict
     from django.db.models import Prefetch
     from document_operations.models import FileAccessEntry, FileFolderLink, UserFileHide, UserFolderHide
-    folders = list(Folder.objects.filter(user=user).select_related("color_tag"))
+    from core.walls import exclude_walled_folders
+    folders = list(exclude_walled_folders(Folder.objects.filter(user=user), user).select_related("color_tag"))
     children = defaultdict(list)
     for f in folders:
         if f.parent_id:
@@ -1364,4 +1375,7 @@ class PublicSharedFileContentView(APIView):
         link, error = public_file_link(request, share_token)
         if error is not None:
             return error
-        return download_response(link.file.filepath, link.file.filename, inline=request.query_params.get("inline") == "true")
+        from core.watermark import text_for
+        mark = text_for(getattr(link.file.user, "client_id", None))  # public link: no signed-in viewer
+        return download_response(link.file.filepath, link.file.filename, inline=request.query_params.get("inline") == "true",
+                                 watermark=mark)

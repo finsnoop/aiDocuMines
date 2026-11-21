@@ -11,6 +11,7 @@ Wipes every document in the platform, for every organisation, in one go:
   * the document cache in Redis, the Elasticsearch index and the Milvus vectors
   * optionally the sign-in service's document caches (--node-db-url)
 
+Refuses to run while any legal hold is active.
 Kept: user accounts, organisations, roles, settings, matters / projects,
 workflow and template definitions, integration configurations.
 
@@ -191,6 +192,12 @@ def main(argv=None) -> int:
     print(f"Total on disk: {total_files} files, {human(total_bytes)}")
     print("-" * 72)
 
+    from core.holds import active_holds
+    holds = list(active_holds().values_list("name", flat=True)[:5])
+    if holds:
+        print(f"! Refusing: {active_holds().count()} legal hold(s) are active (for example '{holds[0]}').")
+        print("  Documents under legal hold must be preserved. Release the holds first.")
+        return 4
     if args.dry_run:
         print("Dry run: nothing was deleted.")
         return 0

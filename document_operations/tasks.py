@@ -324,6 +324,11 @@ def async_grant_public_link(file_link_id):
 def async_bulk_trash_folders(folder_ids, actor_user_id=None):
     actor = _operation_actor(actor_user_id, owner=Folder.objects.get(pk=folder_ids[0]).user)
     folders = [access.get_folder_for_user(actor, fid, "manage") for fid in folder_ids]
+    from core.holds import assert_folder_not_held
+    for folder in folders:   # all or nothing: refuse before archiving anything
+        assert_folder_not_held(folder)
+        from core.checkout import assert_folder_not_locked
+        assert_folder_not_locked(actor, folder)
     for folder in folders:
         trash_folder_recursive(folder)
     return {"message": f"Trashed {len(folders)} folder(s) recursively"}

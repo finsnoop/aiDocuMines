@@ -38,6 +38,10 @@ from core.onlyoffice_views import (
     OnlyOfficeDocServerUrlView
 )
 
+from .views_walls import GovernanceOptionsView, EthicalWallLiftView, EthicalWallListView, EthicalWallPeopleView
+from .views_checkout import CheckinView, CheckoutView
+from .views_retention import BatchDetailView, BatchListView, ScheduleActionView, ScheduleListView
+from .views_holds import LegalHoldCheckView, LegalHoldListView, LegalHoldReleaseView
 from .views_matters import (MatterCreateView, MatterDetailView, MatterDocumentsView, MatterJobDownloadView,
                             MatterJobsView, MatterListView, MatterMembersView, MatterPeopleView, MatterRunView,
                             MatterUploadView)
@@ -60,6 +64,20 @@ urlpatterns = [
     path("backups/<str:name>/download/", BackupDownloadView.as_view(), name="backup-download"),
     path("backups/<str:name>/restore/", BackupRestoreView.as_view(), name="backup-restore"),
     path("projects/", MatterListView.as_view(), name="matter-list"),
+    path("legal-holds/", LegalHoldListView.as_view(), name="legal-hold-list"),
+    path("legal-holds/check/", LegalHoldCheckView.as_view(), name="legal-hold-check"),
+    path("legal-holds/<uuid:pk>/release/", LegalHoldReleaseView.as_view(), name="legal-hold-release"),
+    path("ethical-walls/", EthicalWallListView.as_view(), name="ethical-wall-list"),
+    path("governance/options/", GovernanceOptionsView.as_view(), name="governance-options"),
+    path("retention/schedules/", ScheduleListView.as_view(), name="retention-schedules"),
+    path("retention/schedules/<uuid:pk>/<str:action>/", ScheduleActionView.as_view(), name="retention-schedule-action"),
+    path("retention/batches/", BatchListView.as_view(), name="retention-batches"),
+    path("retention/batches/<uuid:pk>/", BatchDetailView.as_view(), name="retention-batch"),
+    path("retention/batches/<uuid:pk>/<str:action>/", BatchDetailView.as_view(), name="retention-batch-action"),
+    path("files/<int:file_id>/checkout/", CheckoutView.as_view(), name="file-checkout"),
+    path("files/<int:file_id>/checkin/", CheckinView.as_view(), name="file-checkin"),
+    path("ethical-walls/<uuid:pk>/people/", EthicalWallPeopleView.as_view(), name="ethical-wall-people"),
+    path("ethical-walls/<uuid:pk>/lift/", EthicalWallLiftView.as_view(), name="ethical-wall-lift"),
     path("projects/create/", MatterCreateView.as_view(), name="matter-create"),
     path("projects/<uuid:matter_id>/", MatterDetailView.as_view(), name="matter-detail"),
     path("projects/<uuid:matter_id>/members/", MatterMembersView.as_view(), name="matter-members"),

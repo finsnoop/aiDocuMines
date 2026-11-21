@@ -195,6 +195,12 @@ PERMISSION_DEFINITIONS = [
     ("compliance.view_reports", "Can view compliance reports", "compliance", "view_reports", ""),
     ("compliance.export_reports", "Can export compliance reports", "compliance", "export_reports", ""),
     ("compliance.run_audit", "Can run compliance audits", "compliance", "run_audit", ""),
+    ("legal_hold.view", "Can view legal holds", "legal_hold", "view", ""),
+    ("legal_hold.manage", "Can place and release legal holds", "legal_hold", "manage", ""),
+    ("ethical_wall.view", "Can view ethical walls", "ethical_wall", "view", ""),
+    ("ethical_wall.manage", "Can create, change and lift ethical walls", "ethical_wall", "manage", ""),
+    ("retention.view", "Can view retention schedules and disposition batches", "retention", "view", ""),
+    ("retention.manage", "Can set retention and approve disposition", "retention", "manage", ""),
 
     # ── Security ─────────────────────────────────────────────────────────
     ("security.policy_configure", "Can configure security policies", "security", "policy_configure", ""),
@@ -394,6 +400,9 @@ ROLE_DEFINITIONS = {
     "Executive": RoleDefinition(
         "Executive", "Executive (CEO, CFO, COO)",
         _p(
+            "retention.view",
+            "ethical_wall.view",
+            "legal_hold.view",
             "cost_centre.view", "cost_centre.manage", "cost_centre.report", "cost_centre.export",
             "analytics.export", "dashboard.view", "user.view",
         ),
@@ -402,6 +411,9 @@ ROLE_DEFINITIONS = {
     "Admin": RoleDefinition(
         "Admin", "Admin (Tenant Administrator)",
         _p(
+            "retention.view", "retention.manage",
+            "ethical_wall.view", "ethical_wall.manage",
+            "legal_hold.view", "legal_hold.manage",
             "user.create", "user.update", "user.delete",
             "user.disable", "user.enable", "user.reset_password",
             "user.assign_role", "user.manage_2fa", "user.manage_api_keys",
@@ -436,6 +448,9 @@ ROLE_DEFINITIONS = {
     "ComplianceOfficer": RoleDefinition(
         "ComplianceOfficer", "Compliance Officer",
         _p(
+            "retention.view", "retention.manage",
+            "ethical_wall.view", "ethical_wall.manage",
+            "legal_hold.view", "legal_hold.manage",
             "compliance.view_reports", "compliance.export_reports",
             "compliance.run_audit",
             "audit.view", "audit.export", "audit.retention",
@@ -450,6 +465,9 @@ ROLE_DEFINITIONS = {
     "Auditor": RoleDefinition(
         "Auditor", "Auditor (Read-Only Compliance)",
         _p(
+            "retention.view",
+            "ethical_wall.view",
+            "legal_hold.view",
             "audit.view", "audit.export",
             "compliance.view_reports",
             "monitoring.view_metrics", "monitoring.view_logs",
@@ -500,6 +518,8 @@ ROLE_DEFINITIONS = {
     "DataProtectionOfficer": RoleDefinition(
         "DataProtectionOfficer", "Data Protection Officer (GDPR)",
         _p(
+            "retention.view", "retention.manage",
+            "legal_hold.view", "legal_hold.manage",
             "gdpr.data_access", "gdpr.data_rectification",
             "gdpr.data_erasure", "gdpr.data_portability",
             "gdpr.process_register", "gdpr.dpia", "gdpr.ropa",

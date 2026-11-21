@@ -478,6 +478,7 @@ CELERY_TASK_ROUTES = {
     "home_dash_analytics.resource_agent": {"queue": CELERY_FAST_QUEUE},
     "home_dash_analytics.cost_agent": {"queue": CELERY_FAST_QUEUE},
     "home_dash_analytics.refresh_model_prices": {"queue": CELERY_FAST_QUEUE},
+    "core.retention_review": {"queue": CELERY_FAST_QUEUE},
 }
 # Work that has shown no progress for this long is reported as failed instead of "processing" forever.
 STALE_RUN_AFTER_SECONDS = int(os.getenv("STALE_RUN_AFTER_SECONDS", str(CELERY_TASK_TIME_LIMIT + 1800)))
@@ -492,6 +493,7 @@ CELERY_BEAT_SCHEDULE = {
     "agent-resources": {"task": "home_dash_analytics.resource_agent", "schedule": crontab(minute="*")},
     "agent-costs": {"task": "home_dash_analytics.cost_agent", "schedule": crontab(minute="*/15")},
     "ai-model-prices": {"task": "home_dash_analytics.refresh_model_prices", "schedule": crontab(hour=3, minute=17)},
+    "retention-review": {"task": "core.retention_review", "schedule": crontab(hour=2, minute=41)},
     "expire-old-tokens": {"task": "core.maintenance.purge_expired_credentials", "schedule": crontab(hour=3, minute=10)},
 }
 

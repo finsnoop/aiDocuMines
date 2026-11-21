@@ -210,3 +210,48 @@ class PricingTests(TestCase):
         with mock.patch("requests.get", return_value=response), self.assertRaises(ValueError):
             pricing.refresh()
         self.assertIn("m1", pricing.registry())                     # previous prices kept
+
+
+class DSPyMeteringTests(TestCase):
+    """The vertical modules' DSPy calls are gated and recorded like every other AI call (G12)."""
+
+    @classmethod
+    def setUpTestData(cls):
+        cls.org = Client.objects.create(name="DSPy firm")
+        cls.user = make_user("dspy@firm.test", cls.org, groups=["Client"])
+
+    def setUp(self):
+        cache.clear()
+
+    def test_dspy_is_instrumented_at_startup(self):
+        import dspy.clients.execution as execution
+        self.assertTrue(getattr(execution, "_aidoc_metered", False))
+
+    def test_finished_dspy_call_is_recorded_with_input_and_output_tokens(self):
+        import dspy.clients.execution as execution
+        from types import SimpleNamespace
+        lm = SimpleNamespace(model="litellm_proxy/gpt-4o-mini")
+        result = SimpleNamespace(cache_hit=False, usage={"prompt_tokens": 120, "completion_tokens": 30, "total_tokens": 150})
+        with usage.acting_as(self.user), mock.patch("dspy.clients.execution.settings") as s:
+            s.usage_tracker, s.disable_history = None, True
+            call = SimpleNamespace(prompt=None)
+            result.responses = ["ok"]
+            execution.finalize(lm, call, result)
+        event = EventLog.objects.get(user=self.user)
+        self.assertEqual((event.metadata["provider"], event.metadata["model"]), ("litellm", "gpt-4o-mini"))
+        self.assertEqual((event.metadata["prompt_tokens"], event.metadata["completion_tokens"], event.tokens_used), (120, 30, 150))
+        self.assertEqual(event.metadata["task"], "vertical-ai")
+
+    def test_dspy_call_is_refused_before_sending_when_a_limit_is_used_up(self):
+        import dspy.clients.execution as execution
+        AISpendLimit.objects.create(tenant=self.org, scope="user", user=self.user, period="day", unit="tokens", amount=10)
+        EventLog.objects.create(user=self.user, tenant=self.org, event_type=EventType.OTHER, service_type=ServiceType.PAYABLE,
+                                tokens_used=50, metadata={"provider": "litellm", "model": "gpt-4o-mini", "key": "platform"})
+        gateway.ledger_changed(self.org.pk)
+        with usage.acting_as(self.user), self.assertRaises(gateway.GatewayBlocked):
+            execution.prepare(object(), "prompt", {})
+
+    def test_model_names_map_to_ledger_provider_and_model(self):
+        self.assertEqual(usage._dspy_model("openai/gpt-4o"), ("openai", "openai/gpt-4o"))
+        self.assertEqual(usage._dspy_model("ollama_chat/llama3"), ("ollama", "llama3"))
+        self.assertEqual(usage._dspy_model("gpt-4o"), ("litellm", "gpt-4o"))

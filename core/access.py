@@ -182,6 +182,7 @@ _ACTION_TO_EFFECTIVE_FLAG = {
     "process": "can_download",
     "share": "can_share",
     "rename": "can_rename",
+    "edit": "can_rename",
     "move": "can_move",
     "delete": "can_delete",
     "duplicate": "can_duplicate",
@@ -191,7 +192,7 @@ _ACTION_TO_EFFECTIVE_FLAG = {
 }
 
 
-MATTER_MEMBER_ACTIONS = {"view", "download", "process", "rename", "move"}
+MATTER_MEMBER_ACTIONS = {"view", "download", "process", "rename", "move", "edit"}
 
 
 def _matter_member_files_q(user, action: str) -> Q:
@@ -222,7 +223,8 @@ def matters_for_user(user):
     """Matters visible to `user`: platform superuser all; tenant admin their org; others where member/creator."""
     from core.models import Matter
 
-    qs = Matter.objects.all()
+    from core.walls import walled_matter_ids
+    qs = Matter.objects.exclude(pk__in=walled_matter_ids(user))
     if is_platform_superuser(user):
         return qs
     tid = tenant_id(user)
@@ -233,6 +235,9 @@ def matters_for_user(user):
 
 def can_manage_matter(user, matter) -> bool:
     """Rename, close, change the team: creator, tenant admin/manager of that org, platform superuser."""
+    from core.walls import walled_matter_ids
+    if matter.pk in walled_matter_ids(user):
+        return False
     if is_platform_superuser(user):
         return True
     if matter.client_id != tenant_id(user):
@@ -271,7 +276,7 @@ def _shared_file_ids_q(user, action: str) -> Q:
     # FileAccessEntry grants (per link, optional expiry).
     entry_flag = {
         "view": "can_read", "download": "can_read", "process": "can_read",
-        "rename": "can_write", "move": "can_write",
+        "rename": "can_write", "move": "can_write", "edit": "can_write",
         "duplicate": "can_write", "protect": "can_write", "restore": "can_write", "zip": "can_read",
         "delete": "can_delete", "share": "can_share",
     }.get(action, "can_read")
@@ -290,14 +295,19 @@ def accessible_files_q(user, action: str = "view", prefix: str = "") -> Q:
     """
     if not _is_authenticated(user):
         return Q(pk__in=[])
+    from core.walls import walled_files_q
+    walled = walled_files_q(user)   # ethical walls apply to every role, superusers included
     if is_platform_superuser(user):
-        return Q()
+        q = ~walled if walled is not None else Q()
+        return _prefix_q(q, prefix) if prefix else q
 
     q = Q(user=user)
     if is_tenant_admin(user) and tenant_id(user) is not None:
         q |= Q(user__client_id=tenant_id(user))
     q |= _shared_file_ids_q(user, action)
     q |= _matter_member_files_q(user, action)
+    if walled is not None:
+        q &= ~walled
 
     if prefix:
         return _prefix_q(q, prefix)
@@ -342,6 +352,9 @@ def accessible_files(user, action: str = "view", queryset=None):
 def can_access_file(user, file_obj, action: str = "view") -> bool:
     if file_obj is None or not _is_authenticated(user):
         return False
+    from core.walls import is_walled_file
+    if is_walled_file(user, file_obj):
+        return False   # ethical wall: no role, membership or share overrides it
     if is_platform_superuser(user) or file_obj.user_id == user.id:
         return True
     if is_tenant_admin(user) and tenant_id(user) is not None and \
@@ -365,6 +378,10 @@ def get_file_for_user(user, file_id, action: str = "view"):
         raise Http404("File not found.")
     if not can_access_file(user, file_obj, action):
         raise Http404("File not found.")
+    from core.holds import assert_not_held
+    from core.checkout import assert_not_locked
+    assert_not_held(file_obj, action)  # 403 with a clear reason; the user may see the document
+    assert_not_locked(user, file_obj, action)  # 409 when someone else has it checked out
     return file_obj
 
 
@@ -387,6 +404,10 @@ def get_files_for_user(user, file_ids: Iterable, action: str = "process"):
     files = list(accessible_files(user, action, File.objects.filter(pk__in=ids)).select_related("user"))
     if len(files) != len(ids):
         raise Http404("One or more files were not found.")
+    from core.holds import assert_files_not_held
+    from core.checkout import assert_none_locked
+    assert_files_not_held(ids, action)
+    assert_none_locked(user, ids, action)
     by_id = {f.pk: f for f in files}
     return [by_id[i] for i in ids]
 
@@ -537,6 +558,9 @@ def can_access_folder(user, folder, action: str = "view") -> bool:
     """
     if folder is None or not _is_authenticated(user):
         return False
+    from core.walls import is_walled_folder
+    if is_walled_folder(user, folder):
+        return False
     if is_platform_superuser(user) or folder.user_id == user.id:
         return True
     tid = tenant_id(user)
@@ -577,6 +601,10 @@ def get_file_link_for_user(user, link_id, action: str = "view"):
         raise
     if not can_access_file(user, link.file, action):
         raise Http404("File not found.")
+    from core.holds import assert_not_held
+    from core.checkout import assert_not_locked
+    assert_not_held(link.file, action)
+    assert_not_locked(user, link.file, action)
     return link
 
 

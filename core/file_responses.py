@@ -49,9 +49,22 @@ def preview_response(path, filename=None):
                                 content_type=INLINE_PREVIEW_TYPES[ext]))
 
 
-def download_response(path, filename=None, inline=False):
-    """Download; shown inline only when asked for AND the type is safe to display."""
+def download_response(path, filename=None, inline=False, watermark=None):
+    """Download; shown inline only when asked for AND the type is safe to display.
+
+    `watermark`: text to stamp on a PDF copy (core/watermark.py); the stored file is not changed.
+    """
     name = filename or os.path.basename(path)
+    if watermark:
+        from django.http import HttpResponse
+        from core.watermark import watermarked_or_none
+        stamped = watermarked_or_none(path, watermark)
+        if stamped is not None:
+            response = HttpResponse(stamped, content_type="application/pdf")
+            disposition = "inline" if inline else "attachment"
+            from django.utils.http import content_disposition_header
+            response["Content-Disposition"] = content_disposition_header(disposition == "attachment", name)
+            return _harden(response)
     if inline and can_preview_inline(path):
         return preview_response(path, name)
     content_type = mimetypes.guess_type(name)[0] or "application/octet-stream"

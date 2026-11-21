@@ -42,6 +42,8 @@ class DocumentTableView(APIView):
         has_next = len(rows) > size
         rows = rows[:size]
 
+        from core.holds import held_ids
+        held = held_ids([f.id for f in rows])
         capped = qs.order_by()[:COUNT_CAP + 1].count() if page == 1 or qp.get("with_count") else None
         total = None if capped is None else min(capped, COUNT_CAP)
 
@@ -58,6 +60,7 @@ class DocumentTableView(APIView):
                 "status": f.status,
                 "owner": {"id": f.user_id, "name": (f.user.username or f.user.email) if f.user else ""},
                 "is_mine": f.user_id == user.id,
+                "on_hold": f.id in held,
                 "created_at": f.created_at,
                 "updated_at": f.updated_at,
             } for f in rows],
@@ -140,6 +143,20 @@ class DocumentActionContextView(APIView):
                             and (link is not None or action == "process")
                             for action in ("rename", "move", "delete", "share", "process", "duplicate", "zip", "protect", "restore")})
         permissions["copy"] = not restricted and permissions["download"] and link is not None
+        from core.holds import HELD_ACTIONS, is_held
+        on_hold = is_held(f)
+        if on_hold:  # legal hold: nothing that changes or removes the document
+            for action in HELD_ACTIONS & set(permissions):
+                permissions[action] = False
+        permissions["legal_hold"] = on_hold
+        from core.checkout import LOCKED_ACTIONS, holder
+        who = holder(f)
+        if who and who[0] != user.pk:
+            for action in LOCKED_ACTIONS & set(permissions):
+                permissions[action] = False
+        permissions["checked_out_by"] = who[1] if who else None
+        permissions["checkout"] = not on_hold and not who and not restricted and can_access_file(user, f, "edit")
+        permissions["checkin"] = bool(who) and (who[0] == user.pk or is_tenant_admin(user) or is_platform_superuser(user))
         permissions["duplicate"] = permissions["duplicate"] and can_access_folder(user, link.folder, "manage")
         if permissions["move"] and f.user_id != user.pk and not is_tenant_admin(user):
             permissions["move"] = can_access_file(user, f, "share")

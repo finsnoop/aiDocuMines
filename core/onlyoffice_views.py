@@ -564,6 +564,15 @@ class OnlyOfficeEditorConfigView(APIView):
             return Response({"error": "Missing file_id"}, status=400)
 
         f = get_file_for_user(request.user, file_id)
+        # Edit only with write access to the document and when it is not under legal hold;
+        # everyone else opens it read-only, and read-only editors get no save callback.
+        from core.access import can_access_file
+        from core.holds import is_held
+        held = is_held(f)
+        from core.checkout import holder
+        locked_by = holder(f)
+        locked = bool(locked_by and locked_by[0] != request.user.pk)
+        can_edit = can_access_file(request.user, f, "edit") and not held and not locked
         if not settings.ONLYOFFICE.get("JWT_SECRET"):
             # The viewer falls back to the in-page document viewer on this answer.
             return Response({"error": "The document editor is not configured."}, status=503)
@@ -600,18 +609,18 @@ class OnlyOfficeEditorConfigView(APIView):
                 "key": f"file-{f.id}-{int(time.time())}",
                 "url": download_url,
                 "permissions": {
-                    "edit": True,
+                    "edit": can_edit,
                     "download": True,
                     "print": True,
-                    "comment": True,
-                    "fillForms": True,
-                    "review": True,
+                    "comment": can_edit,
+                    "fillForms": can_edit,
+                    "review": can_edit,
                 },
             },
             "editorConfig": {
-                "callbackUrl": callback_url,
+                **({"callbackUrl": callback_url} if can_edit else {}),
                 "lang": "en",
-                "mode": "edit",
+                "mode": "edit" if can_edit else "view",
                 "user": {"id": user_id, "name": user_name},
             },
         }
@@ -634,7 +643,10 @@ class OnlyOfficeEditorConfigView(APIView):
         cfg["token"] = token
 
 
-        return Response({"docServerApiJs": doc_api_js, "config": cfg}, status=200)
+        readonly = None if can_edit else ("This document is under legal hold." if held
+                                          else f"Checked out by {locked_by[1]}." if locked
+                                          else "You can view but not edit this document.")
+        return Response({"docServerApiJs": doc_api_js, "config": cfg, "can_edit": can_edit, "readonly_reason": readonly}, status=200)
 
 
 class OnlyOfficeCreateDocxView(APIView):

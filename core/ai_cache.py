@@ -9,3 +9,6 @@ def configure_ai_cache():
     os.environ["DSPY_CACHEDIR"] = tempfile.mkdtemp(prefix="aidoc-dspy-")
     import dspy
     dspy.configure_cache(enable_disk_cache=False, enable_memory_cache=False, restrict_pickle=True)
+    # Every DSPy model call is checked by the AI gateway and recorded in the cost ledger.
+    from home_dash_analytics.agents.usage import instrument_dspy
+    instrument_dspy()

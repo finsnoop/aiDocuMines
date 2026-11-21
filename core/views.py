@@ -550,7 +550,9 @@ class FileDownloadView(APIView):
         from core.file_responses import download_response
         inline = request.query_params.get("inline", "false").lower() == "true"
         try:
-            return download_response(real_path, os.path.basename(real_path), inline=inline)
+            from core.watermark import text_for
+            mark = text_for(getattr(file_obj.user, "client_id", None), request.user)
+            return download_response(real_path, os.path.basename(real_path), inline=inline, watermark=mark)
         except OSError:
             return Response({"error": "The file could not be read."}, status=500)
 

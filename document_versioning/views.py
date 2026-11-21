@@ -522,6 +522,8 @@ class ArchiveVersionView(APIView):
         if version.is_archived:
             return Response({"error": "Version is already archived."}, status=status.HTTP_400_BAD_REQUEST)
 
+        from core.holds import assert_not_held
+        assert_not_held(version.file, "delete")  # archiving removes the version from active storage
         from document_versioning.utils import perform_archive
         archive_record = perform_archive(version)
 

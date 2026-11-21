@@ -103,6 +103,10 @@ def get_next_version_number(file_instance):
 
 
 def enforce_retention_policy(file_instance):
+
+    from core.holds import is_held
+    if is_held(file_instance):
+        return None  # versions of a document under legal hold are preserved as they are
     policy = VersionRetentionPolicy.objects.filter(project_id=file_instance.project_id).first()
     if not policy:
         logger.info(f"No retention policy found for project {file_instance.project_id}")
