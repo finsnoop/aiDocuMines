@@ -170,6 +170,42 @@ def _set_roles(actor, target, roles):
     return None
 
 
+def provision_person(actor, email, name, roles, client, password=None, send_invite=True):
+    """Create a person exactly as Users & access does: account in the organisation, roles (only those the actor
+    may grant), their OAuth sign-in application, registration with the Node sign-in service, and optionally the
+    invitation email. Returns (user, password, sign_in_ready, invited). Raises ValueError on a refused role."""
+    from oauth2_provider.models import Application
+    from oauth2_provider.generators import generate_client_secret
+    password = password or _temp_password()
+    with transaction.atomic():
+        user = CustomUser.objects.create_user(email=email, password=password, client=client)
+        user.contact_name = name
+        user.username = email.split("@")[0][:150]
+        try:
+            with transaction.atomic():
+                user.save()
+        except IntegrityError:
+            user.username = f"{email.split('@')[0][:140]}-{user.id}"
+            user.save()
+        err = _set_roles(actor, user, roles)
+        if err:
+            raise ValueError(err)
+        secret = generate_client_secret()
+        app = Application.objects.create(
+            user=user, name=f"{client.name} - {email}", client_type=Application.CLIENT_CONFIDENTIAL,
+            authorization_grant_type=Application.GRANT_PASSWORD, client_secret=secret)
+    sign_in_ready = _register_sign_in(user, password, app.client_id, secret)
+    invited = False
+    if send_invite:
+        try:
+            from custom_authentication.tasks import send_signup_email_task
+            send_signup_email_task.delay(user.id)
+            invited = True
+        except Exception:
+            invited = False
+    return user, password, sign_in_ready, invited
+
+
 # ── people ──────────────────────────────────────────────────────────────────
 
 class PeopleView(APIView):
@@ -226,33 +262,10 @@ class PeopleView(APIView):
             return Response({"error": "Choose an organisation."}, status=400)
         if CustomUser.objects.filter(email__iexact=email).exists():
             return Response({"error": "Someone with this email already has an account."}, status=409)
-
-        password = _temp_password()
-        with transaction.atomic():
-            user = CustomUser.objects.create_user(email=email, password=password, client=client)
-            user.contact_name = name
-            user.username = email.split("@")[0][:150]
-            try:
-                user.save()
-            except IntegrityError:
-                user.username = f"{email.split('@')[0][:140]}-{user.id}"
-                user.save()
-            err = _set_roles(actor, user, roles)
-            if err:
-                transaction.set_rollback(True)
-                return Response({"error": err}, status=400)
-            secret = generate_client_secret()
-            app = Application.objects.create(
-                user=user, name=f"{client.name} - {email}", client_type=Application.CLIENT_CONFIDENTIAL,
-                authorization_grant_type=Application.GRANT_PASSWORD, client_secret=secret)
-
-        sign_in_ready = _register_sign_in(user, password, app.client_id, secret)
         try:
-            from custom_authentication.tasks import send_signup_email_task
-            send_signup_email_task.delay(user.id)
-            invited = True
-        except Exception:
-            invited = False
+            user, password, sign_in_ready, invited = provision_person(actor, email, name, roles, client)
+        except ValueError as exc:
+            return Response({"error": str(exc)}, status=400)
         audit(request, "user.created", "user", user.id, email, client_id=client.id, roles=roles)
         return Response({**_person(user), "temporary_password": password, "invite_sent": invited,
                          "sign_in_ready": sign_in_ready}, status=201)
