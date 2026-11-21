@@ -20,7 +20,7 @@ from .views import (
 
 from .views_activity import MyActivityView
 
-from . import views_admin
+from . import views_admin, views_privacy
 
 urlpatterns = [
     path("browser/authorize/", BrowserAuthorizeView.as_view(), name="browser_authorize"),
@@ -63,6 +63,10 @@ urlpatterns = [
     path("admin/people/", views_admin.PeopleView.as_view(), name="admin_people"),
     path("admin/people/<int:user_id>/", views_admin.PersonView.as_view(), name="admin_person"),
     path("admin/people/<int:user_id>/reset-password/", views_admin.ResetPasswordView.as_view(), name="admin_person_reset"),
+    path("admin/people/<int:user_id>/personal-data/", views_privacy.PersonPersonalDataView.as_view(), name="admin_person_data"),
+    path("admin/people/<int:user_id>/erase/", views_privacy.ErasePersonView.as_view(), name="admin_person_erase"),
+    path("me/personal-data/", views_privacy.MyPersonalDataView.as_view(), name="my_personal_data"),
+    path("admin/data-residency/", views_privacy.DataResidencyView.as_view(), name="admin_data_residency"),
     path("admin/organisations/", views_admin.OrganisationsView.as_view(), name="admin_orgs"),
     path("admin/organisations/<int:org_id>/", views_admin.OrganisationView.as_view(), name="admin_org"),
     path("admin/role-matrix/", views_admin.RoleMatrixView.as_view(), name="admin_role_matrix"),

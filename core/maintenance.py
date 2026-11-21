@@ -104,6 +104,13 @@ def purge_expired_credentials():
     return out
 
 
+@shared_task(name="core.maintenance.apply_privacy_retention", ignore_result=True, soft_time_limit=600, time_limit=660)
+def apply_privacy_retention():
+    """Platform retention defaults for personal data (custom_authentication/privacy.py RETENTION)."""
+    from custom_authentication.privacy import apply_retention
+    return apply_retention()
+
+
 # ── queues ───────────────────────────────────────────────────────────────────
 
 def _queue_names() -> list:

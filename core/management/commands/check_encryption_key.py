@@ -9,11 +9,14 @@ class Command(BaseCommand):
     help = 'Check if FIELD_ENCRYPTION_KEY is valid and usable'
 
     def handle(self, *args, **kwargs):
-        key = os.getenv("FIELD_ENCRYPTION_KEY")
+        keys = [k.strip() for k in (os.getenv("FIELD_ENCRYPTION_KEY") or "").split(",") if k.strip()]
 
-        if not key:
+        if not keys:
             self.stdout.write(self.style.ERROR("FIELD_ENCRYPTION_KEY is missing"))
             return
+        if len(keys) > 1:
+            self.stdout.write(f"{len(keys)} keys configured (rotation): the first encrypts, all decrypt.")
+        key = keys[0]
 
         try:
             f = Fernet(key)

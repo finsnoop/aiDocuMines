@@ -48,9 +48,9 @@ Nothing below is optional for production. The platform is **production-ready** w
 - [x] MFA enforceable per organisation (2026-11-21: "Require two-step sign-in" setting; emailed code at every password sign-in)
 - [ ] Independent penetration test; all high and critical findings fixed
 - [ ] SOC 2 Type I readiness (Type II and ISO 27001 to follow); policies, access reviews and evidence collection in place
-- [ ] Encryption at rest and in transit documented; key management through Azure Key Vault; secrets rotated (including the Gmail app password)
-- [ ] Data residency statement per tenant; data processing agreement and sub-processor list
-- [ ] POPIA and GDPR: data-subject request flow (exists in `regulatory_compliance`) covered end to end, retention defaults documented
+- [ ] Encryption at rest and in transit documented; key management through Azure Key Vault; secrets rotated (including the Gmail app password) (2026-11-21: documented in docs/PRIVACY_AND_DATA_PROTECTION.md; Key Vault in the Azure Terraform; both encryption keys now rotate with `rotate_encryption_keys`. Open: rotate the Gmail app password, move secrets to Key Vault at migration)
+- [x] Data residency statement per tenant; data processing agreement and sub-processor list (2026-11-21: live per-organisation statement in Administration > Settings; sub-processors and DPA outline in docs/PRIVACY_AND_DATA_PROTECTION.md; DPA needs legal review and the hosting facts marked [confirm])
+- [x] POPIA and GDPR: data-subject request flow (exists in `regulatory_compliance`) covered end to end, retention defaults documented (2026-11-21: users export their own data; administrators export and erase (documents kept or transferred, holds respected, audit trail intact); daily retention of activity and assistant history (730 days); account deletion no longer destroys documents)
 
 ### 2.3 Records and governance (DMS enterprise layer)
 - [x] Legal hold on documents and matters: held items cannot be edited, archived or deleted by anyone (2026-11-20: `core/holds.py`, Holds & walls page; API, folder and model-level guards; purge tools refuse while holds are active)
@@ -179,6 +179,8 @@ These apply to all three repositories (API, frontend, sign-in service).
 - **2026-11-21:** CI runs on the working branches with frontend and Node unit tests; G7, G9 and G10 closed (Contracts page); G8 e-signature with DocuSign and Adobe Acrobat Sign; G4 and G5 Outlook and Word add-ins.
 
 - **2026-11-21:** G11 built: AI evaluation suite (`ai_eval`) measuring field accuracy, evidence correctness, injection resistance, playbook status accuracy and Assistant answer quality (correct, cited, citation holds the evidence, declines when unanswered) on synthetic labelled sets; platform administrators run it from Administration > AI accuracy and it re-runs when a model changes. Numbers go on the website after the first production run.
+
+- **2026-11-21:** G2 complete with SAML 2.0. G6 complete: watermarks on Word, Excel, PowerPoint, images, the viewer and read-only OnlyOffice (non-PDF copies were previously unmarked). Section 2.2: data-subject export and erasure for platform users, retention defaults, per-organisation data residency statement, privacy and data protection document, encryption key rotation. Fixed: deleting a user account cascaded to their documents, bypassing retention and disposition approval.
 
 ## 8. Review cadence
 

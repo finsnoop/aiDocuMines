@@ -21,7 +21,9 @@ LOGS_DIR = os.path.join(BASE_DIR, 'logs')
 if not os.path.exists(LOGS_DIR):
     os.makedirs(LOGS_DIR)
 
-FIELD_ENCRYPTION_KEY = os.getenv("FIELD_ENCRYPTION_KEY")
+# One Fernet key, or "<new>,<old>" while rotating (core/management/commands/rotate_encryption_keys.py).
+_field_keys = [k.strip() for k in (os.getenv("FIELD_ENCRYPTION_KEY") or "").split(",") if k.strip()]
+FIELD_ENCRYPTION_KEY = _field_keys if len(_field_keys) > 1 else (_field_keys[0] if _field_keys else None)
 
 
 # Explicitly tell dotenv where to find the file
@@ -504,6 +506,7 @@ CELERY_BEAT_SCHEDULE = {
     "contracts-daily": {"task": "contracts.daily", "schedule": crontab(hour=6, minute=5)},
     "contracts-esign-sweep": {"task": "contracts.esign_sweep", "schedule": crontab(minute="*/30")},
     "ai-eval-model-change": {"task": "ai_eval.check_model_change", "schedule": crontab(hour=4, minute=23)},
+    "privacy-retention": {"task": "core.maintenance.apply_privacy_retention", "schedule": crontab(hour=3, minute=37)},
     "expire-old-tokens": {"task": "core.maintenance.purge_expired_credentials", "schedule": crontab(hour=3, minute=10)},
 }
 

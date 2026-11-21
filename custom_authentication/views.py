@@ -1977,6 +1977,13 @@ class DeleteUserView(APIView):
             return Response({"error": "User not found"}, status=status.HTTP_404_NOT_FOUND)
         if user.is_superuser or user.id == request.user.id:
             return Response({"error": "This account cannot be deleted"}, status=status.HTTP_400_BAD_REQUEST)
+        # Deleting an account would delete every document it owns (cascade), bypassing legal holds, retention
+        # schedules and approved disposition. People who own documents are erased instead (privacy.erase).
+        owned = user.files.count()
+        if owned:
+            return Response({"error": f"This person owns {owned} documents. Use Erase personal data, which keeps the "
+                                      "organisation's documents (optionally transferring them to a colleague)."},
+                            status=status.HTTP_409_CONFLICT)
         email = user.email
         user.delete()
         return Response({"message": f"User {email} permanently deleted"}, status=status.HTTP_200_OK)
