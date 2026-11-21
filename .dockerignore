@@ -56,3 +56,22 @@ media/
 staticfiles/
 
 backups/
+
+# Server-only files that must never be built into the image (found on the production host, 2026-11-21)
+*password*
+*passwords*
+*secret*
+*.original/
+document_conversion/
+documentation/
+PDFServicesSDK*/
+ImageMagick-*/
+test_data/
+MODEL_INFO*.txt
+models.png
+caprover_launcher.py
+caprover-multiservice-launcher-enhanced.sh
+celerybeat-schedule
+supervisord.pid
+package-lock.json
+debris_folder/
