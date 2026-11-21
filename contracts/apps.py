@@ -7,4 +7,4 @@ class ContractsConfig(AppConfig):
     verbose_name = "Contract lifecycle"
 
     def ready(self):
-        from . import lifecycle, playbook  # noqa: F401  registers the daily and review tasks
+        from . import esign, lifecycle, playbook  # noqa: F401  registers the daily, review and e-signature tasks

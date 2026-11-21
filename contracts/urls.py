@@ -1,6 +1,6 @@
 from django.urls import path
 
-from . import views, views_playbook as pv
+from . import views, views_esign as ev, views_playbook as pv
 
 urlpatterns = [
     path("contracts/", views.ContractListView.as_view(), name="contracts"),
@@ -20,4 +20,9 @@ urlpatterns = [
     path("reviews/", pv.ReviewStartView.as_view(), name="playbook-review-start"),
     path("reviews/<uuid:pk>/", pv.ReviewDetailView.as_view(), name="playbook-review"),
     path("contracts/<uuid:pk>/reviews/", pv.ContractReviewsView.as_view(), name="contract-reviews"),
+    path("contracts/<uuid:pk>/signature/", ev.ContractSignatureView.as_view(), name="contract-signature"),
+    path("signature/<uuid:pk>/refresh/", ev.SignatureRefreshView.as_view(), name="signature-refresh"),
+    path("signature/<uuid:pk>/void/", ev.SignatureVoidView.as_view(), name="signature-void"),
+    path("signature/webhook/docusign/", ev.DocuSignWebhookView.as_view(), name="signature-webhook-docusign"),
+    path("signature/webhook/adobe_sign/", ev.AdobeSignWebhookView.as_view(), name="signature-webhook-adobe"),
 ]

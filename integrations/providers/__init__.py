@@ -3,12 +3,13 @@ from .base import Api, ConnectorError, NotSupported, Provider
 from .collab import Notion, Slack
 from .crm import HubSpot, Salesforce
 from .dev import GitHub, GitLab, Jira
+from .esign import AdobeSign, DocuSign
 from .storage import Box, Dropbox, GoogleDrive, OneDrive, Teams
 from .webhooks import Make, Zapier
 
 PROVIDERS: dict[str, Provider] = {p.key: p for p in (
     GoogleDrive(), Dropbox(), OneDrive(), Box(), Teams(), Slack(), Notion(), GitHub(), GitLab(), Jira(),
-    Salesforce(), HubSpot(), Zapier(), Make(),
+    Salesforce(), HubSpot(), Zapier(), Make(), DocuSign(), AdobeSign(),
 )}
 
 

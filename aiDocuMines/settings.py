@@ -96,6 +96,7 @@ INSTALLED_APPS = [
     "document_automation",
     "document_versioning",
     'contracts',
+    'addins',
 ]
 
 MIDDLEWARE = [
@@ -482,6 +483,8 @@ CELERY_TASK_ROUTES = {
     "core.retention_review": {"queue": CELERY_FAST_QUEUE},
     "contracts.daily": {"queue": CELERY_FAST_QUEUE},
     "contracts.playbook_review": {"queue": CELERY_FAST_QUEUE},
+    "contracts.esign_refresh": {"queue": CELERY_FAST_QUEUE},
+    "contracts.esign_sweep": {"queue": CELERY_FAST_QUEUE},
 }
 # Work that has shown no progress for this long is reported as failed instead of "processing" forever.
 STALE_RUN_AFTER_SECONDS = int(os.getenv("STALE_RUN_AFTER_SECONDS", str(CELERY_TASK_TIME_LIMIT + 1800)))
@@ -498,6 +501,7 @@ CELERY_BEAT_SCHEDULE = {
     "ai-model-prices": {"task": "home_dash_analytics.refresh_model_prices", "schedule": crontab(hour=3, minute=17)},
     "retention-review": {"task": "core.retention_review", "schedule": crontab(hour=2, minute=41)},
     "contracts-daily": {"task": "contracts.daily", "schedule": crontab(hour=6, minute=5)},
+    "contracts-esign-sweep": {"task": "contracts.esign_sweep", "schedule": crontab(minute="*/30")},
     "expire-old-tokens": {"task": "core.maintenance.purge_expired_credentials", "schedule": crontab(hour=3, minute=10)},
 }
 

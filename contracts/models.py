@@ -206,3 +206,27 @@ class ReviewFinding(models.Model):
 
     class Meta:
         ordering = ["id"]
+
+
+class SignatureRequest(models.Model):
+    """A contract sent for e-signature through the sender's connected DocuSign or Adobe Sign account."""
+    STATUSES = [("sending", "Sending"), ("sent", "Sent"), ("delivered", "Opened"), ("completed", "Signed"),
+                ("declined", "Declined"), ("voided", "Voided"), ("error", "Error")]
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    client = models.ForeignKey("custom_authentication.Client", on_delete=models.CASCADE, related_name="signature_requests")
+    contract = models.ForeignKey(Contract, on_delete=models.CASCADE, related_name="signature_requests")
+    provider = models.CharField(max_length=20)
+    envelope_id = models.CharField(max_length=128, blank=True, default="", db_index=True)
+    status = models.CharField(max_length=10, choices=STATUSES, default="sending")
+    signers = models.JSONField(default=list, blank=True)
+    source_file = models.ForeignKey("core.File", null=True, on_delete=models.SET_NULL, related_name="+")
+    signed_file = models.ForeignKey("core.File", null=True, blank=True, on_delete=models.SET_NULL, related_name="+")
+    certificate_file = models.ForeignKey("core.File", null=True, blank=True, on_delete=models.SET_NULL, related_name="+")
+    sent_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, on_delete=models.SET_NULL, related_name="+")
+    error = models.TextField(blank=True, default="")
+    created_at = models.DateTimeField(auto_now_add=True)
+    completed_at = models.DateTimeField(null=True, blank=True)
+    checked_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ["-created_at"]
