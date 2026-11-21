@@ -3,8 +3,10 @@
 #
 # Triggers
 #   - push / PR to this repo (main deploys; the mvp_augment_* working branches are tested, never deployed)
-#   - repository_dispatch "platform-build" sent by the Backend and Frontend repos on push
-#     (see .github/workflows/trigger-platform.yml in those repos)
+#   - a run started by the Backend and Frontend repos on every push (trigger-platform.yml there): a
+#     workflow_dispatch on the matching branch of this repo, with their commit as backend_ref / frontend_ref,
+#     so the pipeline file of that branch is used (working branches are tested without touching main)
+#   - repository_dispatch "platform-build" (older trigger, kept for compatibility)
 #   - manual run (Actions tab) with optional refs and a deploy switch
 #
 # Stages: test (all three, in parallel) -> publish images -> deploy (main only, needs approval)
@@ -26,6 +28,7 @@
 # Create a GitHub environment named "production" with required reviewers to gate deploys.
 
 name: Platform CI/CD
+run-name: ${{ inputs.source && format('Platform CI/CD for {0}', inputs.source) || '' }}
 
 on:
   push:
@@ -41,6 +44,9 @@ on:
       frontend_ref:
         description: Frontend git ref (branch, tag or sha)
         default: main
+      source:
+        description: What started the run (set by the trigger in the Backend and Frontend repos)
+        default: ""
       deploy:
         description: Deploy after a successful build
         type: boolean
