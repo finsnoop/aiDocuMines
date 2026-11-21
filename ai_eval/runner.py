@@ -69,8 +69,10 @@ def run_playbook(user, config, dataset, limit=None):
 
 
 def run_assistant(user, config, dataset, limit=None):
-    from core.assistant import Context, build_sources, compose_prompt
+    from core import ai_harness as harness
+    from core.assistant import Context, build_sources
     from grid_documents_interrogation.utils import dispatch_to_llm
+    settings = {"surfaces": {}, "guardrails": dict(harness.GUARDRAIL_DEFAULTS)}   # the platform defaults
     results = []
     for case in dataset["cases"][:limit]:
         files = [SimpleNamespace(id=-(i + 1), pk=-(i + 1), filename=d["filename"], content=d["text"])
@@ -78,9 +80,10 @@ def run_assistant(user, config, dataset, limit=None):
         kind, label = ("file", files[0].filename) if len(files) == 1 else ("folder", "Evaluation folder")
         ctx = Context(kind=kind, label=label, files=files, total_in_scope=len(files))
         sources = build_sources(case["question"], ctx, user, semantic=False)
-        query, context_block = compose_prompt(case["question"], ctx, sources, [])
         try:
-            answer = dispatch_to_llm(query, context_block, config, [])
+            answer = harness.run(ctx, case["question"], sources, [], [], settings,
+                                 lambda message, evidence, turns, system: dispatch_to_llm(
+                                     message, evidence, config, turns, system_prompt=system))["answer"]
         except Exception as exc:
             _case_failed(case, exc)
             answer = None

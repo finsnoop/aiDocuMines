@@ -7,6 +7,10 @@ import tiktoken  # for OpenAI token estimation
 import pandas as pd
 from urllib.parse import unquote
 from typing import List, Tuple, Optional, Dict
+from contextvars import ContextVar
+
+# A caller's own system prompt (the AI harness binds Ask Assistant to one object); every provider uses it.
+_SYSTEM_PROMPT: ContextVar[Optional[str]] = ContextVar("llm_system_prompt", default=None)
 
 from langchain_ollama import ChatOllama
 from openai import OpenAI
@@ -453,7 +457,7 @@ def _build_messages_for_openai(
     token_limit = get_token_limit(model)
 
     # Build enhanced system prompt
-    system_prompt = (
+    system_prompt = _SYSTEM_PROMPT.get() or (
         "You are a precise, concise document analysis and QA assistant.\n"
         "- Answer based on the document excerpt and the conversation context.\n"
         "- Maintain continuity with previous exchanges — you CAN refer back to earlier Q&A.\n"
@@ -549,8 +553,18 @@ def _openai_chat_completion(client, *, model, messages, max_tokens, temperature,
     return response
 
 
-def dispatch_to_llm(query_text, chunk, llm_config, previous_messages=None, *, accumulated_context=""):
-    """Every chat goes through the AI gateway: limits are checked and the key used is recorded."""
+def dispatch_to_llm(query_text, chunk, llm_config, previous_messages=None, *, accumulated_context="", system_prompt=None):
+    """Every chat goes through the AI gateway: limits are checked and the key used is recorded.
+    system_prompt replaces the generic document-QA system message for every provider (the AI harness uses it)."""
+    token = _SYSTEM_PROMPT.set(system_prompt) if system_prompt else None
+    try:
+        return _gateway_dispatch(query_text, chunk, llm_config, previous_messages, accumulated_context)
+    finally:
+        if token is not None:
+            _SYSTEM_PROMPT.reset(token)
+
+
+def _gateway_dispatch(query_text, chunk, llm_config, previous_messages, accumulated_context):
     from home_dash_analytics.agents.gateway import enforce, key_for, using_key
     from home_dash_analytics.agents.usage import actor
     config = llm_config if isinstance(llm_config, dict) else {}
@@ -666,8 +680,9 @@ def _dispatch_to_llm(
             history_text = _history_to_text(previous_messages, limit=10)
             ctx_prefix = f"[FINDINGS FROM PREVIOUS DOCUMENT SECTIONS]\n{accumulated_context}\n\n" if accumulated_context else ""
             prompt_parts = [
+                _SYSTEM_PROMPT.get() or (
                 "You are a precise, concise document QA assistant. Answer using only the document facts. "
-                "If unsure, say so. Cite section/part references when available.",
+                "If unsure, say so. Cite section/part references when available."),
                 ("Conversation so far:\n" + history_text) if history_text else None,
                 ctx_prefix + "Document:\n" + (chunk or "")[:200000],
                 "Task:\nAnswer the user question using only the document facts.",

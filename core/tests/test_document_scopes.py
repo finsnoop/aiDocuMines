@@ -8,7 +8,8 @@ from django.test import TestCase
 from rest_framework.exceptions import ValidationError
 from rest_framework.test import APIClient
 
-from core.assistant import compose_prompt, resolve_context
+from core.ai_harness import GUARDRAIL_DEFAULTS, system_prompt
+from core.assistant import resolve_context
 from core.models import File, Run
 from core.tests.test_assistant import ask, make_doc
 from core.tests.test_tenancy import make_user
@@ -151,7 +152,7 @@ class DocumentScopeTests(TestCase):
         self.assertEqual(r.status_code, 200, r.content)
         self.assertEqual(r.json()["context"]["files_read"], 1)
         self.assertEqual(r.json()["context"]["coverage"], "partial")
-        self.assertIn("Coverage is partial", llm.call_args[0][0])
+        self.assertIn("Coverage is partial", llm.call_args.kwargs["system_prompt"])
 
     def _many_documents(self, count):
         run = Run.objects.create(user=self.alice, status="Completed")
@@ -170,9 +171,9 @@ class DocumentScopeTests(TestCase):
         self.assertEqual(ctx.total_in_scope, 205)
         self.assertEqual(len(ctx.files), 200)
         self.assertEqual(ctx.files[0].filename, "bulk-000.pdf")
-        query, _ = compose_prompt("Summarise", ctx, [], [])
+        query = system_prompt(ctx, {"guardrails": dict(GUARDRAIL_DEFAULTS)}, web=False)
         self.assertIn("Coverage is partial", query)
-        self.assertIn("Do not infer collection-wide totals", query)
+        self.assertIn("do not infer collection-wide totals", query)
 
     def test_selection_keeps_more_than_twenty_documents(self):
         files = self._many_documents(25)

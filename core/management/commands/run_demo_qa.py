@@ -206,13 +206,15 @@ class Command(BaseCommand):
         row["checks"]["task"] = ok
 
     def check_answer(self, row, q, matter):
-        from core.assistant import build_sources, compose_prompt, resolve_context
+        from core import ai_harness as harness
+        from core.assistant import build_sources, resolve_context
         from grid_documents_interrogation.utils import dispatch_to_llm
         try:
             ctx = resolve_context(self.person, {"type": "matter", "id": str(matter.pk)})
             sources = build_sources(q["question"], ctx, self.person)
-            query, block = compose_prompt(q["question"], ctx, sources, [])
-            answer = dispatch_to_llm(query, block, self.config, [])
+            answer = harness.run(ctx, q["question"], sources, [], [], harness.settings_for(self.person),
+                                 lambda message, evidence, turns, system: dispatch_to_llm(
+                                     message, evidence, self.config, turns, system_prompt=system))["answer"]
         except Exception as exc:
             row["checks"]["answer"] = False
             row["notes"].append(f"Assistant failed: {exc}")

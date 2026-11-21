@@ -145,16 +145,17 @@ class RunnerTests(TestCase):
         from home_dash_analytics.agents import usage
         seen = []
 
-        def answer(query, context_block, config, history):
-            seen.append((query, context_block, usage.actor.get()))
+        def answer(query, context_block, config, history, system_prompt=None):
+            seen.append((query, context_block, usage.actor.get(), system_prompt))
             return "Ninety (90) days' written notice is required [S1]."
 
         with mock.patch("grid_documents_interrogation.utils.dispatch_to_llm", side_effect=answer):
             run = EvalRun.objects.create(suite="assistant", case_limit=2, started_by=self.platform)
             execute(run)                          # as from the management command: no request, no task signal
-        query, context_block, actor = seen[0]
-        self.assertIn("Cite every statement with its source label", query)
-        self.assertIn("Question: How much notice is needed to terminate for convenience?", query)
+        query, context_block, actor, system = seen[0]
+        self.assertIn("Cite every statement with its source label", system)      # the harness system prompt
+        self.assertIn("Use only the supplied sources", system)
+        self.assertIn("How much notice is needed to terminate for convenience?", query)
         self.assertIn("[S1] Services Agreement - Kestrel.docx", context_block)
         self.assertEqual(actor, self.platform)
         self.assertIsNone(usage.actor.get())      # reset afterwards

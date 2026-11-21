@@ -325,6 +325,10 @@ class OrganisationPolicy(models.Model):
     max_upload_mb = models.PositiveIntegerField(default=100)
     assistant_enabled = models.BooleanField(default=True)
     assistant_web_enabled = models.BooleanField(default=True)
+    # Ask Assistant buttons per page ({"documents": false, ...}; missing = on) and the AI harness guardrails
+    # (core/ai_harness.py SURFACES and GUARDRAIL_DEFAULTS; missing = platform default).
+    assistant_surfaces = models.JSONField(default=dict, blank=True)
+    assistant_guardrails = models.JSONField(default=dict, blank=True)
     default_ai_model = models.CharField(max_length=120, blank=True, default="")
     session_timeout_minutes = models.PositiveIntegerField(default=30)
     # AI access for the whole organisation, set by its administrators. When a key is set,

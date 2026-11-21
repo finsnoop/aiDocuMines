@@ -491,8 +491,14 @@ AI_PROVIDERS = ("", "litellm", "openai", "ollama", "vllm")
 
 
 def _policy_out(p):
+    from core import ai_harness as harness
     key = p.ai_api_key or ""
     return {f: getattr(p, f) for f in POLICY_FIELDS} | {
+        "assistant_surfaces": harness.surface_switches(p),
+        "assistant_guardrails": harness.guardrails(p),
+        "harness": {"surfaces": harness.SURFACES, "guardrail_defaults": harness.GUARDRAIL_DEFAULTS,
+                    "guardrail_choices": harness.GUARDRAIL_CHOICES, "bounds": harness.INT_BOUNDS,
+                    "always_on": harness.ALWAYS_ON},
         "updated_at": p.updated_at, "updated_by": p.updated_by.email if p.updated_by else None,
         # The key itself is never returned: only whether one is set and its last characters.
         "ai_key_configured": bool(key), "ai_key_hint": f"…{key[-4:]}" if len(key) >= 8 else ("set" if key else ""),
@@ -565,6 +571,27 @@ class PolicyView(APIView):
             if cleaned != (p.allowed_ai_models or []):
                 changed["allowed_ai_models"] = {"from": len(p.allowed_ai_models or []), "to": len(cleaned)}
                 p.allowed_ai_models = cleaned
+        # Ask Assistant buttons per page, and the AI harness guardrails (validated within safe bounds).
+        from core import ai_harness as harness
+        if "assistant_surfaces" in request.data:
+            try:
+                merged = {**harness.surface_switches(p), **harness.clean_surfaces(request.data["assistant_surfaces"])}
+            except ValueError as exc:
+                return Response({"error": str(exc)}, status=400)
+            if merged != harness.surface_switches(p):
+                off = sorted(k for k, on in merged.items() if not on)
+                changed["assistant_surfaces"] = {"off": off}
+                p.assistant_surfaces = merged
+        if "assistant_guardrails" in request.data:
+            try:
+                merged = harness.clean_guardrails({**harness.guardrails(p), **(request.data["assistant_guardrails"] or {})})
+            except (ValueError, TypeError) as exc:
+                return Response({"error": str(exc)}, status=400)
+            before = harness.guardrails(p)
+            if merged != before:
+                changed["assistant_guardrails"] = {k: {"from": before[k], "to": merged[k]}
+                                                   for k in merged if merged[k] != before[k]}
+                p.assistant_guardrails = merged
         # The default model must be one of the allowed ones.
         if p.allowed_ai_models and p.default_ai_model not in [m["model"] for m in p.allowed_ai_models]:
             p.default_ai_model = p.allowed_ai_models[0]["model"]
