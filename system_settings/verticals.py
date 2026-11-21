@@ -25,6 +25,10 @@ VERTICALS = [
     {'key': CORE, 'label': 'Core document services', 'industry': 'All industries', 'always_on': True,
      'description': 'OCR, translation, anonymisation, search, redlining, versioning, automation, Q&A.',
      'prefixes': ('ai services', 'core')},
+    {'key': 'knowledge', 'label': 'Playbooks & benchmarks', 'industry': 'All industries',
+     'description': 'Playbooks, benchmarks (policies, SLAs, master agreements) and deviation and compliance checks '
+                    'of any document, contract or matter against them.',
+     'prefixes': ('playbook', 'benchmark'), 'api': '/api/v1/knowledge/'},
     {'key': 'private_equity', 'label': 'Private Equity & M&A', 'industry': 'Legal',
      'description': 'Diligence workroom, closing automation, panel management, post-close tracking.',
      'prefixes': ('private equity',), 'api': '/api/v1/private-equity/'},

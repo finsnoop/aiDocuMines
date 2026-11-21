@@ -142,7 +142,10 @@ class Obligation(models.Model):
 
 
 class Playbook(models.Model):
-    """The organisation's negotiating positions for a kind of contract."""
+    """The organisation's review guidance for a kind of document: library details (what the Playbooks page shows:
+    description, rich content, category, tags, an uploaded document) and structured positions (topic, preferred
+    wording, fallbacks, red lines) that AI review checks documents against. Benchmarks it relies on are linked.
+    One organisation; see contracts/knowledge.py for access rules and the API."""
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     client = models.ForeignKey("custom_authentication.Client", on_delete=models.CASCADE, related_name="playbooks")
     name = models.CharField(max_length=255)
@@ -150,9 +153,26 @@ class Playbook(models.Model):
     active = models.BooleanField(default=True)
     created_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, on_delete=models.SET_NULL, related_name="+")
     created_at = models.DateTimeField(auto_now_add=True)
+    # Library details (formerly the Node service's playbooks table)
+    description = models.TextField(blank=True, default="")
+    content = models.TextField(blank=True, default="")                  # rich text / markdown guidance
+    category = models.CharField(max_length=60, blank=True, default="")  # e.g. legal-contracts
+    tags = models.JSONField(default=list, blank=True)                   # tag ids
+    industry = models.CharField(max_length=100, blank=True, default="")
+    document_type = models.CharField(max_length=100, blank=True, default="")
+    use_case = models.CharField(max_length=100, blank=True, default="")
+    version = models.PositiveIntegerField(default=1)
+    source_file = models.ForeignKey("core.File", null=True, blank=True, on_delete=models.SET_NULL, related_name="playbooks")
+    metadata = models.JSONField(default=dict, blank=True)
+    legacy_id = models.CharField(max_length=64, blank=True, default="", db_index=True)   # Node playbook id (migration)
+    updated_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="+")
+    updated_at = models.DateTimeField(auto_now=True)
+    benchmarks = models.ManyToManyField("Benchmark", blank=True, related_name="playbooks")
 
     class Meta:
         ordering = ["name"]
+        constraints = [models.UniqueConstraint(fields=["client", "legacy_id"], condition=~models.Q(legacy_id=""),
+                                               name="uniq_playbook_legacy_per_client")]
 
 
 class PlaybookPosition(models.Model):
@@ -171,13 +191,97 @@ class PlaybookPosition(models.Model):
         ordering = ["order", "id"]
 
 
+class Benchmark(models.Model):
+    """A reference standard the organisation measures documents against: a policy, SLA, master agreement,
+    regulation, template or precedent. The reference document itself lives in the document system (file), so it
+    keeps its permissions, versions and legal holds; its measurable requirements are BenchmarkTerms."""
+    KINDS = [("policy", "Policy"), ("sla", "Service level agreement"), ("msa", "Master agreement"),
+             ("standard", "Standard terms"), ("regulation", "Regulation"), ("template", "Template"),
+             ("precedent", "Precedent"), ("other", "Other")]
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    client = models.ForeignKey("custom_authentication.Client", on_delete=models.CASCADE, related_name="benchmarks")
+    name = models.CharField(max_length=255)
+    kind = models.CharField(max_length=12, choices=KINDS, default="policy")
+    description = models.TextField(blank=True, default="")
+    file = models.ForeignKey("core.File", null=True, blank=True, on_delete=models.SET_NULL, related_name="benchmarks")
+    category = models.CharField(max_length=60, blank=True, default="")
+    tags = models.JSONField(default=list, blank=True)
+    version_label = models.CharField(max_length=40, blank=True, default="")
+    effective_date = models.DateField(null=True, blank=True)
+    review_date = models.DateField(null=True, blank=True)
+    active = models.BooleanField(default=True)
+    created_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, on_delete=models.SET_NULL, related_name="+")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["name"]
+        indexes = [models.Index(fields=["client", "kind"])]
+
+    def __str__(self):
+        return self.name
+
+
+class BenchmarkTerm(models.Model):
+    """One measurable requirement of a benchmark, e.g. "uptime >= 99.9 %", "payment within 30 days",
+    "liability cap <= 1x annual fees", or a wording requirement ("governed by South African law").
+    Numbers are compared in code, never by the model: within target = compliant, within tolerance = deviation,
+    beyond tolerance = breach."""
+    COMPARATORS = [(">=", "At least"), ("<=", "At most"), ("=", "Exactly"), ("between", "Between"),
+                   ("present", "Must be present"), ("absent", "Must not be present")]
+    SEVERITIES = [("low", "Low"), ("medium", "Medium"), ("high", "High")]
+    benchmark = models.ForeignKey(Benchmark, on_delete=models.CASCADE, related_name="terms")
+    topic = models.CharField(max_length=120)                       # e.g. Service availability
+    requirement = models.TextField()                               # the requirement in words
+    comparator = models.CharField(max_length=8, choices=COMPARATORS, default="present")
+    target_value = models.DecimalField(max_digits=18, decimal_places=4, null=True, blank=True)
+    target_max = models.DecimalField(max_digits=18, decimal_places=4, null=True, blank=True)   # "between"
+    unit = models.CharField(max_length=20, blank=True, default="")  # %, days, hours, ZAR, x fees
+    tolerance = models.DecimalField(max_digits=18, decimal_places=4, null=True, blank=True)    # allowed gap
+    severity = models.CharField(max_length=6, choices=SEVERITIES, default="medium")
+    source_quote = models.TextField(blank=True, default="")         # verbatim from the benchmark document
+    order = models.PositiveIntegerField(default=1)
+
+    class Meta:
+        ordering = ["order", "id"]
+
+
+class KnowledgeLink(models.Model):
+    """Applies a playbook or a benchmark to a contract, a matter or a document (exactly one of each side).
+    A matter's links apply to its documents and contracts; a contract's to its document."""
+    client = models.ForeignKey("custom_authentication.Client", on_delete=models.CASCADE, related_name="knowledge_links")
+    playbook = models.ForeignKey(Playbook, null=True, blank=True, on_delete=models.CASCADE, related_name="links")
+    benchmark = models.ForeignKey(Benchmark, null=True, blank=True, on_delete=models.CASCADE, related_name="links")
+    contract = models.ForeignKey(Contract, null=True, blank=True, on_delete=models.CASCADE, related_name="knowledge_links")
+    matter = models.ForeignKey("core.Matter", null=True, blank=True, on_delete=models.CASCADE, related_name="knowledge_links")
+    file = models.ForeignKey("core.File", null=True, blank=True, on_delete=models.CASCADE, related_name="knowledge_links")
+    created_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, on_delete=models.SET_NULL, related_name="+")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        constraints = [
+            models.CheckConstraint(name="knowledge_link_one_source",
+                                   condition=(models.Q(playbook__isnull=False, benchmark__isnull=True)
+                                              | models.Q(playbook__isnull=True, benchmark__isnull=False))),
+            models.CheckConstraint(name="knowledge_link_one_target",
+                                   condition=(models.Q(contract__isnull=False, matter__isnull=True, file__isnull=True)
+                                              | models.Q(contract__isnull=True, matter__isnull=False, file__isnull=True)
+                                              | models.Q(contract__isnull=True, matter__isnull=True, file__isnull=False))),
+            models.UniqueConstraint(fields=["playbook", "benchmark", "contract", "matter", "file"],
+                                    name="uniq_knowledge_link", nulls_distinct=False),
+        ]
+
+
 class PlaybookReview(models.Model):
+    """A deviation / compliance analysis of one document against a playbook and/or benchmarks."""
     STATUSES = [("pending", "Queued"), ("running", "Reviewing"), ("done", "Done"), ("failed", "Failed")]
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     client = models.ForeignKey("custom_authentication.Client", on_delete=models.CASCADE, related_name="playbook_reviews")
     contract = models.ForeignKey(Contract, null=True, blank=True, on_delete=models.CASCADE, related_name="reviews")
     file = models.ForeignKey("core.File", null=True, on_delete=models.SET_NULL, related_name="playbook_reviews")
     playbook = models.ForeignKey(Playbook, null=True, on_delete=models.SET_NULL, related_name="reviews")
+    benchmarks = models.ManyToManyField(Benchmark, blank=True, related_name="reviews")
+    matter = models.ForeignKey("core.Matter", null=True, blank=True, on_delete=models.SET_NULL, related_name="reviews")
     status = models.CharField(max_length=8, choices=STATUSES, default="pending")
     error = models.TextField(blank=True, default="")
     summary = models.JSONField(default=dict, blank=True)
@@ -195,6 +299,10 @@ class ReviewFinding(models.Model):
                 ("unverified", "Could not be verified against the document")]
     review = models.ForeignKey(PlaybookReview, on_delete=models.CASCADE, related_name="findings")
     position = models.ForeignKey(PlaybookPosition, null=True, on_delete=models.SET_NULL, related_name="+")
+    benchmark_term = models.ForeignKey(BenchmarkTerm, null=True, blank=True, on_delete=models.SET_NULL, related_name="+")
+    measured_value = models.DecimalField(max_digits=18, decimal_places=4, null=True, blank=True)
+    gap = models.DecimalField(max_digits=18, decimal_places=4, null=True, blank=True)   # measured minus target
+    unit = models.CharField(max_length=20, blank=True, default="")
     topic = models.CharField(max_length=120)
     severity = models.CharField(max_length=6, default="medium")
     status = models.CharField(max_length=10, choices=STATUSES)

@@ -127,29 +127,43 @@ def document_text(file):
     return text
 
 
+def review_label(review) -> str:
+    names = ([review.playbook.name] if review.playbook_id else []) + [b.name for b in review.benchmarks.all()]
+    return ", ".join(names) or "playbook and benchmarks"
+
+
 def run(review):
-    """Carry out one review (called by the task)."""
+    """Carry out one review against the playbook's positions and the benchmarks' terms (called by the task)."""
     from core.access import can_access_file
     from home_dash_analytics.intelligence import agent_call, configured_model
-    from .models import ReviewFinding
+    from . import benchmarking
+    from .models import BenchmarkTerm, ReviewFinding
     user = review.requested_by
     if user is None or not user.is_active or review.file is None or not can_access_file(user, review.file, "process"):
         raise PermissionError("The requester can no longer review this document.")
-    positions = list(review.playbook.positions.all()) if review.playbook else []
-    if not positions:
-        raise ValueError("The playbook has no positions.")
+    positions = list(review.playbook.positions.all()) if review.playbook and review.playbook.client_id == review.client_id else []
+    terms = list(BenchmarkTerm.objects.filter(benchmark__in=review.benchmarks.all(), benchmark__client_id=review.client_id,
+                                              benchmark__active=True).select_related("benchmark"))
+    if not positions and not terms:
+        raise ValueError("Choose a playbook with positions or a benchmark with terms.")
     text = document_text(review.file)
     if not text.strip():
         raise ValueError("No text could be read from the document.")
-    messages, truncated = build_messages(positions, text)
-    raw = agent_call(user, configured_model(user), messages, "playbook_review")
-    findings = validate(raw, positions, text)
+    findings, truncated = [], False
+    if positions:
+        messages, truncated = build_messages(positions, text)
+        raw = agent_call(user, configured_model(user), messages, "playbook_review")
+        findings = validate(raw, positions, text)
+    if terms:
+        term_findings, cut = benchmarking.evaluate(user, terms, text)
+        findings += term_findings
+        truncated = truncated or cut
     review.findings.all().delete()
     ReviewFinding.objects.bulk_create([ReviewFinding(review=review, **{k: v for k, v in f.items()}) for f in findings])
     counts = {}
     for f in findings:
         counts[f["status"]] = counts.get(f["status"], 0) + 1
-    return {"counts": counts, "positions": len(positions), "truncated": truncated}
+    return {"counts": counts, "positions": len(positions), "terms": len(terms), "truncated": truncated}
 
 
 @shared_task(name="contracts.playbook_review", soft_time_limit=600, time_limit=660)
@@ -169,6 +183,6 @@ def playbook_review_task(review_id, user_id=None):
     review.save(update_fields=["status", "summary", "error", "finished_at"])
     if review.contract_id and review.status == "done":
         from .lifecycle import record
-        record(review.contract, "review", review.requested_by, note=f"Playbook review: {review.playbook.name}",
+        record(review.contract, "review", review.requested_by, note=f"Review against {review_label(review)}",
                **review.summary.get("counts", {}))
     return review.status

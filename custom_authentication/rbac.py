@@ -118,6 +118,9 @@ PERMISSION_DEFINITIONS = [
     ("playbook.upload", "Can upload playbook files", "playbook", "upload", ""),
     ("playbook.export", "Can export playbooks", "playbook", "export", ""),
     ("playbook.metadata", "Can manage playbook metadata", "playbook", "metadata", ""),
+    ("benchmark.view", "Can view benchmarks (policies, SLAs, master agreements)", "benchmark", "view", ""),
+    ("benchmark.manage", "Can create, change and remove benchmarks and their terms", "benchmark", "manage", ""),
+    ("knowledge.analyze", "Can check documents against playbooks and benchmarks", "knowledge", "analyze", ""),
 
     # ── Dashboard ────────────────────────────────────────────────────────
     ("dashboard.view", "Can view dashboards", "dashboard", "view", ""),
@@ -356,6 +359,8 @@ ROLE_DEFINITIONS = {
             "analytics.view", "analytics.insights",
             # Context assistant: chat with a file, folder or matter; optionally with web results.
             "assistant.ask", "assistant.web",
+            # Playbooks and benchmarks: see them and check documents they may process against them.
+            "playbook.view", "benchmark.view", "knowledge.analyze",
         ),
         inherits_from=["Guest"],
     ),
@@ -382,6 +387,8 @@ ROLE_DEFINITIONS = {
         "Manager", "Manager (Team Oversight)",
         _p(
             "contract.manage",
+            "playbook.create", "playbook.update", "playbook.delete", "playbook.upload", "playbook.export",
+            "playbook.metadata", "benchmark.manage",
             "document.delete", "document.export", "document.restore",
             "ocr.delete",
             "translation.delete",
