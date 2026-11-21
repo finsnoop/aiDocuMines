@@ -39,8 +39,6 @@ class ClientScopedViewMixin(APIView):
                 if self.FILE_RELATIONS[name] else access.accessible_files(user, "view", queryset)
         if name in access.RUN_FILE_RELATIONS:
             return access.scope_runs(user, queryset)
-        if access.is_platform_superuser(user):
-            return queryset
         client = self.get_client()
         if client is None:
             return queryset.none()

@@ -30,7 +30,7 @@ class ExplainDocumentAccessTests(TestCase):
         self.assertIn("legacy, unlinked", text)
         out = io.StringIO()
         call_command("explain_document_access", "--viewer", root.email, "--filename", "other-org", stdout=out)
-        self.assertIn("PLATFORM SUPERUSER", out.getvalue())
+        self.assertIn("matching 'other-org': 0", out.getvalue())     # superusers never see client content
         out = io.StringIO()
         call_command("explain_document_access", "--viewer", member.email, stdout=out)
         self.assertIn("own document", out.getvalue())

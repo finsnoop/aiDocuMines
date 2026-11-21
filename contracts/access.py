@@ -19,8 +19,6 @@ def contracts_for(user, queryset=None):
     from core.walls import walled_matter_ids
     from .models import Contract
     qs = queryset if queryset is not None else Contract.objects.all()
-    if is_platform_superuser(user) and tenant_id(user) is None:
-        return qs.exclude(matter_id__in=walled_matter_ids(user))
     tid = tenant_id(user)
     if tid is None:
         return qs.none()
@@ -38,7 +36,7 @@ def can_view(user, contract) -> bool:
 
 
 def can_edit(user, contract) -> bool:
-    if contract.client_id != tenant_id(user) and not is_platform_superuser(user):
+    if contract.client_id != tenant_id(user):
         return False
     return can_view(user, contract) and (is_manager(user) or contract.owner_id == user.pk)
 

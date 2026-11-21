@@ -4,7 +4,7 @@
 
 For the viewer: platform superuser? organisation administrator? which organisation?
 For each matching document they can see: owner and owner's organisation, the access rule that makes it visible
-(platform superuser / organisation admin / own document / shared / matter team), and its folder links
+(organisation admin / own document / shared / matter team; platform superusers see no other organisation's documents), and its folder links
 (active, archived, none). Documents with no folder link at all are listed as "legacy, unlinked": the table shows
 those even though they are in no folder, so a document whose links were removed but whose record remains
 reappears there.
@@ -52,8 +52,6 @@ class Command(BaseCommand):
                 rule = "matter team member"
             elif org_admin and owner_org == tid:
                 rule = "organisation admin (sees every document of the organisation)"
-            elif superuser:
-                rule = "PLATFORM SUPERUSER (sees every organisation's documents)"
             else:
                 rule = "UNEXPLAINED - report this"
             links = list(FileFolderLink.objects.filter(file=f).values_list("is_trashed", "folder__is_trashed"))

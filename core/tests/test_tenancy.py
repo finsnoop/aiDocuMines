@@ -103,8 +103,9 @@ class TenancyPolicyTests(TestCase):
         self.assertTrue(access.can_access_file(self.a_admin, self.fa1))
         self.assertFalse(access.can_access_file(self.a_admin, self.fb1))
 
-    def test_platform_superuser_sees_everything(self):
-        self.assertTrue(access.can_access_file(self.root, self.fb1))
+    def test_platform_superuser_does_not_see_client_content(self):
+        # CLIENT CONTENT POLICY: platform superusers administer the platform, not other organisations' documents.
+        self.assertFalse(access.can_access_file(self.root, self.fb1))
 
     def test_users_without_organisation_are_isolated(self):
         self.assertFalse(access.can_access_file(self.lonely, self.fa1))

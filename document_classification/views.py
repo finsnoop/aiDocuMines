@@ -50,10 +50,8 @@ def health_check(request):
 
 
 def _may_see_run(user, run):
-    """The person who started a clustering run, their organisation's admin, or a platform superuser."""
-    from core.access import is_platform_superuser, is_tenant_admin, same_tenant
-    if is_platform_superuser(user):
-        return True
+    """The person who started a clustering run, or an admin of their organisation (never another organisation)."""
+    from core.access import is_tenant_admin, same_tenant
     if run.user_id is None:
         return False  # a run without an owner is nobody's, not everybody's
     return run.user_id == user.id or (is_tenant_admin(user) and same_tenant(user, run.user))

@@ -624,7 +624,7 @@ def register_generated_file(file_path, user, run, project_id, service_id, folder
     if not os.path.isfile(file_path):
         raise FileNotFoundError("Cannot register a missing output file.")
     if source_file is not None and actor is not None:
-        if not can_access_file(actor, source_file, "process") or (actor.client_id != user.client_id and not is_platform_superuser(actor)):
+        if not can_access_file(actor, source_file, "process") or actor.client_id != user.client_id:
             raise PermissionError("Source access changed before output registration.")
     actor_tenant = getattr(actor, "client_id", None)
     if source_file is not None and actor is not None and expected_source_version is None:
@@ -649,7 +649,7 @@ def register_generated_file(file_path, user, run, project_id, service_id, folder
             actor, current_source = processing_file(source_file.pk, actor.pk, permission=permission)
             if actor.client_id != actor_tenant or source_version(current_source) != expected_source_version:
                 raise PermissionError("Source or organisation changed before output registration.")
-            if current_source.user_id != user.pk or (actor.client_id != current_source.user.client_id and not is_platform_superuser(actor)):
+            if current_source.user_id != user.pk or actor.client_id != current_source.user.client_id:
                 raise PermissionError("The output is outside the source organisation.")
             source_file, user = current_source, current_source.user
             project_id, service_id = current_source.project_id, current_source.service_id

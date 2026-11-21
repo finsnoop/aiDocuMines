@@ -240,6 +240,32 @@ def _extract_csv(path: Path) -> str:
         return ""
 
 
+def _extract_pptx(path: Path) -> str:
+    """Slide text, tables and speaker notes, slide by slide ("Slide 3: ...")."""
+    try:
+        from pptx import Presentation
+        deck = Presentation(str(path))
+    except Exception as e:
+        LOGGER.error("PPTX open failed [%s]: %s", path.name, e)
+        return ""
+    slides = []
+    for number, slide in enumerate(deck.slides, start=1):
+        parts = []
+        for shape in slide.shapes:
+            if getattr(shape, "has_text_frame", False) and shape.text_frame.text.strip():
+                parts.append(shape.text_frame.text.strip())
+            if getattr(shape, "has_table", False):
+                for row in shape.table.rows:
+                    cells = [c.text.strip() for c in row.cells]
+                    if any(cells):
+                        parts.append(" | ".join(cells))
+        if slide.has_notes_slide and slide.notes_slide.notes_text_frame.text.strip():
+            parts.append("Notes: " + slide.notes_slide.notes_text_frame.text.strip())
+        if parts:
+            slides.append(f"Slide {number}:\n" + "\n".join(parts))
+    return "\n\n".join(slides)
+
+
 def _extract_txt(path: Path) -> str:
     try:
         with path.open("r", encoding="utf-8", errors="ignore") as f:
@@ -287,6 +313,7 @@ def _extract_image(path: Path) -> str:
 _EXTRACTORS = {
     ".pdf": _extract_pdf,
     ".docx": _extract_docx,
+    ".pptx": _extract_pptx,
     ".xlsx": _extract_xlsx,
     ".xls": _extract_xls,
     ".csv": _extract_csv,
@@ -302,6 +329,16 @@ _EXTRACTORS = {
     ".tiff": _extract_image,
     ".bmp": _extract_image,
 }
+
+
+# Document types indexed for search and the Assistant automatically after upload (their text can be extracted).
+INDEXABLE_MIME_TYPES = frozenset({
+    "application/pdf",
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    "text/plain", "text/markdown", "text/csv", "text/html",
+})
 
 
 def extract_text(path: str | os.PathLike, *, allow_ocr: bool = False) -> str:

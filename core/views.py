@@ -287,7 +287,8 @@ def queue_post_upload_processing(user, run, fresh, project_id, service_id):
             logger.exception("Failed to trigger indexing for file_id=%s. Error: %s", fresh.id, str(e))
 
 
-    if fresh.file_type.lower() not in ["application/pdf", "application/vnd.openxmlformats-officedocument.wordprocessingml.document"]:
+    from document_search.utils import INDEXABLE_MIME_TYPES
+    if (fresh.file_type or "").lower().split(";")[0].strip() not in INDEXABLE_MIME_TYPES:
         logger.info("Skipping indexing for unsupported type: %s", fresh.file_type)
     elif not getattr(getattr(user, "settings", None), "auto_index_enabled", True):
         logger.info("Auto-indexing disabled for user %s", user.id)
@@ -392,8 +393,8 @@ def finalize_uploaded_file(*, user, run, project_id, service_id, file_path, file
         except Exception as e:
             logger.exception("Failed to trigger indexing for file_id=%s. Error: %s", fresh.id, str(e))
 
-    supported_types = ["application/pdf", "application/vnd.openxmlformats-officedocument.wordprocessingml.document"]
-    if fresh.file_type.lower() not in supported_types:
+    from document_search.utils import INDEXABLE_MIME_TYPES
+    if (fresh.file_type or "").lower().split(";")[0].strip() not in INDEXABLE_MIME_TYPES:
         logger.info("Skipping indexing for unsupported type: %s", fresh.file_type)
     elif not getattr(getattr(user, "settings", None), "auto_index_enabled", True):
         logger.info("Auto-indexing disabled for user %s", user.id)

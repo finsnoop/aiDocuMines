@@ -12,10 +12,13 @@ should go through this module. Rules:
    reached via `user.client`. Users without a client belong to no tenant and can
    only see their own objects.
 
-3. Platform superusers (is_superuser / SuperAdmin role) may act across tenants.
-   Tenant admins (Admin role or is_staff) may act on objects owned by users in
-   THEIR OWN tenant only. Everyone else may act on their own objects and on
-   objects explicitly shared with them.
+3. CLIENT CONTENT POLICY. Platform superusers (is_superuser / SuperAdmin role) administer the platform:
+   organisations, people, roles, sign-in, settings, AI models and limits, governance configuration, security,
+   service health and aggregate figures. They do NOT see client content (documents, folders, matters,
+   contracts, processing results, AI answers) of other organisations: for content they are treated exactly as
+   an administrator of their own organisation. Tenant admins (Admin role or is_staff) may act on objects owned
+   by users in THEIR OWN tenant only. Everyone else may act on their own objects and on objects explicitly
+   shared with them. Ethical walls apply to every role.
 
 4. Lookups for objects the caller may not access raise 404, not 403, so object
    IDs belonging to other tenants cannot be enumerated.
@@ -220,13 +223,14 @@ def _matter_member_files_q(user, action: str) -> Q:
 
 
 def matters_for_user(user):
-    """Matters visible to `user`: platform superuser all; tenant admin their org; others where member/creator."""
+    """Matters visible to `user`: organisation admins (platform superusers included) their own organisation;
+    others where member/creator. Never another organisation."""
     from core.models import Matter
 
     from core.walls import walled_matter_ids
     qs = Matter.objects.exclude(pk__in=walled_matter_ids(user))
-    if is_platform_superuser(user):
-        return qs
+    # Platform superusers run the platform, not clients' work: like any administrator they see their own
+    # organisation's matters only (CLIENT CONTENT POLICY at the top of this module).
     tid = tenant_id(user)
     if is_tenant_admin(user) and tid is not None:
         return qs.filter(client_id=tid)
@@ -234,12 +238,10 @@ def matters_for_user(user):
 
 
 def can_manage_matter(user, matter) -> bool:
-    """Rename, close, change the team: creator, tenant admin/manager of that org, platform superuser."""
+    """Rename, close, change the team: creator, or an admin/manager of that organisation (never another one)."""
     from core.walls import walled_matter_ids
     if matter.pk in walled_matter_ids(user):
         return False
-    if is_platform_superuser(user):
-        return True
     if matter.client_id != tenant_id(user):
         return False
     return matter.created_by_id == user.id or is_manager_or_admin(user)
@@ -297,10 +299,7 @@ def accessible_files_q(user, action: str = "view", prefix: str = "") -> Q:
         return Q(pk__in=[])
     from core.walls import walled_files_q
     walled = walled_files_q(user)   # ethical walls apply to every role, superusers included
-    if is_platform_superuser(user):
-        q = ~walled if walled is not None else Q()
-        return _prefix_q(q, prefix) if prefix else q
-
+    # No platform-wide branch: a platform superuser sees documents as an admin of their own organisation.
     q = Q(user=user)
     if is_tenant_admin(user) and tenant_id(user) is not None:
         q |= Q(user__client_id=tenant_id(user))
@@ -355,7 +354,7 @@ def can_access_file(user, file_obj, action: str = "view") -> bool:
     from core.walls import is_walled_file
     if is_walled_file(user, file_obj):
         return False   # ethical wall: no role, membership or share overrides it
-    if is_platform_superuser(user) or file_obj.user_id == user.id:
+    if file_obj.user_id == user.id:
         return True
     if is_tenant_admin(user) and tenant_id(user) is not None and \
             getattr(file_obj.user, "client_id", None) == tenant_id(user):
@@ -470,11 +469,9 @@ RUN_FILE_RELATIONS = {
 
 
 def runs_q(user, model) -> Q:
-    """Q restricting a processing-run queryset to runs `user` may see."""
+    """Q restricting a processing-run queryset to runs `user` may see (never another organisation's)."""
     if not _is_authenticated(user):
         return Q(pk__in=[])
-    if is_platform_superuser(user):
-        return Q()
     tid = tenant_id(user)
     same_or_no_tenant = (Q(client__isnull=True) | Q(client_id=tid)) if tid is not None else Q(client__isnull=True)
     owner_names = [n for n in {getattr(user, "username", None), getattr(user, "email", None)} if n]
@@ -512,13 +509,11 @@ def get_run_for_user(user, model, run_id, **extra):
 def client_name_q(user, field: str = "client_name") -> Q:
     """
     For legacy models that record their owner as a username string (`client_name`):
-    own rows; every row created by a user of the tenant for tenant admins; all rows
-    for platform superusers.
+    own rows; every row created by a user of the tenant for tenant admins (platform superusers included:
+    their own organisation only).
     """
     if not _is_authenticated(user):
         return Q(pk__in=[])
-    if is_platform_superuser(user):
-        return Q()
     names = {n for n in (getattr(user, "username", None), getattr(user, "email", None)) if n}
     if is_tenant_admin(user) and tenant_id(user) is not None:
         from django.contrib.auth import get_user_model
@@ -537,9 +532,7 @@ def run_owner_fields(user) -> dict:
 
 
 def scope_by_owner(user, queryset, owner_field: str = "user"):
-    """Restrict a queryset with a direct user FK: own rows, tenant rows for admins, all for superusers."""
-    if is_platform_superuser(user):
-        return queryset
+    """Restrict a queryset with a direct user FK: own rows, and the organisation's rows for its admins."""
     q = Q(**{owner_field: user})
     if is_tenant_admin(user) and tenant_id(user) is not None:
         q |= Q(**{f"{owner_field}__client_id": tenant_id(user)})
@@ -561,7 +554,7 @@ def can_access_folder(user, folder, action: str = "view") -> bool:
     from core.walls import is_walled_folder
     if is_walled_folder(user, folder):
         return False
-    if is_platform_superuser(user) or folder.user_id == user.id:
+    if folder.user_id == user.id:
         return True
     tid = tenant_id(user)
     if tid is None or getattr(folder.user, "client_id", None) != tid:

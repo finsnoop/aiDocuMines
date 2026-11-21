@@ -66,7 +66,7 @@ def async_bulk_move_files_to_folder(file_ids, folder_id, actor_user_id=None):
     with transaction.atomic():
         for link in links:
             file = link.file
-            if file.user_id != actor.pk and not access.is_tenant_admin(actor) and not access.is_platform_superuser(actor) and not access.can_access_file(actor, file, "share"):
+            if file.user_id != actor.pk and not access.is_tenant_admin(actor) and not access.can_access_file(actor, file, "share"):
                 raise ValueError("Copy this shared document instead; moving it requires its owner's sharing authority.")
             other_projects = file.folder_links.exclude(pk=link.pk).exclude(folder__project_id=folder.project_id)
             if other_projects.exists():

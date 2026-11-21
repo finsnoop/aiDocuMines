@@ -113,17 +113,16 @@ class DocumentActionContextView(APIView):
             raise Http404("File not found.")
         filters = document_filters({"folder": request.query_params.get("folder")})
         links = FileFolderLink.objects.filter(file=f, is_trashed=False, folder__is_trashed=False)
-        if not is_platform_superuser(user):
-            folders = Q(folder__user=user)
-            tid = tenant_id(user)
-            if tid is not None:
-                same_tenant = Q(folder__user__client_id=tid)
-                if is_tenant_admin(user):
-                    folders |= same_tenant
-                else:
-                    granted = EffectiveAccess.objects.filter(user=user, can_download=True, folder__isnull=False)
-                    folders |= same_tenant & Q(folder_id__in=granted.values("folder_id"))
-            links = links.filter(folders)
+        folders = Q(folder__user=user)
+        tid = tenant_id(user)
+        if tid is not None:
+            same_tenant = Q(folder__user__client_id=tid)
+            if is_tenant_admin(user):
+                folders |= same_tenant
+            else:
+                granted = EffectiveAccess.objects.filter(user=user, can_download=True, folder__isnull=False)
+                folders |= same_tenant & Q(folder_id__in=granted.values("folder_id"))
+        links = links.filter(folders)
         if filters.get("folder"):
             import uuid
             folder = get_folder_for_user(user, uuid.UUID(filters["folder"]), "view")

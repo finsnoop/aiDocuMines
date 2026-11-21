@@ -109,7 +109,7 @@ def resolve_context(user, spec: dict) -> Context:
         file_ids = FileFolderLink.objects.filter(folder_id__in=_folder_ids_below(folder.id), is_trashed=False) \
             .values("file_id")
         qs = readable.filter(id__in=file_ids)
-        owner_side = (folder.user_id == user.id or is_platform_superuser(user) or
+        owner_side = (folder.user_id == user.id or
                       (is_tenant_admin(user) and getattr(folder.user, "client_id", None) == tenant_id(user)))
         if not owner_side and not qs.exists():
             raise Http404("Folder not found")  # no visible content and not theirs: do not reveal it exists
