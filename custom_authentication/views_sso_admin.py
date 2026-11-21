@@ -2,10 +2,15 @@
 Single sign-on and SCIM settings for an organisation (its administrators; platform superusers with ?organisation=).
 
 GET   /api/v1/auth/admin/sso/                 settings (the client secret is never returned)
-PATCH /api/v1/auth/admin/sso/                 {enabled, issuer_url, client_id, client_secret?, email_domains,
-                                                enforce_sso, auto_provision, default_role, scim_enabled}
+PATCH /api/v1/auth/admin/sso/                 {enabled, protocol: oidc|saml, email_domains, enforce_sso, auto_provision,
+                                                default_role, scim_enabled,
+                                                OpenID Connect: issuer_url, client_id, client_secret?,
+                                                SAML 2.0: saml_metadata_xml? (fills the next three), saml_idp_entity_id,
+                                                saml_idp_sso_url, saml_idp_certificates, saml_email_attribute,
+                                                saml_send_login_hint}
 POST  /api/v1/auth/admin/sso/scim-token/      a new SCIM token, shown once (the previous one stops working)
-POST  /api/v1/auth/admin/sso/test/            reach the provider's OpenID configuration
+POST  /api/v1/auth/admin/sso/test/            OpenID Connect: reach the provider's configuration;
+                                              SAML: check the identity provider settings and certificates
 """
 import re
 import secrets
@@ -33,12 +38,18 @@ def _target(request):
 
 
 def _out(cfg, request):
+    from .saml import acs_url, certificate_summary, sp_entity_id
     from .sso import callback_url
-    return {"enabled": cfg.enabled, "issuer_url": cfg.issuer_url, "client_id": cfg.oidc_client_id,
+    return {"enabled": cfg.enabled, "protocol": cfg.protocol, "issuer_url": cfg.issuer_url, "client_id": cfg.oidc_client_id,
             "client_secret_configured": bool(cfg.client_secret), "email_domains": cfg.email_domains,
             "enforce_sso": cfg.enforce_sso, "auto_provision": cfg.auto_provision, "default_role": cfg.default_role,
             "scim_enabled": cfg.scim_enabled, "scim_token_configured": bool(cfg.scim_token_hash),
             "callback_url": callback_url(request),
+            "saml_idp_entity_id": cfg.saml_idp_entity_id, "saml_idp_sso_url": cfg.saml_idp_sso_url,
+            "saml_idp_certificates": cfg.saml_idp_certificates, "saml_certificates": certificate_summary(cfg),
+            "saml_email_attribute": cfg.saml_email_attribute, "saml_send_login_hint": cfg.saml_send_login_hint,
+            "saml_sp_entity_id": sp_entity_id(request), "saml_acs_url": acs_url(request),
+            "saml_sp_metadata_url": sp_entity_id(request),
             "scim_base_url": request.build_absolute_uri("/api/v1/scim/v2/").rstrip("/"),
             "updated_at": cfg.updated_at, "updated_by": cfg.updated_by.email if cfg.updated_by else None}
 
@@ -59,13 +70,21 @@ class SSOSettingsView(APIView):
         if cfg is None:
             return _forbidden()
         data, changed = request.data, {}
-        for f in ("enabled", "enforce_sso", "auto_provision", "scim_enabled"):
+        for f in ("enabled", "enforce_sso", "auto_provision", "scim_enabled", "saml_send_login_hint"):
             if f in data:
                 v = data[f]
                 v = v.strip().lower() in ("1", "true", "yes", "on") if isinstance(v, str) else bool(v)
                 if getattr(cfg, f) != v:
                     changed[f] = v
                     setattr(cfg, f, v)
+        if "protocol" in data:
+            if data["protocol"] not in ("oidc", "saml"):
+                return Response({"error": "Choose OpenID Connect or SAML 2.0."}, status=400)
+            if cfg.protocol != data["protocol"]:
+                cfg.protocol, changed["protocol"] = data["protocol"], data["protocol"]
+        error = _apply_saml(cfg, data, changed)
+        if error:
+            return Response({"error": error}, status=400)
         if "issuer_url" in data:
             url = str(data["issuer_url"] or "").strip().rstrip("/")[:500]
             if url and not url.startswith("https://"):
@@ -93,13 +112,45 @@ class SSOSettingsView(APIView):
             if role not in ROLE_DEFINITIONS or role in ("SuperAdmin", "Admin"):
                 return Response({"error": "Choose a standard role for new accounts (not an administrator role)."}, status=400)
             cfg.default_role, changed["default_role"] = role, role
-        if cfg.enabled and not (cfg.issuer_url and cfg.oidc_client_id and cfg.client_secret and cfg.domains()):
-            return Response({"error": "Fill in the provider address, client ID, client secret and email domains before "
-                                      "turning single sign-on on."}, status=400)
+        if cfg.enabled and not (cfg.provider_configured() and cfg.domains()):
+            needed = ("the identity provider's entity ID, sign-in address and signing certificate (or import its metadata)"
+                      if cfg.protocol == "saml" else "the provider address, client ID and client secret")
+            return Response({"error": f"Fill in {needed}, and the email domains, before turning single sign-on on."}, status=400)
         cfg.updated_by = request.user
         cfg.save()
         audit(request, "sso.update", "organisation", cfg.client_id, client_id=cfg.client_id, changes=changed)
         return Response(_out(cfg, request))
+
+
+def _apply_saml(cfg, data, changed):
+    """Apply SAML fields from the request; returns an error message or None."""
+    from .saml import normalise_certificates, parse_idp_metadata
+    from .sso import SSOError
+    try:
+        if str(data.get("saml_metadata_xml") or "").strip():
+            meta = parse_idp_metadata(str(data["saml_metadata_xml"]))
+            cfg.saml_idp_entity_id, cfg.saml_idp_sso_url = meta["entity_id"][:500], meta["sso_url"][:1000]
+            cfg.saml_idp_certificates = meta["certificates"]
+            changed["saml_metadata"] = "imported"
+            return None
+        if "saml_idp_entity_id" in data:
+            cfg.saml_idp_entity_id = str(data["saml_idp_entity_id"] or "").strip()[:500]
+            changed["saml_idp_entity_id"] = cfg.saml_idp_entity_id
+        if "saml_idp_sso_url" in data:
+            url = str(data["saml_idp_sso_url"] or "").strip()[:1000]
+            if url and not url.startswith("https://"):
+                return "The identity provider's sign-in address must start with https://"
+            cfg.saml_idp_sso_url, changed["saml_idp_sso_url"] = url, url
+        if "saml_idp_certificates" in data:
+            new = normalise_certificates(str(data["saml_idp_certificates"] or ""))
+            if new != cfg.saml_idp_certificates:
+                cfg.saml_idp_certificates, changed["saml_idp_certificates"] = new, "replaced"
+        if "saml_email_attribute" in data:
+            cfg.saml_email_attribute = str(data["saml_email_attribute"] or "").strip()[:200]
+            changed["saml_email_attribute"] = cfg.saml_email_attribute
+    except SSOError as exc:
+        return str(exc)
+    return None
 
 
 class SCIMTokenView(APIView):
@@ -125,6 +176,16 @@ class SSOTestView(APIView):
         cfg = _target(request)
         if cfg is None:
             return _forbidden()
+        if cfg.protocol == "saml":
+            from .saml import certificate_summary, check_config
+            try:
+                check_config(cfg)
+            except SSOError as exc:
+                return Response({"ok": False, "error": str(exc)}, status=200)
+            certs = certificate_summary(cfg)
+            if all(c["expired"] for c in certs):
+                return Response({"ok": False, "error": "Every configured signing certificate has expired."}, status=200)
+            return Response({"ok": True, "issuer": cfg.saml_idp_entity_id, "certificates": certs})
         try:
             meta = discovery(cfg)
         except SSOError as exc:

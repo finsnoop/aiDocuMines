@@ -1,5 +1,6 @@
 """
 Single sign-on with an organisation's identity provider (OpenID Connect: Entra ID, Okta, Google, ...).
+SAML 2.0 identity providers start here too and return to saml.SAMLACSView (see saml.py).
 
     POST /api/v1/auth/sso/discover/  {email}                       does this email sign in with SSO?
     POST /api/v1/auth/sso/start/     {email, code_challenge, code_challenge_method, redirect_uri}
@@ -193,6 +194,16 @@ class SSOStartView(APIView):
         cfg = config_for_email(email)
         if cfg is None:
             return Response({"error": "Single sign-on is not set up for this email address."}, status=404)
+        if cfg.protocol == "saml":
+            from .saml import authn_request_url
+            state = secrets.token_urlsafe(32)
+            try:
+                request_id, url = authn_request_url(cfg, request, state, login_hint=email)
+            except SSOError as exc:
+                return Response({"error": str(exc)}, status=502)
+            cache.set(f"sso-state:{state}", {"protocol": "saml", "org": cfg.client_id, "challenge": challenge,
+                                             "redirect_uri": redirect_uri, "request_id": request_id}, STATE_TTL)
+            return Response({"authorize_url": url})
         try:
             meta = discovery(cfg)
         except SSOError as exc:
@@ -223,10 +234,12 @@ class SSOCallbackView(APIView):
             return _back(settings.SPA_REDIRECT_URIS[0] if settings.SPA_REDIRECT_URIS else "/",
                          error="This sign-in link has expired. Please start again.")
         redirect_uri = saved["redirect_uri"]
+        if saved.get("protocol") == "saml":      # a SAML state can only be completed at the SAML ACS
+            return _back(redirect_uri, error="This sign-in link has expired. Please start again.")
         if request.query_params.get("error"):
             return _back(redirect_uri, error="Sign-in was cancelled or refused by your identity provider.")
         try:
-            cfg = OrganisationSSO.objects.select_related("client").get(client_id=saved["org"], enabled=True)
+            cfg = OrganisationSSO.objects.select_related("client").get(client_id=saved["org"], enabled=True, protocol="oidc")
             meta = discovery(cfg)
             token = requests.post(meta["token_endpoint"], timeout=10, data={
                 "grant_type": "authorization_code", "code": str(request.query_params.get("code") or ""),

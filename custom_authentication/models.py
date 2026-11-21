@@ -405,13 +405,21 @@ class AdminAuditEvent(models.Model):
 
 
 class OrganisationSSO(models.Model):
-    """Single sign-on with the organisation's identity provider (OpenID Connect: Entra ID, Okta, Google ...)
-    and SCIM user provisioning. Flow and checks: custom_authentication/sso.py and scim.py."""
+    """Single sign-on with the organisation's identity provider (OpenID Connect or SAML 2.0: Entra ID, Okta,
+    ADFS, Google ...) and SCIM user provisioning. Flows and checks: custom_authentication/sso.py, saml.py, scim.py."""
+    PROTOCOLS = [("oidc", "OpenID Connect"), ("saml", "SAML 2.0")]
     client = models.OneToOneField(Client, on_delete=models.CASCADE, related_name="sso")
     enabled = models.BooleanField(default=False)
+    protocol = models.CharField(max_length=4, choices=PROTOCOLS, default="oidc")
     issuer_url = models.URLField(max_length=500, blank=True, default="")   # e.g. https://login.microsoftonline.com/<tenant>/v2.0
     oidc_client_id = models.CharField(max_length=255, blank=True, default="")   # the app registered at the provider
     client_secret = EncryptedCharField(max_length=1000, blank=True, default="")
+    # SAML 2.0 identity provider (from its metadata or entered by hand)
+    saml_idp_entity_id = models.CharField(max_length=500, blank=True, default="")
+    saml_idp_sso_url = models.URLField(max_length=1000, blank=True, default="")      # HTTP-Redirect binding
+    saml_idp_certificates = models.TextField(blank=True, default="")                 # PEM; several during rollover
+    saml_email_attribute = models.CharField(max_length=200, blank=True, default="")  # empty: common names, then NameID
+    saml_send_login_hint = models.BooleanField(default=True)                          # Subject in the AuthnRequest
     email_domains = models.CharField(max_length=1000, blank=True, default="")   # comma separated, e.g. "firm.com,firm.co.za"
     enforce_sso = models.BooleanField(default=False)       # password sign-in refused for these domains (admins excepted)
     auto_provision = models.BooleanField(default=False)    # first sign-in creates the account
@@ -423,6 +431,11 @@ class OrganisationSSO(models.Model):
 
     def domains(self):
         return [d.strip().lower() for d in self.email_domains.split(",") if d.strip()]
+
+    def provider_configured(self) -> bool:
+        if self.protocol == "saml":
+            return bool(self.saml_idp_entity_id and self.saml_idp_sso_url and self.saml_idp_certificates)
+        return bool(self.issuer_url and self.oidc_client_id and self.client_secret)
 
     def __str__(self):
         return f"SSO for {self.client}"

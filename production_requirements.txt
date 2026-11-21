@@ -241,6 +241,7 @@ safetensors
 scikit-learn
 scipy
 sentence-transformers
+signxml==5.3.0  # SAML 2.0 sign-in: XML signature verification (pure Python; lxml + cryptography)
 six
 sniffio
 sympy

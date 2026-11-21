@@ -1,5 +1,6 @@
 from .browser_auth import BrowserAuthorizeView
 from .views_audit_export import AuditExportView, AuditVerifyView
+from .saml import SAMLACSView, SAMLMetadataView
 from .sso import SSOCallbackView, SSODiscoverView, SSOStartView
 from .views_sso_admin import SCIMTokenView, SSOSettingsView, SSOTestView
 from django.urls import path
@@ -26,6 +27,8 @@ urlpatterns = [
     path("sso/discover/", SSODiscoverView.as_view(), name="sso_discover"),
     path("sso/start/", SSOStartView.as_view(), name="sso_start"),
     path("sso/callback/", SSOCallbackView.as_view(), name="sso_callback"),
+    path("sso/saml/metadata/", SAMLMetadataView.as_view(), name="sso_saml_metadata"),
+    path("sso/saml/acs/", SAMLACSView.as_view(), name="sso_saml_acs"),
     path("admin/sso/", SSOSettingsView.as_view(), name="admin_sso"),
     path("admin/sso/scim-token/", SCIMTokenView.as_view(), name="admin_scim_token"),
     path("admin/sso/test/", SSOTestView.as_view(), name="admin_sso_test"),

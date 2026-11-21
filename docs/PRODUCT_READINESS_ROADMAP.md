@@ -43,7 +43,7 @@ Nothing below is optional for production. The platform is **production-ready** w
 - [ ] Infrastructure as code for every environment; staging mirrors production
 
 ### 2.2 Security and compliance
-- [x] Inbound enterprise SSO: customers sign in with Entra ID (Azure AD), Okta or Google via SAML 2.0 or OIDC (2026-11-21: OIDC done in `custom_authentication/sso.py`, optional enforcement; SAML 2.0 still open)
+- [x] Inbound enterprise SSO: customers sign in with Entra ID (Azure AD), Okta or Google via SAML 2.0 or OIDC (2026-11-21: OIDC in `custom_authentication/sso.py` and SAML 2.0 in `saml.py` (metadata import, certificate rollover, signature-wrapping, replay and comment-truncation defences), optional enforcement)
 - [x] SCIM user provisioning and deprovisioning (2026-11-21: SCIM 2.0 Users in `custom_authentication/scim.py`; deactivation ends sessions)
 - [x] MFA enforceable per organisation (2026-11-21: "Require two-step sign-in" setting; emailed code at every password sign-in)
 - [ ] Independent penetration test; all high and critical findings fixed
@@ -76,7 +76,7 @@ Each phase ends with a gate: re-score Section 1, update positioning, and only th
 ### Phase 1: Enterprise trust (weeks 1 to 6)
 Goal: pass a law firm's security questionnaire.
 - [ ] Azure migration with the reliability items in 2.1
-- [x] SSO (OIDC; SAML open) and SCIM from 2.2
+- [x] SSO (OIDC and SAML 2.0) and SCIM from 2.2
 - [ ] Backup and restore drill
 - [ ] Penetration test booked and remediated
 - [ ] SOC 2 readiness programme started
@@ -118,7 +118,7 @@ Use this table for tracking; link tickets in the last column.
 | # | Gap | Area | Phase | Competitors that have it | Status | Ticket |
 |---|---|---|---|---|---|---|
 | G1 | Single VPS, no tested disaster recovery or uptime commitment | Infrastructure | 1 | All enterprise vendors | Open | |
-| G2 | No inbound SSO (SAML/OIDC from customer identity providers) or SCIM | Security | 1 | iManage, NetDocuments, Ironclad, Harvey | Done 2026-11-21 (OIDC + SCIM; SAML open) | |
+| G2 | No inbound SSO (SAML/OIDC from customer identity providers) or SCIM | Security | 1 | iManage, NetDocuments, Ironclad, Harvey | Done 2026-11-21 (OIDC, SAML 2.0, SCIM) | |
 | G3 | No SOC 2 / ISO 27001, no pen test on record | Security | 1 | All enterprise vendors | Open | |
 | G4 | No Outlook add-in for filing email into matters | DMS | 2 | iManage, NetDocuments | Done 2026-11-21 (needs Microsoft 365 deployment) | |
 | G5 | No Word add-in | DMS, CLM | 2 | iManage, NetDocuments, Ironclad, Spellbook | Done 2026-11-21 (needs Microsoft 365 deployment) | |
