@@ -61,7 +61,7 @@ Nothing below is optional for production. The platform is **production-ready** w
 - [x] Immutable audit log export for every action, including AI calls (2026-11-21: hash-chained, append-only admin audit events; export of admin, sign-in, assistant, document and AI-call records with SHA-256; integrity check)
 
 ### 2.4 Quality bar
-- [ ] All API and frontend test suites green in CI on every merge (today: 537 API, 231 frontend, run locally)
+- [ ] All API and frontend test suites green in CI on every merge (today: 591 API, 243 frontend, run locally)
 - [ ] End-to-end browser tests for the core journeys: upload to a matter, search, open, edit, share, archive and delete, ask the assistant, run OCR, translate and anonymise
 - [ ] Accessibility: WCAG 2.1 AA on core pages
 - [ ] Localisation framework in place (English first; structure for more languages)
@@ -87,13 +87,13 @@ Goal: pass a law firm's security questionnaire.
 Goal: close the biggest functional gaps against iManage, NetDocuments and Ironclad.
 - [ ] **Outlook add-in:** file emails and attachments into matters through the shared ingestion pipeline (`core/ingest.py`), suggest the matter with AI, search the DMS from Outlook
 - [ ] **Word add-in:** open from and save to the DMS, insert clauses, AI review in the side panel
-- [ ] **Contract record** with lifecycle stages: request, draft, review, approve, sign, active, renew or expire
-- [ ] **Intake form** that starts a contract request and routes it
-- [ ] **Approval routing** built on `document_workflows`
+- [x] **Contract record** with lifecycle stages: request, draft, review, approve, sign, active, renew or expire (2026-11-21: `contracts` app, Contracts page)
+- [x] **Intake form** that starts a contract request and routes it (2026-11-21: requests queue for contract managers)
+- [x] **Approval routing** (2026-11-21: rules by type, value, person or role; separation of duties; rejection returns to review)
 - [ ] **E-signature:** DocuSign and Adobe Sign integrations first (native signing later)
-- [ ] **Obligations and renewals** for every organisation: lift `PostCloseObligation` and `SignatureTracker` out of `private_equity`; obligations, notice dates and renewals become tasks with reminders
-- [ ] **Playbook review:** AI checks a contract against the organisation's positions and fallbacks and proposes redlines
-- [ ] Records and governance items from 2.3
+- [x] **Obligations and renewals** for every organisation (2026-11-21: automatic renewal-notice and expiry obligations, recurrence, daily renewal/expiry run, email reminders; `import_pe_obligations` copies private-equity obligations; signatures follow with e-signature)
+- [x] **Playbook review:** AI checks a contract against the organisation's positions and fallbacks and proposes redlines (2026-11-21: verbatim-quote verification, bounded prompts, AI gateway limits; Contracts, Playbooks)
+- [x] Records and governance items from 2.3 (2026-11-21)
 
 **Done when:** a contract goes from request to signature to renewal reminder without leaving the platform, and email filing from Outlook is in daily use by a pilot.
 
@@ -123,10 +123,10 @@ Use this table for tracking; link tickets in the last column.
 | G4 | No Outlook add-in for filing email into matters | DMS | 2 | iManage, NetDocuments | Open | |
 | G5 | No Word add-in | DMS, CLM | 2 | iManage, NetDocuments, Ironclad, Spellbook | Open | |
 | G6 | No legal hold, retention schedules, ethical walls, watermarking or check-out | DMS | 2 | iManage, NetDocuments, M-Files | Done 2026-11-20 (watermarks cover PDFs; Office formats open) | |
-| G7 | No contract lifecycle stages, intake or approval routing | CLM | 2 | Ironclad, Icertis, Agiloft, Juro | Open | |
+| G7 | No contract lifecycle stages, intake or approval routing | CLM | 2 | Ironclad, Icertis, Agiloft, Juro | Done 2026-11-21 | |
 | G8 | No e-signature | CLM | 2 | DocuSign CLM, Ironclad, Juro | Open | |
-| G9 | Obligations and signatures only in the private-equity module | CLM | 2 | Icertis, Ironclad | Open | |
-| G10 | No playbook-based AI contract review | CLM, AI | 2 | Luminance, Spellbook, Ironclad | Open | |
+| G9 | Obligations and signatures only in the private-equity module | CLM | 2 | Icertis, Ironclad | Obligations done 2026-11-21; signatures with G8 | |
+| G10 | No playbook-based AI contract review | CLM, AI | 2 | Luminance, Spellbook, Ironclad | Done 2026-11-21 | |
 | G11 | No published AI accuracy benchmarks | AI | 3 | Luminance, Kira, Harvey | Open | |
 | G12 | Private-equity AI calls not metered by the AI gateway | AI | 3 | n/a | Done 2026-11-20 | |
 | G13 | No CRM objects (contacts, companies, relationships, pipeline) | CRM | 4 | Salesforce, HubSpot, InterAction | Open | |
@@ -175,6 +175,8 @@ These apply to all three repositories (API, frontend, sign-in service).
 - **2026-11-20:** G12 closed (all DSPy calls metered and limited). G6 closed: legal holds, ethical walls, PDF watermarks, check-out locking, retention and disposition with approval. Also fixed: the document editor opened in edit mode for read-only users; admin settings treated the text "false" as on. Azure migration (G1) deliberately last, for cost.
 
 - **2026-11-21:** G2 closed for OIDC (Entra ID, Okta, Google) with SCIM provisioning and enforceable SSO; two-step sign-in can be required per organisation; G16 closed; tamper-evident audit trail with export and verification.
+
+- **2026-11-21:** CI runs on the working branches with frontend and Node unit tests; G7 closed, G9 obligations closed and G10 closed (Contracts page).
 
 ## 8. Review cadence
 

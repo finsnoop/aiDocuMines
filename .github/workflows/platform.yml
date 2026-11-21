@@ -2,7 +2,7 @@
 #   aiDocuMines (API layer, this repo) + aiDocuMines-Backend (Node) + aiDocuMines-Frontend (Angular)
 #
 # Triggers
-#   - push / PR to this repo
+#   - push / PR to this repo (main deploys; the mvp_augment_* working branches are tested, never deployed)
 #   - repository_dispatch "platform-build" sent by the Backend and Frontend repos on push
 #     (see .github/workflows/trigger-platform.yml in those repos)
 #   - manual run (Actions tab) with optional refs and a deploy switch
@@ -18,6 +18,8 @@
 # Repository variables (Settings > Variables)
 #   CAPROVER_BACKEND_APP (default aidocumines-backend), CAPROVER_FRONTEND_APP (default aidocumines)
 #   PUBLIC_API_URL, PUBLIC_BACKEND_URL, PUBLIC_ONLYOFFICE_URL   baked into the frontend build
+#   BACKEND_DEV_REF (default mvp_augment_version), FRONTEND_DEV_REF (default mvp_branch_augment_version)
+#     the other repos' refs tested together with a push to this repo's working branch
 #   DEPLOY_PATH  directory on the server that contains the three repo checkouts
 # Create a GitHub environment named "production" with required reviewers to gate deploys.
 
@@ -25,7 +27,7 @@ name: Platform CI/CD
 
 on:
   push:
-    branches: [main]
+    branches: [main, mvp_augment_branch]
   pull_request:
   repository_dispatch:
     types: [platform-build]
@@ -73,16 +75,26 @@ jobs:
           IN_FRONTEND: ${{ inputs.frontend_ref }}
           IN_DEPLOY: ${{ inputs.deploy }}
           REF: ${{ github.ref }}
+          P_BRANCH: ${{ github.event.client_payload.branch }}
+          BACKEND_DEV: ${{ vars.BACKEND_DEV_REF || 'mvp_augment_version' }}
+          FRONTEND_DEV: ${{ vars.FRONTEND_DEV_REF || 'mvp_branch_augment_version' }}
         run: |
           api="${GITHUB_SHA}"; backend="main"; frontend="main"; deploy="false"
+          # A working-branch change is tested with the other repos' working branches; main with main.
+          if [ "$REF" != "refs/heads/main" ] && [ "$EVENT" != "workflow_dispatch" ]; then
+            backend="$BACKEND_DEV"; frontend="$FRONTEND_DEV"
+          fi
           case "$EVENT" in
             workflow_dispatch)
               backend="${IN_BACKEND:-main}"; frontend="${IN_FRONTEND:-main}"; deploy="${IN_DEPLOY:-false}" ;;
             repository_dispatch)
-              api="main"
+              if [ "${P_BRANCH:-main}" = "main" ]; then
+                api="main"; backend="main"; frontend="main"; deploy="true"
+              else
+                api="mvp_augment_branch"; backend="$BACKEND_DEV"; frontend="$FRONTEND_DEV"   # tested, never deployed
+              fi
               [ "$P_REPO" = "aiDocuMines-Backend" ] && backend="$P_SHA"
-              [ "$P_REPO" = "aiDocuMines-Frontend" ] && frontend="$P_SHA"
-              deploy="true" ;;
+              [ "$P_REPO" = "aiDocuMines-Frontend" ] && frontend="$P_SHA" ;;
             push)
               [ "$REF" = "refs/heads/main" ] && deploy="true" ;;
           esac
@@ -179,6 +191,8 @@ jobs:
       - name: Auth, tenancy and RBAC integration tests
         env: { DB_HOST: 127.0.0.1, DB_PORT: "5432", DB_NAME: aidoc, DB_USER: aidoc, DB_PASSWORD: aidoc }
         run: npm run test:integration
+      - name: Unit tests (per-user processing caches, cache purge safety)
+        run: npm run test:unit
 
   test-frontend:
     name: Frontend
@@ -198,8 +212,12 @@ jobs:
           if grep -nE "sk-(proj|live)-|APP_PASSWORD: '[^']+'" src/environments/*.ts; then
             echo "::error::Secrets found in src/environments"; exit 1
           fi
-      - name: No vulnerable frontend dependencies
-        run: npm audit --audit-level=low
+      - name: No vulnerable dependencies in the shipped app
+        run: npm audit --omit=dev --audit-level=low
+      - name: No high or critical vulnerabilities in build tooling (moderate ones are listed)
+        run: npm audit --audit-level=high
+      - name: Unit tests (components, RBAC-driven menus, governance, AI spend)
+        run: npx ng test --watch=false --browsers=ChromeHeadless
       - name: Production build
         run: npx ng build --configuration production
 

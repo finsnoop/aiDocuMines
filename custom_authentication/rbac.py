@@ -201,6 +201,9 @@ PERMISSION_DEFINITIONS = [
     ("ethical_wall.manage", "Can create, change and lift ethical walls", "ethical_wall", "manage", ""),
     ("retention.view", "Can view retention schedules and disposition batches", "retention", "view", ""),
     ("retention.manage", "Can set retention and approve disposition", "retention", "manage", ""),
+    ("contract.request", "Can request contracts and track obligations", "contract", "request", ""),
+    ("contract.manage", "Can manage contracts, approval rules and obligations", "contract", "manage", ""),
+    ("contract.view_all", "Can see every contract of the organisation (read only)", "contract", "view_all", ""),
 
     # ── Security ─────────────────────────────────────────────────────────
     ("security.policy_configure", "Can configure security policies", "security", "policy_configure", ""),
@@ -342,6 +345,7 @@ ROLE_DEFINITIONS = {
     "Client": RoleDefinition(
         "Client", "Client (Standard User)",
         _p(
+            "contract.request",
             "document.create", "document.upload", "document.share",
             "ocr.submit",
             "translation.submit",
@@ -377,6 +381,7 @@ ROLE_DEFINITIONS = {
     "Manager": RoleDefinition(
         "Manager", "Manager (Team Oversight)",
         _p(
+            "contract.manage",
             "document.delete", "document.export", "document.restore",
             "ocr.delete",
             "translation.delete",
@@ -400,6 +405,7 @@ ROLE_DEFINITIONS = {
     "Executive": RoleDefinition(
         "Executive", "Executive (CEO, CFO, COO)",
         _p(
+            "contract.view_all",
             "retention.view",
             "ethical_wall.view",
             "legal_hold.view",
@@ -448,6 +454,7 @@ ROLE_DEFINITIONS = {
     "ComplianceOfficer": RoleDefinition(
         "ComplianceOfficer", "Compliance Officer",
         _p(
+            "contract.view_all",
             "retention.view", "retention.manage",
             "ethical_wall.view", "ethical_wall.manage",
             "legal_hold.view", "legal_hold.manage",
@@ -465,6 +472,7 @@ ROLE_DEFINITIONS = {
     "Auditor": RoleDefinition(
         "Auditor", "Auditor (Read-Only Compliance)",
         _p(
+            "contract.view_all",
             "retention.view",
             "ethical_wall.view",
             "legal_hold.view",

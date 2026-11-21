@@ -51,6 +51,7 @@ urlpatterns = [
     
     # Include core app routes
     path("api/v1/core/", include("core.urls")),
+    path("api/v1/contracts/", include("contracts.urls")),
     path("api/v1/scim/v2/", include("custom_authentication.scim_urls")),
     
     # Include document translation app routes
