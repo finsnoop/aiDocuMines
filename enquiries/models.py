@@ -9,6 +9,7 @@ class Enquiry(models.Model):
         ("pricing", "Pricing and commercial terms"),
         ("security", "Security and data protection"),
         ("partnership", "Partnership"),
+        ("investors", "Investor relations"),
         ("support", "Support for an existing account"),
         ("other", "Something else"),
     ]
