@@ -6,6 +6,11 @@ GET  contracts/<id>/signature/                      signature requests of the co
 POST signature/<id>/refresh/                         re-check the status now
 POST signature/<id>/void/ {reason}
 POST signature/webhook/docusign/                     DocuSign Connect (HMAC-verified)
+POST signature/webhook/<docuseal|documenso|signudoc>/<token>/   organisation connections (unguessable address,
+                                                     plus the provider's own signature or secret when configured)
+GET|PUT signature/connections/                       the organisation's DocuSeal / Documenso / SignuDoc connections (admins)
+POST signature/connections/<provider>/test/          check a connection
+GET  signature/providers/                            the e-signature services this person can send with
 GET|POST signature/webhook/adobe_sign/               Adobe Acrobat Sign (client-id verified and echoed)
 Webhooks never change anything themselves: they queue a re-read of the status from the provider's API.
 """
@@ -152,3 +157,151 @@ class AdobeSignWebhookView(APIView):
         if agreement:
             _queue_for("adobe_sign", agreement)
         return self._echo(request, {"xAdobeSignClientId": os.getenv("ADOBE_SIGN_CLIENT_ID", "")})
+
+
+
+# ── organisation connections: DocuSeal, Documenso, SignuDoc ─────────────────────────────────────────────────────
+class OrgESignWebhookView(APIView):
+    authentication_classes = []
+    permission_classes = [AllowAny]
+
+    def post(self, request, provider, token):
+        import hmac as _hmac
+        from integrations.models import ESignConnection
+        from integrations.providers.esign_open import ORG_PROVIDERS
+        p = ORG_PROVIDERS.get(provider)
+        if p is None or not token or len(token) > 64:
+            return JsonResponse({"error": "unknown"}, status=404)
+        connection = next((c for c in ESignConnection.objects.filter(provider=provider, webhook_token=token, enabled=True)
+                           if _hmac.compare_digest(c.webhook_token, token)), None)
+        if connection is None:
+            return JsonResponse({"error": "unknown"}, status=404)
+        if not p.webhook_ok(connection, request):
+            return JsonResponse({"error": "invalid signature"}, status=401)
+        try:
+            envelope = p.webhook_envelope(json.loads(request.body or b"{}"))
+        except (ValueError, AttributeError):
+            envelope = None
+        if envelope:
+            ids = SignatureRequest.objects.filter(client_id=connection.client_id, provider=provider,
+                                                  envelope_id=str(envelope)[:128], status__in=esign.OPEN).values_list("pk", flat=True)
+            for pk in ids:
+                esign.esign_refresh_task.delay(str(pk))
+        return JsonResponse({"ok": True})
+
+
+def _connection_out(c, provider):
+    return {"provider": provider.key, "name": provider.name, "connected": c is not None and bool(c.api_token),
+            "enabled": bool(c and c.enabled), "base_url": c.base_url if c else "",
+            "token_configured": bool(c and c.api_token), "webhook_secret_configured": bool(c and c.webhook_secret),
+            "webhook_url": esign.callback_url(provider.key, c) if c else "",
+            "updated_at": c.updated_at if c else None, "updated_by": c.updated_by.email if c and c.updated_by else None}
+
+
+def _admin_client(request):
+    from core.access import is_tenant_admin, tenant_id
+    if not is_tenant_admin(request.user):
+        return None
+    return tenant_id(request.user)
+
+
+class ESignConnectionsView(APIView):
+    """The organisation's connections to open-source e-signature services (administrators)."""
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        from integrations.models import ESignConnection
+        from integrations.providers.esign_open import ORG_PROVIDERS
+        client_id = _admin_client(request)
+        if client_id is None:
+            return _err("Only administrators can manage e-signature connections.", 403)
+        rows = {c.provider: c for c in ESignConnection.objects.filter(client_id=client_id).select_related("updated_by")}
+        return Response({"results": [_connection_out(rows.get(k), p) for k, p in ORG_PROVIDERS.items()],
+                         "callbacks_configured": bool(esign.public_base())})
+
+    def put(self, request):
+        import secrets
+        from integrations.models import ESignConnection
+        from integrations.providers.esign_open import ORG_PROVIDERS, check_base_url
+        from integrations.providers import ConnectorError
+        client_id = _admin_client(request)
+        if client_id is None:
+            return _err("Only administrators can manage e-signature connections.", 403)
+        p = ORG_PROVIDERS.get(str(request.data.get("provider") or ""))
+        if p is None:
+            return _err("Choose DocuSeal, Documenso or SignuDoc.")
+        c = ESignConnection.objects.filter(client_id=client_id, provider=p.key).first()
+        if request.data.get("remove"):
+            if c is not None:
+                c.delete()
+            _audit(request, "esign.disconnected", p, client_id)
+            return Response(_connection_out(None, p))
+        try:
+            base = check_base_url(str(request.data.get("base_url") or (c.base_url if c else "")))
+        except ConnectorError as exc:
+            return _err(str(exc))
+        token = str(request.data.get("api_token") or "").strip()
+        if c is None and not token:
+            return _err(f"Paste the {p.name} API token.")
+        if token and (len(token) > 1500 or any(ch.isspace() for ch in token)):
+            return _err("That does not look like an API token.")
+        if c is None:
+            c = ESignConnection(client_id=client_id, provider=p.key, webhook_token=secrets.token_urlsafe(32))
+        c.base_url = base
+        if token:
+            c.api_token = token
+        if "webhook_secret" in request.data:
+            c.webhook_secret = str(request.data.get("webhook_secret") or "").strip()[:500]
+        if "enabled" in request.data:
+            c.enabled = bool(request.data.get("enabled"))
+        c.updated_by = request.user
+        c.save()
+        _audit(request, "esign.connected", p, client_id, base_url=base, enabled=c.enabled)
+        return Response(_connection_out(c, p))
+
+
+class ESignConnectionTestView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, provider):
+        from integrations.models import ESignConnection
+        from integrations.providers.esign_open import ORG_PROVIDERS, OrgApi
+        client_id = _admin_client(request)
+        if client_id is None:
+            return _err("Only administrators can manage e-signature connections.", 403)
+        p = ORG_PROVIDERS.get(provider)
+        c = ESignConnection.objects.filter(client_id=client_id, provider=provider).first() if p else None
+        if c is None:
+            return _err("Save the connection first.")
+        try:
+            account = p.check(OrgApi(p, c))
+        except Exception as exc:
+            msg = str(exc) if exc.__class__.__name__ == "ConnectorError" else f"{p.name} could not be reached at {c.base_url}."
+            return Response({"ok": False, "message": msg[:300]})
+        return Response({"ok": True, "message": f"Connected to {account}."})
+
+
+class ESignProvidersView(APIView):
+    """The services this person can send with now: their own DocuSign/Adobe accounts and the organisation's
+    connections. The panel offers only these, so people can switch when one service is unavailable."""
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        from integrations.models import ConnectorAccount, ESignConnection
+        from integrations.providers.esign_open import ORG_PROVIDERS
+        own = set(ConnectorAccount.objects.filter(user=request.user, service__in=["docusign", "adobe_sign"])
+                  .exclude(access_token="").values_list("service", flat=True))
+        org = set(ESignConnection.objects.filter(client_id=getattr(request.user, "client_id", None), enabled=True)
+                  .exclude(api_token="").values_list("provider", flat=True))
+        catalogue = [("docusign", "DocuSign", "personal"), ("adobe_sign", "Adobe Acrobat Sign", "personal")] + \
+                    [(k, p.name, "organisation") for k, p in ORG_PROVIDERS.items()]
+        return Response({"results": [{"key": k, "name": n, "scope": scope, "available": (k in own) if scope == "personal" else (k in org)}
+                                     for k, n, scope in catalogue]})
+
+
+def _audit(request, action, provider, client_id, **changes):
+    try:
+        from custom_authentication.views_admin import audit
+        audit(request, action, "esign_connection", provider.key, provider.name, client_id=client_id, changes=changes)
+    except Exception:
+        pass

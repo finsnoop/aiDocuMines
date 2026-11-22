@@ -274,12 +274,15 @@ def residency_statement(client) -> dict:
                                                                       "assistant to search the web"})
     return {
         "organisation": client.name,
-        "storage": {"provider": env("DATA_HOSTING_PROVIDER") or "Not stated (set DATA_HOSTING_PROVIDER)",
-                    "region": env("DATA_HOSTING_REGION") or "Not stated (set DATA_HOSTING_REGION)",
-                    "backups": env("DATA_BACKUP_REGION") or env("DATA_HOSTING_REGION") or "Not stated (set DATA_BACKUP_REGION)",
+        # Empty when the platform team has not recorded it yet; `missing` names the server settings to fill in.
+        "storage": {"provider": env("DATA_HOSTING_PROVIDER") or "",
+                    "region": env("DATA_HOSTING_REGION") or "",
+                    "backups": env("DATA_BACKUP_REGION") or env("DATA_HOSTING_REGION") or "",
                     "encryption": "TLS in transit; database fields holding secrets are encrypted with the platform key; "
                                   "disk encryption depends on the hosting provider (see the data protection document)"},
         "ai_processing": ai,
+        "missing": [name for name in ("DATA_HOSTING_PROVIDER", "DATA_HOSTING_REGION", "DATA_BACKUP_REGION")
+                    if not env(name) and not (name == "DATA_BACKUP_REGION" and env("DATA_HOSTING_REGION"))],
         "other_services": services,
         "generated_at": timezone.now().isoformat(),
     }

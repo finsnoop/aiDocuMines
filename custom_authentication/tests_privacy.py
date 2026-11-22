@@ -159,6 +159,11 @@ class PrivacyTests(TestCase):
         self.assertEqual(body["storage"]["region"], "South Africa North")
         self.assertEqual(body["storage"]["backups"], "South Africa North")
         self.assertIn("Anthropic", body["ai_processing"]["vendors"])
+        self.assertEqual(body["missing"], [])
+        with mock.patch.dict("os.environ", {"DATA_HOSTING_PROVIDER": "", "DATA_HOSTING_REGION": "", "DATA_BACKUP_REGION": ""}):
+            blank = self.api(self.admin).get("/api/v1/auth/admin/data-residency/").json()
+        self.assertEqual(blank["storage"]["provider"], "")
+        self.assertEqual(blank["missing"], ["DATA_HOSTING_PROVIDER", "DATA_HOSTING_REGION", "DATA_BACKUP_REGION"])
         self.assertIn("Web search provider", [s["service"] for s in body["other_services"]])
         OrganisationPolicy.objects.filter(client=self.firm).update(ai_provider="ollama")
         local = self.api(self.admin).get("/api/v1/auth/admin/data-residency/").json()["ai_processing"]

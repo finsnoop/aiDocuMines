@@ -1,0 +1,18 @@
+# SignuDoc has no official container image: build it from source at a pinned commit or tag you have reviewed.
+# Node.js 24 and Postgres, per the project's README (npm install, db:migrate, build, start).
+FROM node:24-alpine AS build
+ARG SIGNUDOC_REF
+RUN test -n "$SIGNUDOC_REF" || (echo "Set SIGNUDOC_REF to a reviewed commit or tag" && exit 1)
+RUN apk add --no-cache git
+WORKDIR /app
+RUN git clone https://github.com/NYLLON-SOFTWARE/SignuDoc.git . && git checkout --detach "$SIGNUDOC_REF"
+RUN npm ci && npm run build
+
+FROM node:24-alpine
+WORKDIR /app
+ENV NODE_ENV=production PORT=3000
+COPY --from=build /app /app
+USER node
+EXPOSE 3000
+# Apply database migrations, then start.
+CMD ["sh", "-c", "npm run db:migrate && npm run start"]

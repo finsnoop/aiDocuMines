@@ -39,7 +39,7 @@ def _target(request):
 
 def _out(cfg, request):
     from .saml import acs_url, certificate_summary, sp_entity_id
-    from .sso import callback_url
+    from .sso import callback_url, public_api_base
     return {"enabled": cfg.enabled, "protocol": cfg.protocol, "issuer_url": cfg.issuer_url, "client_id": cfg.oidc_client_id,
             "client_secret_configured": bool(cfg.client_secret), "email_domains": cfg.email_domains,
             "enforce_sso": cfg.enforce_sso, "auto_provision": cfg.auto_provision, "default_role": cfg.default_role,
@@ -50,7 +50,7 @@ def _out(cfg, request):
             "saml_email_attribute": cfg.saml_email_attribute, "saml_send_login_hint": cfg.saml_send_login_hint,
             "saml_sp_entity_id": sp_entity_id(request), "saml_acs_url": acs_url(request),
             "saml_sp_metadata_url": sp_entity_id(request),
-            "scim_base_url": request.build_absolute_uri("/api/v1/scim/v2/").rstrip("/"),
+            "scim_base_url": f"{public_api_base(request)}/api/v1/scim/v2",
             "updated_at": cfg.updated_at, "updated_by": cfg.updated_by.email if cfg.updated_by else None}
 
 

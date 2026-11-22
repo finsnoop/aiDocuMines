@@ -121,3 +121,25 @@ class ConnectorJob(models.Model):
 
     class Meta:
         ordering = ["-created_at"]
+
+
+class ESignConnection(models.Model):
+    """An organisation's connection to a self-hosted (or open-source) e-signature service: DocuSeal, Documenso or
+    SignuDoc. Set by the organisation's administrator; every sender in the organisation uses it (unlike DocuSign
+    and Adobe Sign, which use each sender's own account). The API token and webhook secret are encrypted."""
+    PROVIDERS = [("docuseal", "DocuSeal"), ("documenso", "Documenso"), ("signudoc", "SignuDoc")]
+    client = models.ForeignKey("custom_authentication.Client", on_delete=models.CASCADE, related_name="esign_connections")
+    provider = models.CharField(max_length=20, choices=PROVIDERS)
+    base_url = models.CharField(max_length=300)                    # the service's API address
+    api_token = EncryptedCharField(max_length=2000, blank=True, default="")
+    webhook_secret = EncryptedCharField(max_length=512, blank=True, default="")   # from the provider, to verify callbacks
+    webhook_token = models.CharField(max_length=64, db_index=True)  # unguessable part of our callback address
+    enabled = models.BooleanField(default=True)
+    updated_by = models.ForeignKey(get_user_model(), null=True, blank=True, on_delete=models.SET_NULL, related_name="+")
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        constraints = [models.UniqueConstraint(fields=["client", "provider"], name="one_esign_connection_per_provider")]
+
+    def __str__(self):
+        return f"{self.get_provider_display()} for client {self.client_id}"

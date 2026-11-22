@@ -68,9 +68,18 @@ def enforced_for(user) -> bool:
     return bool(cfg and cfg.enabled and cfg.enforce_sso and domain_of(user.email) in cfg.domains())
 
 
-def callback_url(request) -> str:
+def public_api_base(request) -> str:
+    """The API's public address (configured), else the request's own; https whenever the site is not local."""
     base = (os.getenv("SSO_PUBLIC_API_URL") or os.getenv("INTEGRATIONS_PUBLIC_API_URL") or "").strip().rstrip("/")
-    return f"{base or request.build_absolute_uri('/').rstrip('/')}/api/v1/auth/sso/callback/"
+    base = base or request.build_absolute_uri("/").rstrip("/")
+    host = base.split("://", 1)[-1].split("/", 1)[0].split(":", 1)[0]
+    if base.startswith("http://") and host not in ("localhost", "127.0.0.1", "testserver"):
+        base = "https://" + base[len("http://"):]       # behind a TLS-terminating proxy the request looks like http
+    return base
+
+
+def callback_url(request) -> str:
+    return f"{public_api_base(request)}/api/v1/auth/sso/callback/"
 
 
 def discovery(cfg) -> dict:

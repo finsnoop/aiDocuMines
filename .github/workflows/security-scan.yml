@@ -1,0 +1,32 @@
+# Known-vulnerability scan of the Python dependencies (production_requirements.lock), on every change and weekly,
+# so a newly published advisory for a library we already use is caught even when nothing changed here.
+name: security-scan
+
+on:
+  push:
+  pull_request:
+  schedule:
+    - cron: "17 5 * * 1"        # Mondays 05:17 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  python-dependencies:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install pip-audit
+        run: python -m pip install --upgrade pip-audit
+      - name: Audit pinned dependencies
+        # Exceptions: each needs a reason and a review date. Remove it when a fix is released.
+        #   PYSEC-2026-2447 diskcache 5.6.3 (via dspy), no fixed version yet. Not reachable: dspy's disk cache is
+        #   disabled, in a fresh private directory, with restricted unpickling (core/ai_cache.py). Review 2027-02-01.
+        run: |
+          pip-audit -r production_requirements.lock --no-deps --disable-pip --progress-spinner off \
+            --ignore-vuln PYSEC-2026-2447

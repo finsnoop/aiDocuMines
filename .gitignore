@@ -227,3 +227,8 @@ pip-audit.json
 
 # The Docker build installs from this hashed lock file: it must be committed.
 !production_requirements.lock
+
+# e-signature services: filled-in settings and certificates stay on the server
+deploy/esign/esign.env
+deploy/esign/*.p12
+deploy/esign/*.pem

@@ -1,8 +1,10 @@
 """
 E-signature for contracts: send, follow, complete, void.
 
-* Sending needs: the contract in the signature stage, its document readable by the sender, and the sender's own
-  connected DocuSign or Adobe Sign account (Integrations).
+* Sending needs: the contract in the signature stage, its document readable by the sender, and either the sender's
+  own connected DocuSign or Adobe Sign account (Integrations), or the organisation's connection to DocuSeal,
+  Documenso or SignuDoc (set by its administrator; integrations/providers/esign_open.py). People choose among the
+  services that are connected, so signing keeps working when one of them is unavailable.
 * Status is only ever taken from the provider's API with the sender's credentials. Webhooks (DocuSign Connect
   with HMAC, Adobe Sign with client-id echo) and a periodic check just trigger that re-read.
 * On completion the signed PDF and the certificate are stored next to the contract document (same matter and
@@ -37,15 +39,35 @@ class ESignError(ValueError):
 def provider_for(key):
     from integrations.providers import get_provider
     from integrations.providers.esign import ESignProvider
-    p = get_provider(key)
+    from integrations.providers.esign_open import ORG_PROVIDERS
+    p = ORG_PROVIDERS.get(key) or get_provider(key)
     if not isinstance(p, ESignProvider):
-        raise ESignError("Choose DocuSign or Adobe Acrobat Sign.")
+        raise ESignError("Choose an e-signature service: DocuSign, Adobe Acrobat Sign, DocuSeal, Documenso or SignuDoc.")
     return p
 
 
-def api_for(user, provider):
+def org_connection(provider, client_id):
+    from integrations.models import ESignConnection
+    return ESignConnection.objects.filter(client_id=client_id, provider=provider.key, enabled=True).first() if client_id else None
+
+
+def api_for(user, provider, client_id=None):
+    """The authenticated API: the organisation's connection (DocuSeal, Documenso, SignuDoc) or the person's own
+    connected account (DocuSign, Adobe Sign)."""
+    if getattr(provider, "org_level", False):
+        from integrations.providers.esign_open import OrgApi
+        connection = org_connection(provider, client_id or getattr(user, "client_id", None))
+        if connection is None or not connection.api_token:
+            raise ESignError(f"{provider.name} is not connected for your organisation. Ask an administrator to set it up "
+                             "under Settings, or choose another e-signature service.")
+        try:
+            return OrgApi(provider, connection)
+        except Exception as exc:
+            raise ESignError(str(exc)[:300])
     from integrations.models import ConnectorAccount
     from integrations.providers import Api
+    if user is None:
+        raise ESignError(f"The person who sent this request is no longer available to check it with {provider.name}.")
     account = ConnectorAccount.objects.filter(user=user, service=provider.key).first()
     if account is None or not account.access_token:
         raise ESignError(f"Connect your {provider.name} account under Integrations first.")
@@ -72,9 +94,18 @@ def clean_signers(raw):
     return out
 
 
-def callback_url(provider_key):
-    base = (os.getenv("ESIGN_PUBLIC_API_URL") or os.getenv("INTEGRATIONS_PUBLIC_API_URL") or "").strip().rstrip("/")
-    return f"{base}/api/v1/contracts/signature/webhook/{provider_key}/" if base else ""
+def public_base():
+    return (os.getenv("ESIGN_PUBLIC_API_URL") or os.getenv("INTEGRATIONS_PUBLIC_API_URL") or "").strip().rstrip("/")
+
+
+def callback_url(provider_key, connection=None):
+    """Where the service calls back. Organisation connections get their own unguessable address."""
+    base = public_base()
+    if not base:
+        return ""
+    if connection is not None:
+        return f"{base}/api/v1/contracts/signature/webhook/{provider_key}/{connection.webhook_token}/"
+    return f"{base}/api/v1/contracts/signature/webhook/{provider_key}/"
 
 
 def send(contract, user, provider_key, signers, message=""):
@@ -89,12 +120,13 @@ def send(contract, user, provider_key, signers, message=""):
     if contract.signature_requests.filter(status__in=OPEN).exists():
         raise ESignError("This contract is already out for signature. Void that request first.")
     provider = provider_for(provider_key)
-    api = api_for(user, provider)
+    api = api_for(user, provider, contract.client_id)
     signers = clean_signers(signers)
+    limit = min(MAX_PDF_BYTES, getattr(provider, "max_pdf_bytes", MAX_PDF_BYTES))
     try:
         size = os.path.getsize(doc.filepath)
-        if size > MAX_PDF_BYTES:
-            raise ESignError("The document is too large to send for signature (25 MB at most).")
+        if size > limit:
+            raise ESignError(f"The document is too large to send with {provider.name} ({limit // (1024 * 1024)} MB at most).")
         with open(doc.filepath, "rb") as fh:
             data = fh.read()
     except OSError:
@@ -103,7 +135,8 @@ def send(contract, user, provider_key, signers, message=""):
                                               signers=signers, source_file=doc, sent_by=user)
     try:
         request.envelope_id = provider.send(api, name=contract.title, filename=doc.filename, pdf_bytes=data,
-                                            signers=signers, message=message, callback_url=callback_url(provider.key))
+                                            signers=signers, message=message,
+                                            callback_url=callback_url(provider.key, getattr(api, "connection", None)))
         request.status = "sent"
     except Exception as exc:
         request.status, request.error = "error", str(exc)[:500] if exc.__class__.__name__ == "ConnectorError" else "Sending failed."
@@ -136,10 +169,12 @@ def refresh(request):
     """Re-read the provider's status; finish the contract when signed. Returns the new status."""
     from .lifecycle import _move, record
     from .models import SignatureRequest
-    if request.status not in OPEN or not request.envelope_id or request.sent_by is None:
+    if request.status not in OPEN or not request.envelope_id:
         return request.status
     provider = provider_for(request.provider)
-    api = api_for(request.sent_by, provider)
+    if request.sent_by is None and not getattr(provider, "org_level", False):
+        return request.status
+    api = api_for(request.sent_by, provider, request.client_id)
     state = provider.status(api, request.envelope_id)
     request.checked_at = timezone.now()
     by_email = {s.get("email", "").lower(): s for s in state.get("signers", [])}
@@ -182,7 +217,8 @@ def void(request, user, reason):
         raise ESignError("Only an open signature request can be voided.")
     provider = provider_for(request.provider)
     try:
-        provider.void(api_for(user if user.pk == request.sent_by_id else request.sent_by, provider), request.envelope_id, reason)
+        provider.void(api_for(user if user.pk == request.sent_by_id else request.sent_by, provider, request.client_id),
+                      request.envelope_id, reason)
     except ESignError:
         raise
     except Exception as exc:

@@ -65,8 +65,8 @@ EMAIL_RE = re.compile(r"[^@\s]+@[^@\s]+\.[^@\s]+")
 
 # ── addresses ─────────────────────────────────────────────────────────────────────────────────
 def api_base(request) -> str:
-    base = (os.getenv("SSO_PUBLIC_API_URL") or os.getenv("INTEGRATIONS_PUBLIC_API_URL") or "").strip().rstrip("/")
-    return base or request.build_absolute_uri("/").rstrip("/")
+    from .sso import public_api_base
+    return public_api_base(request)
 
 
 def sp_entity_id(request) -> str:

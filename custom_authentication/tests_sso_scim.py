@@ -155,6 +155,12 @@ class SSOTests(TestCase):
         body = api.get("/api/v1/auth/admin/sso/").json()
         self.assertTrue(body["client_secret_configured"])
         self.assertNotIn("s3cret", str(body))
+        # Behind the TLS proxy the request looks like http; the addresses given to identity providers are https.
+        from django.test import override_settings
+        with mock.patch.dict("os.environ", {"SSO_PUBLIC_API_URL": "", "INTEGRATIONS_PUBLIC_API_URL": ""}),                 override_settings(ALLOWED_HOSTS=["api.example.com", "testserver"]):
+            addresses = api.get("/api/v1/auth/admin/sso/", HTTP_HOST="api.example.com").json()
+        self.assertEqual(addresses["scim_base_url"], "https://api.example.com/api/v1/scim/v2")
+        self.assertTrue(addresses["callback_url"].startswith("https://api.example.com/"))
         r = api.patch("/api/v1/auth/admin/sso/", {"default_role": "Admin"}, format="json")
         self.assertEqual(r.status_code, 400)                               # never auto-create administrators
         OrganisationSSO.objects.create(client=self.other, email_domains="other.test")

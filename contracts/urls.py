@@ -25,4 +25,8 @@ urlpatterns = [
     path("signature/<uuid:pk>/void/", ev.SignatureVoidView.as_view(), name="signature-void"),
     path("signature/webhook/docusign/", ev.DocuSignWebhookView.as_view(), name="signature-webhook-docusign"),
     path("signature/webhook/adobe_sign/", ev.AdobeSignWebhookView.as_view(), name="signature-webhook-adobe"),
+    path("signature/webhook/<str:provider>/<str:token>/", ev.OrgESignWebhookView.as_view(), name="signature-webhook-org"),
+    path("signature/connections/", ev.ESignConnectionsView.as_view(), name="signature-connections"),
+    path("signature/connections/<str:provider>/test/", ev.ESignConnectionTestView.as_view(), name="signature-connection-test"),
+    path("signature/providers/", ev.ESignProvidersView.as_view(), name="signature-providers"),
 ]

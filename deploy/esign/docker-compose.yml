@@ -1,0 +1,102 @@
+# Open-source e-signature services for aiDocuMines: DocuSeal, Documenso and SignuDoc.
+# Run only the ones you want, e.g.:  docker compose --env-file esign.env up -d docuseal
+# See README.md in this folder. Image tags must be set explicitly (pin a version you have tested).
+#
+# Each service joins the API's Docker network so the API reaches it privately (http://docuseal:3000 etc., allowed by
+# ESIGN_INTERNAL_HOSTS), and is published on a host port for your reverse proxy, which must serve it over https
+# on its own public address: signers open signing pages in their browsers.
+
+name: aidocumines-esign
+
+networks:
+  api:
+    external: true
+    name: ${AIDOC_NETWORK:?Set AIDOC_NETWORK to the Docker network the API containers use}
+
+volumes:
+  docuseal-data:
+  documenso-db:
+  signudoc-db:
+
+services:
+  # ── DocuSeal ── (sending PDFs through the API needs DocuSeal Pro; the free edition sends from its templates)
+  docuseal:
+    image: docuseal/docuseal:${DOCUSEAL_TAG:?Set DOCUSEAL_TAG to a tested DocuSeal version}
+    restart: unless-stopped
+    environment:
+      HOST: ${DOCUSEAL_PUBLIC_HOST:-}
+      FORCE_SSL: "true"
+      SECRET_KEY_BASE: ${DOCUSEAL_SECRET_KEY_BASE:?Set DOCUSEAL_SECRET_KEY_BASE (openssl rand -hex 64)}
+    volumes:
+      - docuseal-data:/data
+    ports:
+      - "127.0.0.1:${DOCUSEAL_PORT:-3101}:3000"
+    networks: [api]
+
+  # ── Documenso ──
+  documenso-db:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: documenso
+      POSTGRES_PASSWORD: ${DOCUMENSO_DB_PASSWORD:?Set DOCUMENSO_DB_PASSWORD}
+      POSTGRES_DB: documenso
+    volumes:
+      - documenso-db:/var/lib/postgresql/data
+    networks: [api]
+
+  documenso:
+    image: documenso/documenso:${DOCUMENSO_TAG:?Set DOCUMENSO_TAG to a tested Documenso version}
+    restart: unless-stopped
+    depends_on: [documenso-db]
+    environment:
+      NEXTAUTH_SECRET: ${DOCUMENSO_NEXTAUTH_SECRET:?Set DOCUMENSO_NEXTAUTH_SECRET}
+      NEXT_PRIVATE_ENCRYPTION_KEY: ${DOCUMENSO_ENCRYPTION_KEY:?Set DOCUMENSO_ENCRYPTION_KEY}
+      NEXT_PRIVATE_ENCRYPTION_SECONDARY_KEY: ${DOCUMENSO_ENCRYPTION_SECONDARY_KEY:?Set DOCUMENSO_ENCRYPTION_SECONDARY_KEY}
+      NEXT_PUBLIC_WEBAPP_URL: ${DOCUMENSO_PUBLIC_URL:?Set DOCUMENSO_PUBLIC_URL (https://...)}
+      NEXT_PRIVATE_DATABASE_URL: postgres://documenso:${DOCUMENSO_DB_PASSWORD}@documenso-db:5432/documenso
+      NEXT_PRIVATE_DIRECT_DATABASE_URL: postgres://documenso:${DOCUMENSO_DB_PASSWORD}@documenso-db:5432/documenso
+      NEXT_PRIVATE_SMTP_TRANSPORT: smtp-auth
+      NEXT_PRIVATE_SMTP_HOST: ${SMTP_HOST:?Set SMTP_HOST}
+      NEXT_PRIVATE_SMTP_PORT: ${SMTP_PORT:-587}
+      NEXT_PRIVATE_SMTP_USERNAME: ${SMTP_USER:-}
+      NEXT_PRIVATE_SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      NEXT_PRIVATE_SMTP_FROM_NAME: ${SMTP_FROM_NAME:-Datasqan e-signature}
+      NEXT_PRIVATE_SMTP_FROM_ADDRESS: ${SMTP_FROM:?Set SMTP_FROM}
+      # The certificate Documenso seals signed PDFs with (a .p12 file you provide; see README).
+      NEXT_PRIVATE_SIGNING_LOCAL_FILE_PATH: /opt/documenso/cert.p12
+      NEXT_PRIVATE_SIGNING_PASSPHRASE: ${DOCUMENSO_SIGNING_PASSPHRASE:-}
+    volumes:
+      - ${DOCUMENSO_CERT_FILE:?Set DOCUMENSO_CERT_FILE to the path of the .p12 signing certificate}:/opt/documenso/cert.p12:ro
+    ports:
+      - "127.0.0.1:${DOCUMENSO_PORT:-3102}:3000"
+    networks: [api]
+
+  # ── SignuDoc ── (no official image: built from source at a pinned commit; see Dockerfile.signudoc)
+  signudoc-db:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: signudoc
+      POSTGRES_PASSWORD: ${SIGNUDOC_DB_PASSWORD:?Set SIGNUDOC_DB_PASSWORD}
+      POSTGRES_DB: signudoc
+    volumes:
+      - signudoc-db:/var/lib/postgresql/data
+    networks: [api]
+
+  signudoc:
+    build:
+      context: .
+      dockerfile: Dockerfile.signudoc
+      args:
+        SIGNUDOC_REF: ${SIGNUDOC_REF:?Set SIGNUDOC_REF to a tested SignuDoc commit or tag}
+    restart: unless-stopped
+    depends_on: [signudoc-db]
+    environment:
+      DATABASE_URL: postgres://signudoc:${SIGNUDOC_DB_PASSWORD}@signudoc-db:5432/signudoc
+      APP_URL: ${SIGNUDOC_PUBLIC_URL:?Set SIGNUDOC_PUBLIC_URL (https://...)}
+      BETTER_AUTH_SECRET: ${SIGNUDOC_AUTH_SECRET:?Set SIGNUDOC_AUTH_SECRET}
+      RESEND_API_KEY: ${SIGNUDOC_RESEND_API_KEY:-}
+    ports:
+      - "127.0.0.1:${SIGNUDOC_PORT:-3103}:3000"
+    networks: [api]
