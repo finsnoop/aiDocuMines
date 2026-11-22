@@ -19,11 +19,12 @@ from types import SimpleNamespace
 from celery import shared_task
 from django.utils import timezone
 
-from .scoring import score_assistant, score_extraction, score_playbook
+from .scoring import score_assistant, score_extraction, score_harness, score_playbook
 
 logger = logging.getLogger(__name__)
 DATASETS = Path(__file__).resolve().parent / "datasets"
-SUITES = {"extraction": "extraction_v1.json", "playbook": "playbook_v1.json", "assistant": "assistant_v1.json"}
+SUITES = {"extraction": "extraction_v1.json", "playbook": "playbook_v1.json", "assistant": "assistant_v1.json",
+          "harness": "harness_v1.json"}
 
 
 def load(suite):
@@ -91,9 +92,36 @@ def run_assistant(user, config, dataset, limit=None):
     return score_assistant(results)
 
 
+def run_harness(user, config, dataset, limit=None):
+    """The harness itself: screening, the object-bound instruction, citation and claim checks and repair, through
+    the production loop with the platform's default guardrails."""
+    from core import ai_harness as harness
+    from core.assistant import Context, build_sources
+    from grid_documents_interrogation.utils import dispatch_to_llm
+    settings = {"surfaces": {}, "guardrails": dict(harness.GUARDRAIL_DEFAULTS), "profile": None}
+    results = []
+    for case in dataset["cases"][:limit]:
+        files = [SimpleNamespace(id=-(i + 1), pk=-(i + 1), filename=d["filename"], content=d["text"])
+                 for i, d in enumerate(case["documents"])]
+        ctx = Context(kind="file", label=files[0].filename, files=files, total_in_scope=len(files))
+        if harness.screen_question(case["question"]):
+            results.append((case, {"outcome": "blocked_injection", "answer": "", "trace": {}}))
+            continue
+        sources = build_sources(case["question"], ctx, user, semantic=False)
+        try:
+            result = harness.run(ctx, case["question"], sources, [], [], settings,
+                                 lambda message, evidence, turns, system: dispatch_to_llm(
+                                     message, evidence, config, turns, system_prompt=system))
+        except Exception as exc:
+            _case_failed(case, exc)
+            result = None
+        results.append((case, result))
+    return score_harness(results)
+
+
 def model_config(user, suite):
     """The cleaned model settings the suite's production feature would use for this person."""
-    if suite == "assistant":
+    if suite in ("assistant", "harness"):
         from core.assistant import assistant_model
         from grid_documents_interrogation.safety import clean_llm_config
         provider, model = assistant_model(user)
@@ -110,7 +138,8 @@ def execute(run):
         run.provider, run.model = str(config.get("provider", "")), str(config.get("model", ""))
         dataset = load(run.suite)
         run.dataset = dataset["name"]
-        runner = {"extraction": run_extraction, "playbook": run_playbook, "assistant": run_assistant}[run.suite]
+        runner = {"extraction": run_extraction, "playbook": run_playbook, "assistant": run_assistant,
+                  "harness": run_harness}[run.suite]
         run.metrics = runner(user, config, dataset, run.case_limit)
     return run
 
@@ -189,6 +218,12 @@ def summary_markdown(runs):
                       f"- Says so when the documents do not answer: {_pct(m.get('abstained'))}",
                       f"- Prompt-injection resisted: {_pct(m.get('injection_resisted'))}",
                       f"- Questions: {m.get('cases')} ({m.get('failed_cases', 0)} not answered)"]
+        elif r.suite == "harness":
+            lines += [f"- Cases handled correctly: {_pct(m.get('passed'))}"]
+            lines += [f"  - {cat.replace('_', ' ')}: {_pct(v)}" for cat, v in (m.get("by_category") or {}).items()]
+            lines += [f"- Statements checked against their cited passages: {m.get('claims_checked', 0)}; "
+                      f"removed as unsupported: {m.get('claims_removed', 0)}",
+                      f"- Cases: {m.get('cases')} ({m.get('failed_cases', 0)} not run)"]
         else:
             lines += [f"- Playbook status accuracy: {_pct(m.get('status_accuracy'))}",
                       f"- Findings that could not be verified: {_pct(m.get('unverified_rate'))}",

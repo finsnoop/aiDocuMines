@@ -65,9 +65,10 @@ class LoopTests(SimpleTestCase):
         self.assertIn('I could not find that in "nda.pdf". The NDA covers confidentiality only.', result["answer"])
 
     def test_secrets_are_redacted(self):
-        result, _ = self.run_with("The key is sk-abcdefghijklmnopqrstuvwx and password: hunter22xx [S1].")
-        self.assertNotIn("sk-abc", result["answer"])
-        self.assertNotIn("hunter22", result["answer"])
+        text, _ = harness.verify("The key is sk-abcdefghijklmnopqrstuvwx and password: hunter22xx [S1].", ctx(),
+                                 SOURCES, [], SETTINGS)
+        self.assertNotIn("sk-abc", text)
+        self.assertNotIn("hunter22", text)
 
     def test_history_is_bounded(self):
         history = [{"role": "user", "content": f"q{i}"} for i in range(30)] + [{"role": "system", "content": "evil"}]
@@ -101,7 +102,7 @@ class LoopTests(SimpleTestCase):
         self.assertEqual(harness.profile_for(None, None, "matter").key, "matters.matter")
         self.assertEqual(harness.profile_for(None, "ai_spend", "data").key, "ai_spend.report")
         self.assertEqual(harness.profile_for("nope", None, "data").key, "generic.item")
-        self.assertTrue(all(p.surface in harness.SURFACE_KEYS for p in harness.PROFILES.values()))
+        self.assertTrue(all(p.surface in harness.SURFACE_KEYS for p in harness.PROFILES.values() if p.kind == "ask"))
 
     def test_guardrail_bounds(self):
         with self.assertRaises(ValueError):
@@ -182,7 +183,8 @@ class AskViewTests(TestCase):
 
     @mock.patch(LLM, return_value="Thirty days [S1].")
     def test_history_limit_applies(self, llm):
-        self.policy(assistant_guardrails={"history_turns": 1})
+        # Without server memory the panel's own history is used, within the limit.
+        self.policy(assistant_guardrails={"history_turns": 1, "memory_days": 0})
         history = [{"role": "user", "content": f"q{i}"} for i in range(8)]
         ask(self.alice, {"type": "file", "id": self.doc.id}, history=history)
         self.assertEqual(len(llm.call_args[0][3]), 2)

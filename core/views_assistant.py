@@ -31,6 +31,7 @@ from rest_framework.throttling import UserRateThrottle
 from rest_framework.views import APIView
 
 from core import ai_harness as harness
+from core import assistant_memory, harness_runtime
 from core.access import user_has_perm
 from core.assistant import assistant_model, build_sources, resolve_context
 from core.llm_providers import available_chat_model, is_missing_model_error
@@ -73,7 +74,7 @@ class AssistantStatusView(APIView):
         surfaces = harness.settings_for(request.user)["surfaces"]
         return Response({"assistant": allowed, "web": _web_allowed(request.user),
                          "surfaces": {k: allowed and on for k, on in surfaces.items()},
-                         "profiles": {k: p.surface for k, p in harness.PROFILES.items()}})
+                         "profiles": {k: p.surface for k, p in harness.PROFILES.items() if p.kind == "ask"}})
 
 
 class AssistantAskView(APIView):
@@ -89,6 +90,14 @@ class AssistantAskView(APIView):
         profile = harness.profile_for(str(request.data.get("profile") or "")[:60] or None,
                                       str(request.data.get("surface") or "")[:40] or None, str(spec.get("type") or ""))
         surface = profile.surface or str(request.data.get("surface") or "")[:40]
+        with harness_runtime.session(profile.key, user, surface=surface) as run:
+            response = self._answer(request, user, spec, profile, surface, run)
+            data = response.data if isinstance(response.data, dict) else {}
+            run.note(outcome=data.get("outcome") or ("refused" if response.status_code in (400, 403) else
+                                                     "error" if response.status_code >= 400 else None))
+        return response
+
+    def _answer(self, request, user, spec, profile, surface, run):
         # Layer 1: entitlement
         if not _assistant_allowed(user):
             return Response({"error": "The assistant is not available for your role or organisation."},
@@ -109,11 +118,22 @@ class AssistantAskView(APIView):
                 ctx = resolve_context(user, spec)       # still 404 for objects the caller cannot open
                 answer = ("That question asks me to set aside my rules, so I won't answer it. "
                           f'Ask about the content of "{ctx.label}" instead.')
+                run.note(flag="injection")
                 _log(user, ctx, spec, surface, question, 0, "off", "blocked_injection", flags, {"profile": profile.key})
                 return Response(_body(answer, "blocked_injection", ctx, [], [], "off", None, None))
 
+        if flags:
+            run.note(flag="injection")
         # Layer 3: evidence (access-checked) and the evidence gate
         ctx = resolve_context(user, spec)               # raises 404 when not readable
+        # Memory (server-side, per person per object), only after access to the object was re-checked.
+        memory_on = settings["guardrails"]["memory_days"] > 0
+        conv = assistant_memory.find(user, spec, profile.key, settings) if memory_on else None
+        if conv is not None and request.data.get("new_conversation"):
+            conv.delete()
+            conv = None
+        history = (assistant_memory.history(conv, settings["guardrails"]["history_turns"]) if memory_on
+                   else request.data.get("history"))
         sources = build_sources(question, ctx, user)
         if not sources and not ctx.data:
             if ctx.kind == "documents":
@@ -159,14 +179,23 @@ class AssistantAskView(APIView):
                     raise ModelUnavailable() from exc2
 
         try:
-            result = harness.run(ctx, question, sources, web_results, request.data.get("history"), settings, call)
+            result = harness.run(ctx, question, sources, web_results, history, settings, call,
+                                 memory=conv.summary if conv is not None else "")
         except ModelUnavailable:
             return Response({"error": "The AI model is not reachable right now. Please try again shortly."},
                             status=status.HTTP_502_BAD_GATEWAY)
-        # Layer 6: audit
-        _log(user, ctx, spec, surface, question, len(sources), web_state, result["outcome"], flags, result["trace"])
-        return Response(_body(result["answer"], result["outcome"], ctx, sources, web_results, web_state,
-                              chosen["provider"], chosen["model"]))
+        # Layer 6: audit, trace and memory
+        trace = result["trace"]
+        run.note(claims_checked=trace.get("claims_checked", 0), claims_removed=trace.get("claims_removed", 0),
+                 model=chosen["model"])
+        run.steps.extend(trace.get("steps", []))
+        _log(user, ctx, spec, surface, question, len(sources), web_state, result["outcome"], flags, trace)
+        conv = assistant_memory.remember(conv, user, spec, profile.key, ctx.label, settings, question,
+                                         result["answer"], result["outcome"], sources) if memory_on else None
+        body = _body(result["answer"], result["outcome"], ctx, sources, web_results, web_state,
+                     chosen["provider"], chosen["model"])
+        body["conversation_id"] = str(conv.pk) if conv is not None else None
+        return Response(body)
 
 
 def _body(answer, outcome, ctx, sources, web_results, web_state, provider, model):
@@ -203,3 +232,27 @@ def _log(user, ctx, spec, surface, question, n_sources, web_state, outcome, flag
         })
     except Exception:
         logger.exception("Could not record assistant activity")
+
+
+class AssistantConversationView(APIView):
+    """POST {"context", "profile", "clear": false} -> the person's saved conversation about this object.
+    Returned only while they can still open the object; "clear": true deletes it."""
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        user = request.user
+        spec = request.data.get("context") or {}
+        if not isinstance(spec, dict):
+            return Response({"error": "Provide a context object."}, status=status.HTTP_400_BAD_REQUEST)
+        profile = harness.profile_for(str(request.data.get("profile") or "")[:60] or None,
+                                      str(request.data.get("surface") or "")[:40] or None, str(spec.get("type") or ""))
+        settings = harness.settings_for(user, profile)
+        resolve_context(user, spec)                     # 404 when the person can no longer open the object
+        conv = assistant_memory.find(user, spec, profile.key, settings)
+        if request.data.get("clear"):
+            if conv is not None:
+                conv.delete()
+            return Response({"conversation_id": None, "turns": [], "memory_days": settings["guardrails"]["memory_days"]})
+        return Response({"conversation_id": str(conv.pk) if conv else None,
+                         "turns": assistant_memory.transcript(conv),
+                         "memory_days": settings["guardrails"]["memory_days"]})

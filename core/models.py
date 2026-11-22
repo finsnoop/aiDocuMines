@@ -564,3 +564,66 @@ class DispositionItem(models.Model):
     project_id = models.CharField(max_length=255, blank=True, default="")
     created = models.DateTimeField(null=True)
     outcome = models.CharField(max_length=12, choices=OUTCOMES, default="pending")
+
+
+# ── AI harness: observability and memory ────────────────────────────────────────────────────────────────────────
+class HarnessRun(models.Model):
+    """One run of an AI feature through the shared harness (core/harness_runtime.py): which profile, the outcome,
+    the guardrail flags, how many model calls and tokens, how long it took, and how many claims were checked or
+    removed. Holds no question or answer text, so aggregate monitoring never exposes client content."""
+    id = models.BigAutoField(primary_key=True)
+    client = models.ForeignKey("custom_authentication.Client", null=True, blank=True, on_delete=models.CASCADE,
+                               related_name="harness_runs")
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="+")
+    profile = models.CharField(max_length=60, db_index=True)
+    surface = models.CharField(max_length=40, blank=True, default="")
+    outcome = models.CharField(max_length=30, default="answered")
+    flags = models.JSONField(default=list, blank=True)
+    steps = models.JSONField(default=list, blank=True)
+    model = models.CharField(max_length=120, blank=True, default="")
+    calls = models.PositiveIntegerField(default=0)
+    prompt_tokens = models.PositiveIntegerField(default=0)
+    completion_tokens = models.PositiveIntegerField(default=0)
+    latency_ms = models.PositiveIntegerField(default=0)
+    claims_checked = models.PositiveIntegerField(default=0)
+    claims_removed = models.PositiveIntegerField(default=0)
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+        indexes = [models.Index(fields=["client", "created_at"]), models.Index(fields=["profile", "created_at"])]
+
+
+class AssistantConversation(models.Model):
+    """A person's conversation with Ask Assistant about one object, kept on the server so it can be resumed.
+    Older turns are compacted into `summary`; the whole conversation expires after the organisation's memory period
+    and is erased with the person's data. Only its owner can read it, and only while they can still open the object."""
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    client = models.ForeignKey("custom_authentication.Client", null=True, blank=True, on_delete=models.CASCADE,
+                               related_name="assistant_conversations")
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="assistant_conversations")
+    profile = models.CharField(max_length=60, blank=True, default="")
+    context_key = models.CharField(max_length=64, db_index=True)   # hash of the object's context spec
+    context = models.JSONField(default=dict, blank=True)            # the spec, to re-check access on resume
+    label = models.CharField(max_length=255, blank=True, default="")
+    summary = models.TextField(blank=True, default="")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True, db_index=True)
+
+    class Meta:
+        ordering = ["-updated_at"]
+        indexes = [models.Index(fields=["user", "context_key", "updated_at"])]
+
+
+class AssistantTurn(models.Model):
+    id = models.BigAutoField(primary_key=True)
+    conversation = models.ForeignKey(AssistantConversation, on_delete=models.CASCADE, related_name="turns")
+    role = models.CharField(max_length=10, choices=[("user", "user"), ("assistant", "assistant")])
+    content = models.TextField()
+    outcome = models.CharField(max_length=30, blank=True, default="")
+    sources = models.JSONField(default=list, blank=True)
+    compacted = models.BooleanField(default=False)   # folded into the conversation summary
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["created_at", "id"]

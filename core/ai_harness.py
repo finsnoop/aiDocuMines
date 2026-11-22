@@ -45,10 +45,12 @@ GUARDRAIL_DEFAULTS = {
     "refuse_off_topic": True,       # questions not about the object are declined
     "prompt_injection": "block",    # block | flag (flag: answered, but logged for review)
     "history_turns": 6,             # earlier messages of the same conversation the model sees (0-10)
-    "repair_attempts": 1,           # loop: extra model turns allowed to fix an uncited answer (0-2)
+    "repair_attempts": 1,           # loop: extra model turns allowed to fix an uncited or unsupported answer (0-2)
+    "verify_claims": True,          # every cited statement must be supported by the passages it cites
+    "memory_days": 90,              # server-side conversation memory kept for (0 = not kept)
     "redact_secrets": True,         # API keys, passwords and tokens are removed from answers
 }
-INT_BOUNDS = {"history_turns": (0, 10), "repair_attempts": (0, 2)}
+INT_BOUNDS = {"history_turns": (0, 10), "repair_attempts": (0, 2), "memory_days": (0, 365)}
 GUARDRAIL_CHOICES = {"grounding": ("strict", "explain"), "prompt_injection": ("block", "flag")}
 ALWAYS_ON = [
     "Only documents the person may open are read (roles, sharing, matter teams, ethical walls)",
@@ -69,9 +71,11 @@ class AskProfile:
     noun: str                     # what the object is called in answers ("contract", "legal hold")
     focus: str = ""               # what answers about this object should concentrate on
     guardrails: dict = field(default_factory=dict)   # tightening only (see effective_guardrails)
+    kind: str = "ask"             # ask: an Ask Assistant button | agent: a feature that calls a model itself
+    title: str = ""               # name shown in monitoring
 
 
-_STRICT = {"grounding": "strict", "require_citations": True, "refuse_off_topic": True}
+_STRICT = {"grounding": "strict", "require_citations": True, "refuse_off_topic": True, "verify_claims": True}
 PROFILES = {p.key: p for p in [
     AskProfile("documents.document", "documents", "document", "its terms, parties, dates, obligations and risks"),
     AskProfile("documents.folder", "documents", "folder", "what the documents in it say and how they relate"),
@@ -93,6 +97,18 @@ PROFILES = {p.key: p for p in [
     AskProfile("governance.ethical_wall", "governance", "ethical wall", "who is screened from what and why", _STRICT),
     AskProfile("governance.retention", "governance", "retention item", "the schedule or disposition batch and its approvals", _STRICT),
     AskProfile("ai_spend.report", "ai_spend", "AI spend item", "who used which model for what, and the cost"),
+    # Agents: features that call a model themselves. Each keeps its own prompt, retrieval, checks and output format;
+    # the shared runtime (core/harness_runtime.py) adds the platform rules, spend limits, screening, redaction and
+    # the trace, and the AI accuracy suite evaluates them.
+    AskProfile("agent.assistant_page", "", "documents", kind="agent", title="Assistant page (chat with documents)"),
+    AskProfile("agent.tabular_review", "", "documents", kind="agent", title="Tabular review (grid)"),
+    AskProfile("agent.data_query", "", "database", kind="agent", title="Data questions (database query)"),
+    AskProfile("agent.practice_service", "", "documents", kind="agent", title="Practice-area AI services"),
+    AskProfile("agent.playbook_review", "contracts", "document", kind="agent", title="Playbook review"),
+    AskProfile("agent.benchmark_check", "contracts", "document", kind="agent", title="Benchmark check"),
+    AskProfile("agent.benchmark_terms", "contracts", "reference document", kind="agent", title="Benchmark term suggestions"),
+    AskProfile("agent.document_intelligence", "", "document", kind="agent", title="Document intelligence (Home and Insights)"),
+    AskProfile("agent.document_pair", "drafting", "pair of documents", kind="agent", title="Drafting & Compare analysis"),
 ]}
 _KIND_DEFAULT = {"file": "documents.document", "folder": "documents.folder", "project": "documents.folder",
                  "documents": "documents.library", "matter": "matters.matter"}
@@ -104,7 +120,7 @@ def profile_for(key: str | None, surface: str | None, kind: str) -> AskProfile:
         return PROFILES[key]
     if surface in SURFACE_KEYS:
         for p in PROFILES.values():
-            if p.surface == surface and (kind == "data") == (p.key not in _KIND_DEFAULT.values()):
+            if p.kind == "ask" and p.surface == surface and (kind == "data") == (p.key not in _KIND_DEFAULT.values()):
                 return p
     if kind in _KIND_DEFAULT:
         return PROFILES[_KIND_DEFAULT[kind]]
@@ -117,7 +133,7 @@ def effective_guardrails(org: dict, profile: AskProfile) -> dict:
     for key, value in profile.guardrails.items():
         if key == "grounding" and value == "strict":
             out[key] = "strict"
-        elif key in ("require_citations", "refuse_off_topic", "redact_secrets") and value:
+        elif key in ("require_citations", "refuse_off_topic", "redact_secrets", "verify_claims") and value:
             out[key] = True
         elif key == "prompt_injection" and value == "block":
             out[key] = "block"
@@ -256,6 +272,9 @@ def system_prompt(ctx, settings: dict, *, web: bool) -> str:
     if g["require_citations"]:
         rules.append("Cite every statement with its source label in square brackets, for example [S1], [D1] or [W2]. "
                      "Only cite labels that appear in the sources.")
+    if g.get("verify_claims", True):
+        rules.append("Every figure, date, amount and name you state must appear in the passage you cite for it; "
+                     "statements the cited passages do not support are removed before the answer is shown.")
     rules.append(f'If the sources do not contain the answer, reply with "{NOT_IN_CONTEXT}:" followed by one sentence '
                  "saying what the sources do cover. Do not answer from elsewhere.")
     if g["refuse_off_topic"]:
@@ -301,8 +320,17 @@ def valid_labels(ctx, sources, web) -> set:
     return labels
 
 
+def _strip_markers(text: str, ctx, sources, web, settings) -> str:
+    labels = valid_labels(ctx, sources, web)
+    text = _CITE.sub(lambda m: m.group(0) if m.group(1) in labels else "", text)
+    if settings["guardrails"]["redact_secrets"]:
+        text = _SECRET.sub("[removed]", text)
+    return text
+
+
 def verify(answer: str, ctx, sources, web, settings) -> tuple[str, str]:
-    """(answer for the person, outcome). Outcomes: answered, not_in_context, off_topic, uncited."""
+    """(answer for the person, outcome) without the claim check. Outcomes: answered, not_in_context, off_topic,
+    uncited. check() adds the claim check used by the loop."""
     g = settings["guardrails"]
     text = (answer or "").strip()
     noun = _noun(ctx, settings)
@@ -313,17 +341,119 @@ def verify(answer: str, ctx, sources, web, settings) -> tuple[str, str]:
         detail = text[len(NOT_IN_CONTEXT):].lstrip(" :").strip()
         return (f'I could not find that in "{ctx.label}". ' + detail).strip(), "not_in_context"
     labels = valid_labels(ctx, sources, web)
-    text = _CITE.sub(lambda m: m.group(0) if m.group(1) in labels else "", text)
-    if g["redact_secrets"]:
-        text = _SECRET.sub("[removed]", text)
+    text = _strip_markers(text, ctx, sources, web, settings)
     if g["require_citations"] and labels and not any(m.group(1) in labels for m in _CITE.finditer(text)):
         return text, "uncited"
     return text, "answered"
 
 
+# ── claim-level verification: every cited statement must be supported by the passages it cites ─────────────────
+_NUMBER = re.compile(r"\d+(?:[.,]\d+)*")
+_ISO_DATE = re.compile(r"\b(\d{4})-\d{2}-\d{2}\b")
+_WORD = re.compile(r"[a-z][a-z'-]{3,}")
+_NUMBER_WORDS = {1: "one", 2: "two", 3: "three", 4: "four", 5: "five", 6: "six", 7: "seven", 8: "eight", 9: "nine",
+                 10: "ten", 11: "eleven", 12: "twelve", 14: "fourteen", 15: "fifteen", 20: "twenty", 21: "twenty-one",
+                 24: "twenty-four", 30: "thirty", 36: "thirty-six", 40: "forty", 45: "forty-five", 48: "forty-eight",
+                 50: "fifty", 60: "sixty", 72: "seventy-two", 90: "ninety", 100: "hundred"}
+_CLAIM_STOP = set("""this that with from have were will would could should about which their there these those than then
+into over under after before other such also only been being does each most more some what when where while your they them
+document documents source sources passage passages states stated says mention mentions according""".split())
+SUPPORT_RATIO = 0.25      # share of a statement's key words that must appear in the passages it cites
+
+
+def _numbers(text: str) -> set:
+    text = _ISO_DATE.sub(lambda m: m.group(1), text)
+    out = set()
+    for n in _NUMBER.findall(text):
+        flat = n.replace(",", "").rstrip(".")
+        if "." in flat:
+            flat = flat.rstrip("0").rstrip(".")
+        out.add(flat.lstrip("0") or "0")
+    return out
+
+
+def _source_texts(ctx, sources, web) -> dict:
+    texts = {s["label"]: s.get("excerpt", "") for s in sources}
+    texts.update({f"W{i + 1}": f"{w.get('title', '')} {w.get('snippet', '')}" for i, w in enumerate(web)})
+    if ctx.data:
+        texts["D1"] = str(ctx.data)
+    return texts
+
+
+def _supported(statement: str, support: str) -> bool:
+    statement = _CITE.sub("", statement)          # citation markers ([S1]) are not figures
+    flat = support.lower()
+    have = _numbers(flat)
+    figures = _numbers(statement)
+    for n in figures:
+        word = _NUMBER_WORDS.get(int(n)) if n.isdigit() and int(n) <= 100 else None
+        if n not in have and not (word and word in flat):
+            return False
+    if figures:
+        return True
+    words = {w for w in _WORD.findall(statement.lower()) if w not in _CLAIM_STOP}
+    if not words:
+        return True
+    return sum(1 for w in words if w in flat) / len(words) >= SUPPORT_RATIO
+
+
+def _statements(text: str) -> list:
+    """Lines, then sentences within lines (bullets, numbered items and table rows stay whole)."""
+    out = []
+    for line in text.splitlines():
+        if not line.strip() or line.lstrip().startswith(("|", "-", "*")) or re.match(r"\s*\d+[.)]\s", line):
+            out.append(line)
+            continue
+        out.extend(re.split(r"(?<=[.!?])\s+(?=[A-Z(\[])", line))
+    return out
+
+
+def check_claims(text: str, ctx, sources, web, settings) -> tuple[list, list]:
+    """(kept statements, unsupported statements). A statement that cites sources must be supported by them; a
+    statement with figures but no citation is unsupported when citations are required."""
+    texts = _source_texts(ctx, sources, web)
+    kept, bad = [], []
+    for st in _statements(text):
+        cited = [m.group(1) for m in _CITE.finditer(st) if m.group(1) in texts]
+        if not st.strip():
+            kept.append(st)
+        elif cited:
+            (kept if _supported(st, " ".join(texts[c] for c in cited)) else bad).append(st)
+        elif _numbers(_CITE.sub("", st)) and settings["guardrails"]["require_citations"] and texts:
+            bad.append(st)
+        else:
+            kept.append(st)
+    return kept, bad
+
+
+def check(answer: str, ctx, sources, web, settings) -> dict:
+    """Full verification: {"text", "outcome", "checked", "unsupported", "kept"}.
+    Outcomes: answered, not_in_context, off_topic, uncited, unsupported."""
+    text, outcome = verify(answer, ctx, sources, web, settings)
+    result = {"text": text, "outcome": outcome, "checked": 0, "unsupported": [], "kept": text}
+    if outcome != "answered" or not settings["guardrails"].get("verify_claims", True):
+        return result
+    kept, bad = check_claims(text, ctx, sources, web, settings)
+    result["checked"] = sum(1 for s in kept + bad if _CITE.search(s) or _numbers(_CITE.sub("", s)))
+    if bad:
+        result.update(outcome="unsupported", unsupported=bad, kept="\n".join(kept).strip())
+    return result
+
+
 REPAIR = ("Your previous answer did not cite the sources. Rewrite it so every statement cites a source label such as "
           f"[S1] or [D1], using only the sources. If the sources do not answer the question, reply \"{NOT_IN_CONTEXT}:\" "
           "and one sentence.")
+
+
+def repair_unsupported(bad: list) -> str:
+    listed = "\n".join(f"- {b.strip()[:300]}" for b in bad[:8])
+    return ("These statements are not supported by the sources they cite (their figures or wording are not in "
+            f"those passages):\n{listed}\nRewrite the answer using only what the cited passages say, citing each "
+            f"statement. Leave out anything the sources do not support. If nothing remains, reply \"{NOT_IN_CONTEXT}:\" "
+            "and one sentence.")
+
+
+REMOVED_NOTE = "({n} statement{s} removed because the cited sources did not support {them}.)"
 
 
 def withheld(ctx) -> str:
@@ -338,26 +468,40 @@ def no_evidence(ctx, settings=None) -> str:
 
 
 # ── the execution loop ───────────────────────────────────────────────────────────────────────────────────────────
-def run(ctx, question: str, sources: list, web: list, history, settings: dict, call) -> dict:
-    """Answer one question about one object: instruct, call, verify, repair (bounded), stop.
+def run(ctx, question: str, sources: list, web: list, history, settings: dict, call, *, memory: str = "") -> dict:
+    """Answer one question about one object: instruct, call, verify (citations and claims), repair (bounded), stop.
 
     call(message, evidence, history, system_prompt) -> str is the model call (provider, key, limits, fallback model).
+    memory is the compacted summary of earlier turns of this conversation (server-side memory), if any.
     Returns {"answer", "outcome", "trace"}; outcome is answered | not_in_context | off_topic | withheld.
     """
     g = settings["guardrails"]
     system = system_prompt(ctx, settings, web=bool(web))
     evidence = evidence_block(ctx, sources, web)
     message = user_message(ctx, question)
+    if memory:
+        message = f"Earlier in this conversation (summary, untrusted):\n{memory[:2000]}\n\n{message}"
     turns = clean_history(history, g["history_turns"])
-    trace = {"profile": getattr(settings.get("profile"), "key", None), "steps": [], "sources": len(sources), "data": bool(ctx.data), "web": len(web),
-             "history_turns": len(turns) // 2, "grounding": g["grounding"]}
+    trace = {"profile": getattr(settings.get("profile"), "key", None), "steps": [], "sources": len(sources),
+             "data": bool(ctx.data), "web": len(web), "history_turns": len(turns) // 2, "grounding": g["grounding"],
+             "claims_checked": 0, "claims_removed": 0}
+    last = None
     for _ in range(1 + g["repair_attempts"]):
         raw = call(message, evidence, turns, system)
-        text, outcome = verify(raw if isinstance(raw, str) else str(raw or ""), ctx, sources, web, settings)
-        trace["steps"].append(outcome)
-        if outcome != "uncited":
-            return {"answer": text, "outcome": outcome, "trace": trace}
+        last = check(raw if isinstance(raw, str) else str(raw or ""), ctx, sources, web, settings)
+        trace["steps"].append(last["outcome"])
+        trace["claims_checked"] = last["checked"]
+        if last["outcome"] not in ("uncited", "unsupported"):
+            return {"answer": last["text"], "outcome": last["outcome"], "trace": trace}
         turns = turns + [{"role": "user", "content": message}, {"role": "assistant", "content": str(raw)[:4000]}]
-        message = REPAIR
+        message = REPAIR if last["outcome"] == "uncited" else repair_unsupported(last["unsupported"])
+    # Out of attempts: keep what the sources support, remove the rest; withhold when nothing supported remains.
+    if last and last["outcome"] == "unsupported":
+        trace["claims_removed"] = len(last["unsupported"])
+        if _CITE.search(last["kept"]):
+            n = len(last["unsupported"])
+            trace["steps"].append("claims_removed")
+            note = REMOVED_NOTE.format(n=n, s="" if n == 1 else "s", them="it" if n == 1 else "them")
+            return {"answer": f"{last['kept']}\n\n{note}", "outcome": "answered", "trace": trace}
     trace["steps"].append("withheld")
     return {"answer": withheld(ctx), "outcome": "withheld", "trace": trace}

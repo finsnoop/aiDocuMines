@@ -150,14 +150,18 @@ def run(review):
     if not text.strip():
         raise ValueError("No text could be read from the document.")
     findings, truncated = [], False
-    if positions:
-        messages, truncated = build_messages(positions, text)
-        raw = agent_call(user, configured_model(user), messages, "playbook_review")
-        findings = validate(raw, positions, text)
-    if terms:
-        term_findings, cut = benchmarking.evaluate(user, terms, text)
-        findings += term_findings
-        truncated = truncated or cut
+    from core import harness_runtime
+    with harness_runtime.session("agent.playbook_review", user) as hr:
+        if positions:
+            messages, truncated = build_messages(positions, text)
+            raw = agent_call(user, configured_model(user), messages, "playbook_review")
+            findings = validate(raw, positions, text)
+        if terms:
+            term_findings, cut = benchmarking.evaluate(user, terms, text)
+            findings += term_findings
+            truncated = truncated or cut
+        hr.note(claims_checked=len(findings), claims_removed=sum(1 for f in findings if not f.get("quote")),
+                outcome="answered")
     review.findings.all().delete()
     ReviewFinding.objects.bulk_create([ReviewFinding(review=review, **{k: v for k, v in f.items()}) for f in findings])
     counts = {}

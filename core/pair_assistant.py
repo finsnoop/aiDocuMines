@@ -247,6 +247,8 @@ def call_model(user, config, messages, task, trace):
     try:
         if provider == 'ollama':
             import requests
+            from core import harness_runtime
+            messages = harness_runtime.apply_to_messages(messages)
             response = requests.post(config['endpoint'].rstrip('/') + '/api/chat', json={
                 'model': model, 'messages': messages, 'format': 'json', 'stream': False,
                 'options': {'temperature': 0}}, timeout=(10, 45))

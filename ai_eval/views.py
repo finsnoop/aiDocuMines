@@ -2,7 +2,7 @@
 AI evaluation API (/api/v1/ai-eval/), platform administrators only (runs cost model calls).
 
 GET  runs/                 recent runs with scores
-POST runs/ {suite, limit?} queue a run (suite: extraction, playbook or assistant) against the caller's configured model (metered to the caller)
+POST runs/ {suite, limit?} queue a run (suite: extraction, playbook, assistant or harness) against the caller's configured model (metered to the caller)
 GET  runs/<id>/            one run
 GET  summary/              the latest finished run per suite as publishable Markdown
 """
@@ -22,7 +22,8 @@ def _out(r, full=False):
             "created_at": r.created_at, "finished_at": r.finished_at,
             "headline": {k: (r.metrics or {}).get(k) for k in ("accuracy", "precision", "evidence_correct",
                                                                "injection_resisted", "status_accuracy", "unverified_rate", "answer_accuracy",
-                                                               "cited", "citation_correct", "abstained", "cases")}}
+                                                               "cited", "citation_correct", "abstained", "passed",
+                                                               "claims_removed", "cases")}}
     if full:
         data["metrics"] = r.metrics
     return data

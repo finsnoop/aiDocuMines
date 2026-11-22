@@ -22,17 +22,23 @@ def process_file_query(
 
     Prefer passing file_id for cached, fast path.
     """
+    from core import harness_runtime
     try:
         llm_cfg = llm_config or {}
-        result = execute_file_query(
-            query_text=query_text,
-            file_path=file_path,
-            llm_config=llm_cfg,
-            previous_messages=previous_messages,
-            file_id=file_id,  # new fast path
-        )
+        with harness_runtime.session("agent.assistant_page") as hr:
+            harness_runtime.screen(query_text, hr.user)
+            result = execute_file_query(
+                query_text=query_text,
+                file_path=file_path,
+                llm_config=llm_cfg,
+                previous_messages=previous_messages,
+                file_id=file_id,  # new fast path
+            )
+            hr.note(outcome="answered")
         gc.collect()
         return result
+    except harness_runtime.HarnessBlocked as e:
+        return str(e)
     except SoftTimeLimitExceeded:
         return 'Task exceeded soft time limit'
     except Exception as e:
@@ -44,21 +50,27 @@ def process_db_query(query_text, connection_string, table_name, llm_config: dict
     """
     Processes DB-based LLM query with optional memory context.
     """
+    from core import harness_runtime
     try:
-        result = execute_db_query(
-            query_text,
-            connection_string,
-            table_name,
-            llm_config,
-            stream=stream,
-            previous_messages=previous_messages
-        )
+        with harness_runtime.session("agent.data_query") as hr:
+            harness_runtime.screen(query_text, hr.user)
+            result = execute_db_query(
+                query_text,
+                connection_string,
+                table_name,
+                llm_config,
+                stream=stream,
+                previous_messages=previous_messages
+            )
+            hr.note(outcome="answered")
         gc.collect()
         if stream and hasattr(result, '__iter__'):
             return "\n\n".join([df.to_csv(index=False) for df in result])
         return result.to_csv(index=False) if hasattr(result, 'to_csv') else result
     except SoftTimeLimitExceeded:
         return 'Task exceeded soft time limit'
+    except harness_runtime.HarnessBlocked as e:
+        return str(e)
     except Exception as e:
         return f'Error during DB query: {str(e)}'
 

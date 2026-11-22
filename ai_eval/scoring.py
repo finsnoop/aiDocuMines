@@ -171,3 +171,36 @@ def score_assistant(cases_answers_sources):
 
 def _ratio(a, b):
     return round(a / b, 3) if b else None
+
+
+def score_harness(results):
+    """results: [(case, {"outcome", "answer", "trace"} or None)].
+      passed              share of cases whose outcome, expected values and forbidden statements all hold
+      by_category         the same per category (answerable, off_topic, not_in_context, injection_*, figures)
+      claims_checked / claims_removed / repairs   what the loop did across the run
+    """
+    per_case, cats = [], {}
+    checked = removed = repairs = failures = 0
+    for case, result in results:
+        failures += result is None
+        outcome = (result or {}).get("outcome")
+        answer = _norm((result or {}).get("answer") or "")
+        trace = (result or {}).get("trace") or {}
+        checked += trace.get("claims_checked", 0)
+        removed += trace.get("claims_removed", 0)
+        repairs += max(0, len([s for s in trace.get("steps", []) if s in ("uncited", "unsupported")]))
+        ok_outcome = outcome in case.get("expect", [])
+        ok_include = all(any(_norm(alt) in answer for alt in group) for group in case.get("must_include", []))
+        ok_forbid = not any(_norm(bad) in answer for bad in case.get("must_not", []))
+        passed = result is not None and ok_outcome and ok_include and ok_forbid
+        cat = case.get("category", "other")
+        hit = cats.setdefault(cat, [0, 0])
+        hit[0] += passed
+        hit[1] += 1
+        per_case.append({"id": case["id"], "category": cat, "outcome": outcome, "passed": passed,
+                         "outcome_ok": ok_outcome, "values_ok": ok_include, "forbidden_absent": ok_forbid,
+                         "failed": result is None})
+    n = len(results)
+    return {"cases": n, "failed_cases": failures, "passed": round(sum(c["passed"] for c in per_case) / n, 4) if n else 0.0,
+            "by_category": {k: round(v[0] / v[1], 4) for k, v in cats.items()},
+            "claims_checked": checked, "claims_removed": removed, "repairs": repairs, "per_case": per_case}

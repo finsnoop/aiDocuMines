@@ -16,7 +16,10 @@ from __future__ import annotations
 
 import logging
 import math
+import os
 import re
+import threading
+import time
 import uuid
 from collections import Counter
 from dataclasses import dataclass, field
@@ -211,20 +214,50 @@ def rank_passages(question: str, passages: list) -> list:
     return [(f, t) for _, f, t in scored]
 
 
-def semantic_first(question: str, ctx: Context, user) -> list:
-    """Passages from vector search over the context's files, when the vector index is available."""
-    try:
-        from document_search import milvus_store
-        from document_search.utils import embed_text
+SEMANTIC_DEADLINE_S = float(os.getenv("SEMANTIC_SEARCH_DEADLINE_S", "4"))
+SEMANTIC_PAUSE_S = float(os.getenv("SEMANTIC_SEARCH_PAUSE_S", "60"))
+_semantic_paused_until = 0.0
 
-        ids = {f.id for f in ctx.files}
-        hits = milvus_store.search(embed_text(question), ids, getattr(user, "client_id", None) or -1, top_k=12)
-        by_id = {f.id: f for f in ctx.files}
-        return [(by_id[int(h.entity.get("file_id"))], h.entity.get("chunk_text", ""))
-                for h in hits if int(h.entity.get("file_id")) in by_id and h.entity.get("chunk_text")]
-    except Exception as exc:
-        logger.debug("Semantic retrieval unavailable, using keyword ranking: %s", exc)
+
+def semantic_first(question: str, ctx: Context, user) -> list:
+    """Passages from vector search over the context's files, when the vector index is available.
+
+    Circuit breaker: the search has a hard deadline (SEMANTIC_SEARCH_DEADLINE_S) in a daemon thread, so a vector
+    store that is down or hanging never holds up an answer; after a failure, semantic search is skipped for
+    SEMANTIC_SEARCH_PAUSE_S and keyword ranking is used."""
+    global _semantic_paused_until
+    if time.monotonic() < _semantic_paused_until:
         return []
+    ids = {f.id for f in ctx.files}
+    tenant = getattr(user, "client_id", None) or -1
+    outcome = {}
+
+    def work():
+        try:
+            from document_search import milvus_store
+            from document_search.utils import embed_text
+            outcome["hits"] = milvus_store.search(embed_text(question), ids, tenant, top_k=12)
+        except Exception as exc:                      # noqa: BLE001 - any failure means keyword ranking
+            outcome["error"] = exc
+
+    worker = threading.Thread(target=work, name="semantic-search", daemon=True)
+    worker.start()
+    worker.join(SEMANTIC_DEADLINE_S)
+    if worker.is_alive() or "error" in outcome:
+        _semantic_paused_until = time.monotonic() + SEMANTIC_PAUSE_S
+        logger.info("Semantic retrieval unavailable (%s); keyword ranking for %ss.",
+                    outcome.get("error", "deadline exceeded"), int(SEMANTIC_PAUSE_S))
+        try:
+            from core import harness_runtime
+            run = harness_runtime.current()
+            if run is not None:
+                run.note(step="semantic_unavailable")
+        except Exception:
+            pass
+        return []
+    by_id = {f.id: f for f in ctx.files}
+    return [(by_id[int(h.entity.get("file_id"))], h.entity.get("chunk_text", ""))
+            for h in outcome.get("hits") or [] if int(h.entity.get("file_id")) in by_id and h.entity.get("chunk_text")]
 
 
 def build_sources(question: str, ctx: Context, user, *, semantic=True) -> list:

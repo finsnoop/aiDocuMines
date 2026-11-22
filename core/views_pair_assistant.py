@@ -30,8 +30,13 @@ class PairAssistantView(APIView):
         if harness.screen_question(question) and settings['guardrails']['prompt_injection'] == 'block':
             return Response({'error':"That question asks the Assistant to set aside its rules, so it won't be answered. "
                                      'Ask about the two documents instead.'},status=400)
+        from core import harness_runtime
         try:
-            result = analyse(request.user, request.data)
+            with harness_runtime.session('agent.document_pair', request.user, surface='drafting') as hr:
+                if harness.screen_question(question):
+                    hr.note(flag='injection')
+                result = analyse(request.user, request.data)
+                hr.note(outcome='answered', claims_checked=len(result.get('findings') or []))
         except PairProviderError:
             return Response({'error':'The configured AI model could not complete a grounded document-pair analysis. Please try again.'},status=502)
         from custom_authentication.models import UserActivityLog

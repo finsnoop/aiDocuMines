@@ -123,12 +123,19 @@ def ask_question(query: str = "", file_ids: Iterable[int] = (), user_id: Optiona
     from grid_documents_interrogation.safety import clean_llm_config
     from grid_documents_interrogation.utils import dispatch_to_llm
 
+    from core import harness_runtime
     cfg = clean_llm_config({"model": assistant_policy(user).get("model") or ""}, user)
-    try:
-        answer = dispatch_to_llm(query[:4000], "\n\n".join(parts), cfg, previous_messages=None)
-    except Exception as exc:
-        logger.warning("Practice-area question failed: %s", exc)
-        return {"answer": "", "confidence": 0.0, "file_ids": [f.id for f in files]}
+    with harness_runtime.session("agent.practice_service", user) as hr:
+        try:
+            harness_runtime.screen(query, user)
+            answer = dispatch_to_llm(query[:4000], "\n\n".join(parts), cfg, previous_messages=None)
+        except harness_runtime.HarnessBlocked as exc:
+            return {"answer": str(exc), "confidence": 0.0, "file_ids": [f.id for f in files]}
+        except Exception as exc:
+            logger.warning("Practice-area question failed: %s", exc)
+            hr.note(outcome="error")
+            return {"answer": "", "confidence": 0.0, "file_ids": [f.id for f in files]}
+        hr.note(outcome="answered" if (answer or "").strip() else "empty")
     answer = (answer or "").strip()
     return {"answer": answer, "confidence": 0.75 if answer else 0.0, "file_ids": [f.id for f in files]}
 

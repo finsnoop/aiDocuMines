@@ -146,9 +146,15 @@ def validate(raw, terms, text):
 def evaluate(user, terms, text):
     """Findings for the benchmark terms (list of dicts for ReviewFinding) and whether passages were truncated."""
     from home_dash_analytics.intelligence import agent_call, configured_model
-    messages, truncated = build_messages(terms, text)
-    raw = agent_call(user, configured_model(user), messages, "benchmark_check")
-    return validate(raw, terms, text), truncated
+    from core import harness_runtime
+    with harness_runtime.session("agent.benchmark_check", user) as hr:
+        messages, truncated = build_messages(terms, text)
+        raw = agent_call(user, configured_model(user), messages, "benchmark_check")
+        findings = validate(raw, terms, text)
+        if hr.profile == "agent.benchmark_check":
+            hr.note(claims_checked=len(findings), claims_removed=sum(1 for f in findings if not f.get("quote")),
+                    outcome="answered")
+    return findings, truncated
 
 
 SUGGEST_SYSTEM = """You extract measurable requirements from an organisation's reference document (a policy,
@@ -160,10 +166,16 @@ Return JSON only: {"terms": [{"topic": "...", "requirement": "...", "comparator"
 
 def suggest_terms(user, text):
     """Proposed terms from a benchmark document; each must quote the document verbatim. Nothing is saved here."""
-    from home_dash_analytics.intelligence import agent_call, configured_model
+    from core import harness_runtime
     from .models import BenchmarkTerm
     comparators = {c for c, _ in BenchmarkTerm.COMPARATORS}
-    flat = _normalise(text)
+    with harness_runtime.session("agent.benchmark_terms", user):
+        return _suggest(user, text, _normalise(text), comparators)
+
+
+def _suggest(user, text, flat, comparators):
+    from home_dash_analytics.intelligence import agent_call, configured_model
+    from core import harness_runtime
     raw = agent_call(user, configured_model(user), [
         {"role": "system", "content": SUGGEST_SYSTEM},
         {"role": "user", "content": json.dumps({"document": text[:MAX_PROMPT_CHARS]}, ensure_ascii=False)}],
@@ -187,5 +199,9 @@ def suggest_terms(user, text):
                     "unit": str(item.get("unit") or "")[:20],
                     "severity": item.get("severity") if item.get("severity") in ("low", "medium", "high") else "medium",
                     "source_quote": quote})
+    run = harness_runtime.current()
+    if run is not None:
+        proposed = len([i for i in (items if isinstance(items, list) else [])[:25] if isinstance(i, dict)])
+        run.note(claims_checked=proposed, claims_removed=proposed - len(out), outcome="answered")
     return out
 

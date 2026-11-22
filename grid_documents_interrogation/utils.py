@@ -515,6 +515,8 @@ def _openai_chat_completion(client, *, model, messages, max_tokens, temperature,
     (BerriAI/litellm #16090, #21911), so we adapt here by retrying without the
     offending parameter. This is model-agnostic: no name list to maintain.
     """
+    from core import harness_runtime
+    messages = harness_runtime.apply_to_messages(messages)   # platform rules, inside a harness session
     kwargs = {
         "model": model,
         "messages": messages,
@@ -535,6 +537,12 @@ def _openai_chat_completion(client, *, model, messages, max_tokens, temperature,
         try:
             response = client.chat.completions.create(**kwargs)
             record_response(response, provider=provider, model=model, task=usage_task, started=started)
+            if response_format is None:            # free text: secrets removed per the organisation's guardrail
+                try:
+                    message = response.choices[0].message
+                    message.content = harness_runtime.redact_text(message.content)
+                except Exception:
+                    pass
             return response
         except Exception as e:
             msg = str(e).lower()
@@ -658,6 +666,7 @@ def _dispatch_to_llm(
             raise RuntimeError(f"OpenAI invocation failed (model={model}): {e}")
 
     elif provider == "ollama":
+        from core import harness_runtime
         # Choose endpoint: llm_config -> env -> default docker service name
         base_url = (
             llm_config.get("endpoint")
@@ -680,9 +689,9 @@ def _dispatch_to_llm(
             history_text = _history_to_text(previous_messages, limit=10)
             ctx_prefix = f"[FINDINGS FROM PREVIOUS DOCUMENT SECTIONS]\n{accumulated_context}\n\n" if accumulated_context else ""
             prompt_parts = [
-                _SYSTEM_PROMPT.get() or (
+                harness_runtime.with_platform_rules(_SYSTEM_PROMPT.get() or (
                 "You are a precise, concise document QA assistant. Answer using only the document facts. "
-                "If unsure, say so. Cite section/part references when available."),
+                "If unsure, say so. Cite section/part references when available.")),
                 ("Conversation so far:\n" + history_text) if history_text else None,
                 ctx_prefix + "Document:\n" + (chunk or "")[:200000],
                 "Task:\nAnswer the user question using only the document facts.",
@@ -692,7 +701,8 @@ def _dispatch_to_llm(
             prompt = "\n\n".join([p for p in prompt_parts if p])
 
             text = (chat | StrOutputParser()).invoke(prompt)
-            return text if isinstance(text, str) else str(text)
+            harness_runtime.on_model_call(model)
+            return harness_runtime.redact_text(text if isinstance(text, str) else str(text))
 
         except Exception as e:
             raise RuntimeError(f"Ollama invocation failed (url={base_url}, model={model}): {e}")

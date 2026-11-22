@@ -46,6 +46,11 @@ def usage_numbers(response):
 def record(*, provider: str, model: str, task: str, prompt_tokens=0, completion_tokens=0, total_tokens=None,
            duration_ms=None, user=None, extra=None):
     """Write one usage row to the cost ledger (cost_centre EventLog + TokenUsage)."""
+    from core import harness_runtime
+    harness_runtime.on_model_call(model, prompt_tokens, completion_tokens)   # the harness trace of this run
+    run = harness_runtime.current()
+    if run is not None:
+        extra = {**(extra or {}), 'harness_profile': run.profile}
     user = user or actor.get()
     total = int(total_tokens if total_tokens is not None else (prompt_tokens or 0) + (completion_tokens or 0))
     from .gateway import current_key

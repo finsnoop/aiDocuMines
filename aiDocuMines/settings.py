@@ -11,6 +11,12 @@ if _LOAD_DOTENV:
     load_dotenv()
 
 os.environ.setdefault("ELASTIC_CLIENT_APIVERSIONING", "true")
+# Data governance: third-party libraries must not phone home. `unstructured` sends usage analytics (Scarf) when it
+# is imported; Hugging Face and others honour DO_NOT_TRACK. Set before any of them is imported.
+os.environ.setdefault("SCARF_NO_ANALYTICS", "true")
+os.environ.setdefault("DO_NOT_TRACK", "true")
+os.environ.setdefault("HF_HUB_DISABLE_TELEMETRY", "1")
+os.environ.setdefault("ANONYMIZED_TELEMETRY", "False")
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 

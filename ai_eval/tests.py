@@ -147,6 +147,8 @@ class RunnerTests(TestCase):
 
         def answer(query, context_block, config, history, system_prompt=None):
             seen.append((query, context_block, usage.actor.get(), system_prompt))
+            if "liability cap" in query:
+                return "The cap is GBP 2,500,000.00 [S1]."
             return "Ninety (90) days' written notice is required [S1]."
 
         with mock.patch("grid_documents_interrogation.utils.dispatch_to_llm", side_effect=answer):
@@ -165,10 +167,10 @@ class RunnerTests(TestCase):
 
     @mock.patch("ai_eval.runner.model_config", return_value={"provider": "litellm", "model": "gpt-test"})
     def test_a_provider_error_fails_only_that_case(self, _model):
-        calls = iter([ConnectionError("timeout"), "90 days' notice [S1]."])
+        calls = iter([ConnectionError("timeout")])
 
         def answer(*_a, **_k):
-            item = next(calls)
+            item = next(calls, "The cap is GBP 2,500,000.00 [S1].")
             if isinstance(item, Exception):
                 raise item
             return item
@@ -191,13 +193,13 @@ class RunnerTests(TestCase):
         with (mock.patch.dict("os.environ", {"AI_EVAL_RUN_AS": self.platform.email}),
               mock.patch("ai_eval.runner.model_config", side_effect=lambda user, suite: model),
               mock.patch("ai_eval.runner.run_eval_task.delay") as queue):
-            self.assertEqual(check_model_change(), ["extraction", "playbook", "assistant"])    # never run
+            self.assertEqual(check_model_change(), ["extraction", "playbook", "assistant", "harness"])    # never run
             self.assertEqual(check_model_change(), [])                    # still pending: nothing more is queued
             EvalRun.objects.update(status="done", provider="litellm", model="gpt-a")
             self.assertEqual(check_model_change(), [])                    # same model
             model = {"provider": "litellm", "model": "gpt-b"}
-            self.assertEqual(check_model_change(), ["extraction", "playbook", "assistant"])
-        self.assertEqual(queue.call_count, 6)
+            self.assertEqual(check_model_change(), ["extraction", "playbook", "assistant", "harness"])
+        self.assertEqual(queue.call_count, 8)
         self.assertEqual(queue.call_args.kwargs["user_id"], self.platform.pk)
 
     def test_only_platform_administrators(self):

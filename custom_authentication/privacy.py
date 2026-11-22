@@ -37,6 +37,7 @@ ERASED_DOMAIN = "erased.invalid"
 RETENTION = {
     "activity_logs": ("RETENTION_ACTIVITY_DAYS", 730, "sign-in and activity records (UserActivityLog)"),
     "assistant_queries": ("RETENTION_ASSISTANT_DAYS", 730, "assistant and grid questions and answers"),
+    "harness_runs": ("RETENTION_HARNESS_RUNS_DAYS", 400, "AI harness monitoring records (no question or answer text)"),
 }
 
 
@@ -87,6 +88,11 @@ def personal_data(user) -> dict:
                                             ["query_text", "response_text", "created_at"])
     except Exception:
         logger.debug("Assistant questions unavailable for export", exc_info=True)
+    from core.models import AssistantTurn
+    data["assistant_conversation_questions"] = [
+        {"object": t.conversation.label, "question": t.content, "asked_at": t.created_at.isoformat()}
+        for t in AssistantTurn.objects.filter(conversation__user=user, role="user").select_related("conversation")
+        .order_by("-created_at")[:5000]]
     try:
         from cost_centre.models import TokenUsage
         data["ai_usage"] = _rows(TokenUsage.objects.filter(user=user).order_by("-created_at"),
@@ -164,6 +170,8 @@ def erase(actor, target, transfer_to=None) -> dict:
     except Exception:
         logger.debug("Assistant questions not removed", exc_info=True)
     summary["chat_activity_removed"] = UserActivityLog.objects.filter(user=target, event="CHAT_QUERY").delete()[0]
+    from core.models import AssistantConversation
+    summary["assistant_conversations_removed"] = AssistantConversation.objects.filter(user=target).delete()[0]
     UserActivityLog.objects.filter(user=target).update(metadata=None)
     AccountDeletionRequest.objects.filter(user=target).update(is_processed=True)
 
@@ -201,6 +209,11 @@ def apply_retention(now=None) -> dict:
             created_at__lt=now - timedelta(days=retention_days("assistant_queries"))).delete()[0]
     except Exception:
         logger.debug("Assistant query retention skipped", exc_info=True)
+    from core.assistant_memory import purge_expired
+    from core.models import HarnessRun
+    out["assistant_conversations"] = purge_expired(now)      # each organisation's memory period
+    out["harness_runs"] = HarnessRun.objects.filter(
+        created_at__lt=now - timedelta(days=retention_days("harness_runs"))).delete()[0]
     logger.info("Retention applied: %s", out)
     return out
 

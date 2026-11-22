@@ -47,7 +47,8 @@ from .views_matters import (MatterCreateView, MatterDetailView, MatterDocumentsV
                             MatterUploadView)
 
 from .views_render import FileRenderView, FileRenderContentView
-from .views_assistant import AssistantAskView, AssistantStatusView
+from .views_assistant import AssistantAskView, AssistantConversationView, AssistantStatusView
+from .views_harness import HarnessOverviewView
 from .views_pair_assistant import PairAssistantView, PairPresetsView
 from .views_backup import BackupDetailView, BackupDownloadView, BackupListView, BackupRestoreView
 urlpatterns = [
@@ -55,6 +56,8 @@ urlpatterns = [
     # Matters (a deal, case or request: documents, workflows, results and team)
     # Context assistant (chat with a file, folder, matter or project)
     path("assistant/ask/", AssistantAskView.as_view(), name="assistant-ask"),
+    path("assistant/conversation/", AssistantConversationView.as_view(), name="assistant-conversation"),
+    path("harness/overview/", HarnessOverviewView.as_view(), name="harness-overview"),
     path("assistant/status/", AssistantStatusView.as_view(), name="assistant-status"),
     path("assistant/pair/presets/", PairPresetsView.as_view(), name="pair-assistant-presets"),
     path("assistant/pair/ask/", PairAssistantView.as_view(), name="pair-assistant-ask"),

@@ -6,7 +6,8 @@ from django.db import models
 
 class EvalRun(models.Model):
     """One run of the AI evaluation suite against a model, with its scores (ai_eval/scoring.py)."""
-    SUITES = [("extraction", "Document facts"), ("playbook", "Playbook review"), ("assistant", "Ask Assistant")]
+    SUITES = [("extraction", "Document facts"), ("playbook", "Playbook review"), ("assistant", "Ask Assistant"),
+              ("harness", "Harness guardrails")]
     STATUSES = [("pending", "Queued"), ("running", "Running"), ("done", "Done"), ("failed", "Failed")]
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     suite = models.CharField(max_length=12, choices=SUITES)
